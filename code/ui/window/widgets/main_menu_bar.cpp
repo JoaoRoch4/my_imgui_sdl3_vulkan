@@ -15,6 +15,7 @@
 #include "main_menu_bar.hpp"
 #include "Image_viewer_panel.hpp"
 #include "video_player.hpp"
+#include "history_context_menu.hpp"
 
 #include "imgui.h"
 #include "style_editor.hpp"
@@ -186,7 +187,8 @@ MainMenuBar::MainMenuBar()
     , m_bulk_image_open{}
     , m_video_player{}
     , m_history_preview{}
-    , m_opened_files_window{} {
+    , m_opened_files_window{}
+    , m_video_context_menu{} {
 }
 
 // ============================================================================
@@ -218,7 +220,47 @@ void MainMenuBar::Setup(StyleEditor *style_editor,
 
     m_open_image_dialogs.setup(m_window);
     m_video_player.setup(m_vk);
+    m_video_context_menu.setup(m_window);
     m_history_preview.setup(m_vk, &m_video_player, &m_viewer);
+
+    m_video_player.set_context_menu(
+        &m_video_context_menu,
+        [this](const std::string &src) -> WindowStateToml::ImageHistoryEntry * {
+            for (auto &h : m_history)
+                if (h.source == src)
+                    return &h;
+            return nullptr;
+        },
+        [this](const std::string &source) {
+            std::erase_if(m_history, [&source](const auto &e) { return e.source == source; });
+            m_opened_files_window.sync_history(m_history);
+            persist_history_metadata_to_toml();
+        });
+
+    m_video_player.set_player_menu_callbacks(
+        [this]() { m_open_image_dialogs.begin_open_image_dialog(); },
+        [this]() { m_open_image_dialogs.open_online_popup(); },
+        [this](const std::string &source, const std::string &kind) {
+            if (kind == "file")
+                m_open_image_dialogs.queue_path(source);
+            else
+                m_open_image_dialogs.queue_url(source);
+        },
+        [this]() -> const std::vector<WindowStateToml::ImageHistoryEntry> & {
+            return m_history;
+        },
+        &m_history_preview);
+    m_config_runtime.SetClearHistoryMetadataCallback([this]() {
+        m_history.clear();
+        m_opened_files_window.sync_history(m_history);
+        persist_history_metadata_to_toml();
+    });
+
+    m_opened_files_window.SetEraseHistoryEntryCallback([this](const std::string &source) {
+        std::erase_if(m_history, [&source](const auto &e) { return e.source == source; });
+        m_opened_files_window.sync_history(m_history);
+        persist_history_metadata_to_toml();
+    });
 }
 
 /**
@@ -233,6 +275,8 @@ void MainMenuBar::Shutdown() {
     m_bulk_image_open.shutdown();
 
     m_video_player.shutdown();
+
+    m_video_downloader.shutdown();
 
     m_history_preview.shutdown();
 
@@ -270,6 +314,10 @@ bool MainMenuBar::LoadOpenedFilesHistoryFromToml(const std::filesystem::path &fi
     return loaded;
 }
 
+void MainMenuBar::SetStatePath(const std::filesystem::path &file_path) {
+    m_state_path = file_path;
+}
+
 /**
  * @brief Serialise image history into the window state for saving.
  *
@@ -289,6 +337,72 @@ void MainMenuBar::ExportHistory(WindowStateToml *state) const {
 
 void MainMenuBar::ExportRuntimeConfig(WindowStateToml *state) const {
     m_config_runtime.ExportLayout(state);
+}
+
+void MainMenuBar::SetThumbDir(const std::filesystem::path &dir) {
+    m_thumb_dir = dir;
+    m_history_preview.set_thumb_dir(dir);
+    m_config_runtime.SetClearThumbnailCacheCallback([this]() {
+        // Delete every PNG in the thumb directory.
+        std::error_code ec;
+        for (const auto &entry : std::filesystem::directory_iterator(m_thumb_dir, ec)) {
+            if (entry.path().extension() == ".png")
+                std::filesystem::remove(entry.path(), ec);
+        }
+        // Clear persisted thumbnail_path so history re-generates on next hover.
+        for (auto &h : m_history)
+            h.thumbnail_path.clear();
+
+        persist_history_metadata_to_toml();
+    });
+}
+
+void MainMenuBar::SetDownloadCacheDir(const std::filesystem::path &dir) {
+    m_video_downloader.set_cache_dir(dir);
+    m_download_cache_dir = dir;
+    m_config_runtime.SetClearVideoCacheCallback([this]() {
+        m_video_downloader.clear_cache();
+        // Clear cached_path references in history so they don't point at deleted files.
+        for (auto &h : m_history)
+            h.cached_path.clear();
+
+        persist_history_metadata_to_toml();
+    });
+
+    m_config_runtime.SetRebuildVideoCacheCallback([this]() {
+        m_video_downloader.clear_cache();
+
+        for (const auto &h : m_history) {
+            if (VideoPlayer::is_video_url(h.source)) {
+                const auto cached = m_video_downloader.get_or_enqueue(h.source);
+                if (cached) {
+                    for (auto &entry : m_history) {
+                        if (entry.source == h.source) {
+                            entry.cached_path = cached->string();
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Local video files are detected and left uncached by design.
+            if (VideoPlayer::is_video_path(h.source))
+                continue;
+        }
+
+        persist_history_metadata_to_toml();
+    });
+}
+
+void MainMenuBar::persist_history_metadata_to_toml() const {
+    if (m_state_path.empty())
+        return;
+
+    WindowStateToml state;
+    LoadWindowStateToml(m_state_path, state);
+    ExportHistory(&state);
+    SaveWindowStateToml(m_state_path, state);
 }
 
 // ============================================================================
@@ -318,18 +432,21 @@ void MainMenuBar::current_timestamp(std::array<char, 20> &dst) {
  * @param source  File path or URL string.
  * @param kind    "file" or "url".
  */
-void MainMenuBar::push_history(const std::string &source, const std::string &kind) {
+void MainMenuBar::push_history(const std::string &source, const std::string &kind,
+                               const std::string &title) {
     std::array<char, 20> ts{};
-    current_timestamp(ts); /// Generate the timestamp string.
+    current_timestamp(ts);
 
-    /// Remove any existing entry with the same source so there are no duplicates.
     std::erase_if(m_history, [&source](const WindowStateToml::ImageHistoryEntry& e) {
         return e.source == source;
     });
 
-    /// Insert at the front so the most recent item appears first.
-    m_history.insert(m_history.begin(),
-                     WindowStateToml::ImageHistoryEntry{source, kind, ts.data()});
+    WindowStateToml::ImageHistoryEntry entry{};
+    entry.source    = source;
+    entry.kind      = kind;
+    entry.opened_at = ts.data();
+    entry.title     = title;
+    m_history.insert(m_history.begin(), std::move(entry));
     m_opened_files_window.sync_history(m_history);
 }
 
@@ -385,6 +502,21 @@ void MainMenuBar::Build() {
     if (m_vk)
         m_viewer.evict_closed(*m_vk);
 
+    // Process any pending video save from the save-file dialog.
+    m_video_context_menu.process_pending_save();
+
+    // Drain completed background downloads and record cached paths in history.
+    for (const auto &result : m_video_downloader.take_completed()) {
+        if (result.ok) {
+            for (auto &h : m_history) {
+                if (h.source == result.url) {
+                    h.cached_path = result.cached_path.string();
+                    break;
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Step 2 — load images from the file dialog queue
     // -------------------------------------------------------------------------
@@ -402,7 +534,8 @@ void MainMenuBar::Build() {
             for (const auto &path : pending_paths) {
                 if (VideoPlayer::is_video_path(path)) {
                     m_video_player.add_from_path(path);
-                    push_history(path, "file");
+                    push_history(path, "file",
+                                 std::filesystem::path(path).filename().string());
                 } else {
                     image_paths.push_back(path);
                 }
@@ -413,10 +546,12 @@ void MainMenuBar::Build() {
             for (const auto &path : pending_paths) {
                 if (VideoPlayer::is_video_path(path)) {
                     if (m_video_player.add_from_path(path))
-                        push_history(path, "file");
+                        push_history(path, "file",
+                                     std::filesystem::path(path).filename().string());
                 } else {
                     if (m_viewer.add_from_path(path, *m_vk))
-                        push_history(path, "file");
+                        push_history(path, "file",
+                                     std::filesystem::path(path).filename().string());
                 }
             }
         }
@@ -431,10 +566,12 @@ void MainMenuBar::Build() {
         if (!next_path.empty()) {
             if (VideoPlayer::is_video_path(next_path)) {
                 if (m_video_player.add_from_path(next_path))
-                    push_history(next_path, "file");
+                    push_history(next_path, "file",
+                                 std::filesystem::path(next_path).filename().string());
             } else {
                 if (m_viewer.add_from_path(next_path, *m_vk))
-                    push_history(next_path, "file");
+                    push_history(next_path, "file",
+                                 std::filesystem::path(next_path).filename().string());
             }
         }
     }
@@ -446,11 +583,20 @@ void MainMenuBar::Build() {
     std::vector<std::string> pending_urls = m_open_image_dialogs.take_pending_urls();
     if (!pending_urls.empty() && m_vk) {
         for (const auto &url : pending_urls) {
-            // Video URLs are streamed directly by mpv (no download needed)
+            // Video URLs: play from local cache if available, else stream + enqueue download
             if (VideoPlayer::is_video_url(url)) {
                 const std::string title = title_from_url(url);
-                if (m_video_player.add_from_url(url, title))
-                    push_history(url, "url");
+                const auto cached = m_video_downloader.get_or_enqueue(url);
+                if (cached) {
+                    if (m_video_player.add_from_path(*cached)) {
+                        push_history(url, "url", title);
+                        if (!m_history.empty())
+                            m_history.front().cached_path = cached->string();
+                    }
+                } else {
+                    if (m_video_player.add_from_url(url, title))
+                        push_history(url, "url", title);
+                }
                 continue;
             }
 
@@ -469,7 +615,7 @@ void MainMenuBar::Build() {
                  * ImageViewerPanel reads the file; we delete it afterward.
                  */
                 if (m_viewer.add_from_url_temp(tmp, title, url, *m_vk))
-                    push_history(url, "url");
+                    push_history(url, "url", title);
 
                 std::filesystem::remove(tmp); /// Clean up the temp file.
             }
@@ -498,7 +644,7 @@ void MainMenuBar::Build() {
             constexpr int k_max_shown = 20; /// Maximum history items shown at once.
             int shown = 0;
 
-            for (const auto &hentry : m_history) {
+            for (auto &hentry : m_history) {
                 if (shown >= k_max_shown)
                     break;
                 ++shown;
@@ -529,6 +675,30 @@ void MainMenuBar::Build() {
                 /// Show the full source and timestamp as a tooltip on hover.
                 if (ImGui::IsItemHovered())
                     m_history_preview.draw_for_hover(hentry);
+
+                // Video entries get the video context menu (remove + save);
+                // other entries get the simpler history context menu.
+                const bool is_video = VideoPlayer::is_video_path(hentry.source) ||
+                                      VideoPlayer::is_video_url(hentry.source);
+                if (is_video) {
+                    if (const auto r = m_video_context_menu.draw_for_item(hentry); r.erase) {
+                        std::erase_if(m_history, [&r](const auto &e) { return e.source == r.erase_source; });
+                        m_opened_files_window.sync_history(m_history);
+                        persist_history_metadata_to_toml();
+                        ImGui::EndMenu();
+                        ImGui::EndMenu();
+                        break;
+                    }
+                } else {
+                    if (const auto erase = HistoryContextMenu::draw_for_item(hentry.source)) {
+                        std::erase_if(m_history, [&erase](const auto &e) { return e.source == *erase; });
+                        m_opened_files_window.sync_history(m_history);
+                        persist_history_metadata_to_toml();
+                        ImGui::EndMenu();
+                        ImGui::EndMenu();
+                        break;
+                    }
+                }
             }
 
             /// If the history is longer than k_max_shown, indicate the overflow.
@@ -611,7 +781,7 @@ void MainMenuBar::Build() {
     m_video_player.draw();
 
     int focus_id = -1;
-    const auto activated = m_opened_files_window.draw(m_viewer, m_history_preview, &focus_id);
+    const auto activated = m_opened_files_window.draw(m_viewer, m_history_preview, &focus_id, &m_video_context_menu);
     if (focus_id >= 0)
         m_viewer.request_focus(focus_id);
 

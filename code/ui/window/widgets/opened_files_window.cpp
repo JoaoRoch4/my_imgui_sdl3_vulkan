@@ -1,4 +1,8 @@
 #include "opened_files_window.hpp"
+#include "history_context_menu.hpp"
+#include "history_preview.hpp"
+#include "video_context_menu.hpp"
+#include "video_player.hpp"
 
 #include "imgui.h"
 
@@ -17,6 +21,7 @@ OpenedFilesWindow::OpenedFilesWindow()
     : IsOpen{false}
     , m_filter{}
     , m_history{}
+    , m_on_erase_entry{nullptr}
 {
 }
 
@@ -40,9 +45,15 @@ void OpenedFilesWindow::sync_history(const std::vector<WindowStateToml::ImageHis
     m_history = history;
 }
 
+void OpenedFilesWindow::SetEraseHistoryEntryCallback(std::function<void(const std::string &)> cb)
+{
+    m_on_erase_entry = std::move(cb);
+}
+
 std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const ImageViewerPanel &viewer,
                                                                           HistoryPreview &preview,
-                                                                          int *focus_id)
+                                                                          int *focus_id,
+                                                                          VideoContextMenu *video_ctx)
 {
     if (!IsOpen)
         return std::nullopt;
@@ -100,7 +111,7 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
             ImGui::Text("History from TOML:");
             ImGui::Separator();
             if (ImGui::BeginChild("##history_from_toml_list", ImVec2(0.0f, 0.0f), true)) {
-                for (const auto &hentry : m_history) {
+                for (auto &hentry : m_history) {
                     const std::string haystack = hentry.kind + " " + hentry.source;
                     if (!m_filter.PassFilter(haystack.c_str()))
                         continue;
@@ -110,6 +121,15 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                         activated_entry = hentry;
                     if (ImGui::IsItemHovered())
                         preview.draw_for_hover(hentry);
+                    const bool is_video = VideoPlayer::is_video_path(hentry.source) ||
+                                         VideoPlayer::is_video_url(hentry.source);
+                    if (is_video && video_ctx) {
+                        if (const auto r = video_ctx->draw_for_item(hentry); r.erase)
+                            if (m_on_erase_entry) m_on_erase_entry(r.erase_source);
+                    } else {
+                        if (const auto erase = HistoryContextMenu::draw_for_item(hentry.source))
+                            if (m_on_erase_entry) m_on_erase_entry(*erase);
+                    }
                 }
             }
             ImGui::EndChild();
@@ -132,8 +152,19 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                 if (ImGui::IsItemHovered()) {
                     if (it != m_history.end())
                         preview.draw_for_hover(*it);
-                    else
-                        preview.draw_for_hover(make_history_entry(file));
+                    else {
+                        auto temp_entry = make_history_entry(file);
+                        preview.draw_for_hover(temp_entry);
+                    }
+                }
+                const bool is_video_file = VideoPlayer::is_video_path(file.source) ||
+                                           VideoPlayer::is_video_url(file.source);
+                if (is_video_file && video_ctx && it != m_history.end()) {
+                    if (const auto r = video_ctx->draw_for_item(*it); r.erase)
+                        if (m_on_erase_entry) m_on_erase_entry(r.erase_source);
+                } else {
+                    if (const auto erase = HistoryContextMenu::draw_for_item(file.source))
+                        if (m_on_erase_entry) m_on_erase_entry(*erase);
                 }
             }
         }

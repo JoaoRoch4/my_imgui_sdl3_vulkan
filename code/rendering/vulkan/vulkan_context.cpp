@@ -1,5 +1,6 @@
 #include "vulkan_context.hpp"
 #include <array>
+#include <print>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,6 +66,8 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     volkInitialize();
 #endif
 
+    std::println("[vulkan_context] setup begin");
+
     // Create Vulkan Instance
     {
         VkInstanceCreateInfo create_info = {};
@@ -93,10 +96,15 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         instance_extensions.push_back("VK_EXT_debug_report");
 #endif
 
+    std::println("[vulkan_context] instance extensions requested: {}", instance_extensions.size());
+    for (const char* ext : instance_extensions)
+        std::println("[vulkan_context]   instance ext: {}", ext ? ext : "<null>");
+
         create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
         create_info.ppEnabledExtensionNames = instance_extensions.data();
         err = vkCreateInstance(&create_info, allocator, &instance);
         check_result(err);
+    std::println("[vulkan_context] vkCreateInstance OK");
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
         volkLoadInstance(instance);
@@ -118,15 +126,17 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     // Select Physical Device (GPU)
     physical_device = ImGui_ImplVulkanH_SelectPhysicalDevice(instance);
     IM_ASSERT(physical_device != VK_NULL_HANDLE);
+    std::println("[vulkan_context] selected physical device: {}", static_cast<const void*>(physical_device));
 
     // Select graphics queue family
     queue_family = ImGui_ImplVulkanH_SelectQueueFamilyIndex(physical_device);
     IM_ASSERT(queue_family != static_cast<uint32_t>(-1));
+    std::println("[vulkan_context] selected queue family: {}", queue_family);
 
     // Create Logical Device
     {
-        std::vector<const char *> device_extensions;
-        device_extensions.push_back("VK_KHR_swapchain");
+        std::vector<const char *> requested_device_extensions;
+        requested_device_extensions.push_back("VK_KHR_swapchain");
 
         uint32_t properties_count;
         std::vector<VkExtensionProperties> properties;
@@ -135,8 +145,30 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &properties_count, properties.data());
 #ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
         if (is_extension_available(properties, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME))
-            device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+            requested_device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 #endif
+
+        std::vector<const char*> device_extensions;
+        for (const char* ext : requested_device_extensions) {
+            if (!ext)
+                continue;
+
+            if (strcmp(ext, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0) {
+                std::println("[vulkan_context] skip invalid device extension: {}", ext);
+                continue;
+            }
+
+            if (!is_extension_available(properties, ext)) {
+                std::println("[vulkan_context] skip unavailable device extension: {}", ext);
+                continue;
+            }
+
+            device_extensions.push_back(ext);
+        }
+
+        std::println("[vulkan_context] device extensions enabled: {}", device_extensions.size());
+        for (const char* ext : device_extensions)
+            std::println("[vulkan_context]   device ext: {}", ext ? ext : "<null>");
 
         std::array<float, 1> queue_priority = {1.0f};
         std::array<VkDeviceQueueCreateInfo, 1> queue_info = {};
@@ -153,6 +185,7 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         err = vkCreateDevice(physical_device, &create_info, allocator, &device);
         check_result(err);
         vkGetDeviceQueue(device, queue_family, 0, &queue);
+        std::println("[vulkan_context] vkCreateDevice OK");
     }
 
     // Create Descriptor Pool
@@ -171,6 +204,8 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         err = vkCreateDescriptorPool(device, &pool_info, allocator, &descriptor_pool);
         check_result(err);
     }
+
+    std::println("[vulkan_context] setup done");
 }
 
 void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const {
@@ -216,6 +251,7 @@ void vulkan_context::resize_window(ImGui_ImplVulkanH_Window *wd, int width, int 
 }
 
 void vulkan_context::cleanup() {
+    std::println("[vulkan_context] cleanup begin");
     vkDestroyDescriptorPool(device, descriptor_pool, allocator);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
@@ -225,6 +261,7 @@ void vulkan_context::cleanup() {
 
     vkDestroyDevice(device, allocator);
     vkDestroyInstance(instance, allocator);
+    std::println("[vulkan_context] cleanup done");
 }
 
 void vulkan_context::cleanup_window(ImGui_ImplVulkanH_Window *wd) const {
@@ -292,7 +329,7 @@ void vulkan_context::frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw
         info.pSignalSemaphores = &render_complete_semaphore;
         err = vkEndCommandBuffer(fd->CommandBuffer);
         check_result(err);
-        err = vkQueueSubmit(queue, 1, &info, fd->Fence);
+        err = queue_submit(1, &info, fd->Fence);
         check_result(err);
     }
 }
@@ -308,7 +345,7 @@ void vulkan_context::frame_present(ImGui_ImplVulkanH_Window *wd) {
     info.swapchainCount = 1;
     info.pSwapchains = &wd->Swapchain;
     info.pImageIndices = &wd->FrameIndex;
-    VkResult err = vkQueuePresentKHR(queue, &info);
+    VkResult err = queue_present(&info);
     if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
         swap_chain_rebuild = true;
     if (err == VK_ERROR_OUT_OF_DATE_KHR)
@@ -316,4 +353,14 @@ void vulkan_context::frame_present(ImGui_ImplVulkanH_Window *wd) {
     if (err != VK_SUBOPTIMAL_KHR)
         check_result(err);
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
+}
+
+VkResult vulkan_context::queue_submit(uint32_t submit_count, const VkSubmitInfo *submits, VkFence fence) {
+    std::scoped_lock lock(queue_mutex);
+    return vkQueueSubmit(queue, submit_count, submits, fence);
+}
+
+VkResult vulkan_context::queue_present(const VkPresentInfoKHR *present_info) {
+    std::scoped_lock lock(queue_mutex);
+    return vkQueuePresentKHR(queue, present_info);
 }

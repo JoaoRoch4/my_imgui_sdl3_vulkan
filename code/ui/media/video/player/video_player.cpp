@@ -1,4 +1,6 @@
 #include "video_player.hpp"
+#include "video_context_menu.hpp"
+#include "history_preview.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
@@ -10,6 +12,7 @@
 #include <bit>
 #include <cstdio>
 #include <cstring>
+#include <print>
 #include <string>
 #include <unordered_set>
 
@@ -126,6 +129,7 @@ VideoPlayer::VideoEntry::VideoEntry()
     , id{0}
     , open{true}
     , fullscreen{false}
+    , loop{false}
 {
 }
 
@@ -137,6 +141,14 @@ VideoPlayer::VideoPlayer()
     : m_vk{nullptr}
     , m_entries{}
     , m_next_id{0}
+    , m_ctx_menu{nullptr}
+    , m_ctx_lookup{}
+    , m_ctx_on_erase{}
+    , m_on_open_image{}
+    , m_on_open_online{}
+    , m_on_open_recent{}
+    , m_history_provider{}
+    , m_history_preview{nullptr}
 {
 }
 
@@ -150,11 +162,17 @@ VideoPlayer::~VideoPlayer() {
 // ============================================================================
 
 void VideoPlayer::setup(vulkan_context *vk) {
+    std::println("[VideoPlayer] setup");
     m_vk = vk;
+    constexpr VkDeviceSize k_max_seek_preview_bytes =
+        static_cast<VkDeviceSize>(1920) * 1920 * 4;
+    m_seek_uploader.init(m_vk,
+                         static_cast<size_t>(k_max_seek_preview_bytes));
     m_hover.setup(vk);
 }
 
 void VideoPlayer::shutdown() {
+    std::println("[VideoPlayer] shutdown begin");
     if (!m_vk)
         return;
 
@@ -180,8 +198,10 @@ void VideoPlayer::shutdown() {
     m_entries.clear();
 
     m_hover.shutdown();
+    m_seek_uploader.shutdown();
 
     m_vk = nullptr;
+    std::println("[VideoPlayer] shutdown done");
 }
 
 // ============================================================================
@@ -235,6 +255,7 @@ uint32_t VideoPlayer::find_memory_type(VkPhysicalDevice phys,
 // ============================================================================
 
 bool VideoPlayer::add_from_path(const std::filesystem::path &path) {
+    std::println("[VideoPlayer] add_from_path: {}", path.string());
     auto ep = std::make_unique<VideoEntry>();
     ep->title = path.filename().string();
     ep->source = path.string();
@@ -245,10 +266,12 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path) {
     if (!ep->mpv)
         return false;
 
-    mpv_set_option_string(ep->mpv, "hwdec", "no");
+    mpv_set_option_string(ep->mpv, "hwdec", "yes");
     mpv_set_option_string(ep->mpv, "vo", "libmpv");
-    if (ep->kind == "gif")
+    if (ep->kind == "gif") {
         mpv_set_option_string(ep->mpv, "loop-file", "inf");
+        ep->loop = true;
+    }
 
     if (mpv_initialize(ep->mpv) < 0) {
         mpv_terminate_destroy(ep->mpv);
@@ -278,13 +301,14 @@ bool VideoPlayer::add_from_path(const std::filesystem::path &path) {
     const char *cmd[] = {"loadfile", ep->source.c_str(), nullptr};
     mpv_command_async(ep->mpv, 0, cmd);
 
-    ep->seek_preview.setup(m_vk, ep->source);
+    ep->seek_preview.setup(m_vk, &m_seek_uploader, ep->source);
 
     m_entries.push_back(std::move(ep));
     return true;
 }
 
 bool VideoPlayer::add_from_url(const std::string &url, const std::string &title) {
+    std::println("[VideoPlayer] add_from_url: {} (title='{}')", url, title);
     auto ep = std::make_unique<VideoEntry>();
     ep->title = title;
     ep->source = url;
@@ -295,7 +319,7 @@ bool VideoPlayer::add_from_url(const std::string &url, const std::string &title)
     if (!ep->mpv)
         return false;
 
-    mpv_set_option_string(ep->mpv, "hwdec", "no");
+    mpv_set_option_string(ep->mpv, "hwdec", "yes");
     mpv_set_option_string(ep->mpv, "vo", "libmpv");
     // yt-dlp integration — lets mpv stream YouTube, Vimeo, Twitch, etc.
     mpv_set_option_string(ep->mpv, "ytdl", "yes");
@@ -336,7 +360,7 @@ bool VideoPlayer::add_from_url(const std::string &url, const std::string &title)
     const char *cmd[] = {"loadfile", url.c_str(), nullptr};
     mpv_command_async(ep->mpv, 0, cmd);
 
-    ep->seek_preview.setup(m_vk, url);
+    ep->seek_preview.setup(m_vk, &m_seek_uploader, url);
 
     m_entries.push_back(std::move(ep));
     return true;
@@ -347,6 +371,7 @@ bool VideoPlayer::add_from_url(const std::string &url, const std::string &title)
 // ============================================================================
 
 bool VideoPlayer::create_gpu_resources(VideoEntry &e) {
+    std::println("[VideoPlayer] create_gpu_resources id={} {}x{}", e.id, e.video_w, e.video_h);
     const int w = e.video_w;
     const int h = e.video_h;
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
@@ -473,7 +498,7 @@ bool VideoPlayer::create_gpu_resources(VideoEntry &e) {
         VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &e.cmd_buf;
-        vkQueueSubmit(m_vk->queue, 1, &submit, e.upload_fence);
+        m_vk->queue_submit(1, &submit, e.upload_fence);
         vkWaitForFences(m_vk->device, 1, &e.upload_fence, VK_TRUE, UINT64_MAX);
         vkResetFences(m_vk->device, 1, &e.upload_fence);
         vkResetCommandBuffer(e.cmd_buf, 0);
@@ -483,6 +508,7 @@ bool VideoPlayer::create_gpu_resources(VideoEntry &e) {
 }
 
 void VideoPlayer::destroy_gpu_resources(VideoEntry &e) {
+    std::println("[VideoPlayer] destroy_gpu_resources id={}", e.id);
     if (e.descriptor_set != VK_NULL_HANDLE) {
         ImGui_ImplVulkan_RemoveTexture(e.descriptor_set);
         e.descriptor_set = VK_NULL_HANDLE;
@@ -532,13 +558,29 @@ void VideoPlayer::destroy_gpu_resources(VideoEntry &e) {
 // ============================================================================
 
 VkDescriptorSet VideoPlayer::hover_thumbnail(const std::string &source) {
+    static std::string s_last_hover_source;
+    if (s_last_hover_source != source) {
+        std::println("[VideoPlayer] hover_thumbnail: {}", source);
+        s_last_hover_source = source;
+    }
     return m_hover.thumbnail(source);
 }
 
+bool VideoPlayer::save_hover_frame(const std::filesystem::path &path) {
+    std::println("[VideoPlayer] save_hover_frame: {}", path.string());
+    return m_hover.save_frame(path);
+}
+
 VkDescriptorSet VideoPlayer::get_open_thumbnail(const std::string &source) const {
+    static std::string s_last_hit_source;
     for (const auto &ep : m_entries) {
-        if (ep->source == source && ep->descriptor_set != VK_NULL_HANDLE)
+        if (ep->source == source && ep->descriptor_set != VK_NULL_HANDLE) {
+            if (s_last_hit_source != source) {
+                std::println("[VideoPlayer] get_open_thumbnail: HIT {}", source);
+                s_last_hit_source = source;
+            }
             return ep->descriptor_set;
+        }
     }
     return VK_NULL_HANDLE;
 }
@@ -613,7 +655,7 @@ void VideoPlayer::upload_frame(VideoEntry &e) {
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &e.cmd_buf;
-    vkQueueSubmit(m_vk->queue, 1, &submit, e.upload_fence);
+    m_vk->queue_submit(1, &submit, e.upload_fence);
     vkWaitForFences(m_vk->device, 1, &e.upload_fence, VK_TRUE, UINT64_MAX);
     vkResetFences(m_vk->device, 1, &e.upload_fence);
     vkResetCommandBuffer(e.cmd_buf, 0);
@@ -630,6 +672,7 @@ void VideoPlayer::poll_events(VideoEntry &e) {
             break;
 
         if (ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
+            std::println("[VideoPlayer] event VIDEO_RECONFIG id={}", e.id);
             // Read the actual decoded video dimensions
             int64_t nw = 0, nh = 0;
             mpv_get_property(e.mpv, "dwidth", MPV_FORMAT_INT64, &nw);
@@ -644,6 +687,7 @@ void VideoPlayer::poll_events(VideoEntry &e) {
                 e.video_h = static_cast<int>(nh);
                 create_gpu_resources(e);
                 e.frame_dirty.store(true, std::memory_order_release);
+                std::println("[VideoPlayer] reconfigured id={} {}x{}", e.id, e.video_w, e.video_h);
             }
         }
     }
@@ -678,6 +722,30 @@ void VideoPlayer::update_frames() {
 // ============================================================================
 // draw — called each frame inside an ImGui frame
 // ============================================================================
+
+void VideoPlayer::set_player_menu_callbacks(
+    std::function<void()> on_open_image,
+    std::function<void()> on_open_online,
+    std::function<void(const std::string &, const std::string &)> on_open_recent,
+    std::function<const std::vector<WindowStateToml::ImageHistoryEntry> &()> history,
+    HistoryPreview *preview)
+{
+    m_on_open_image    = std::move(on_open_image);
+    m_on_open_online   = std::move(on_open_online);
+    m_on_open_recent   = std::move(on_open_recent);
+    m_history_provider = std::move(history);
+    m_history_preview  = preview;
+}
+
+void VideoPlayer::set_context_menu(
+    VideoContextMenu *ctx,
+    std::function<WindowStateToml::ImageHistoryEntry *(const std::string &)> lookup,
+    std::function<void(const std::string &)> on_erase)
+{
+    m_ctx_menu     = ctx;
+    m_ctx_lookup   = std::move(lookup);
+    m_ctx_on_erase = std::move(on_erase);
+}
 
 void VideoPlayer::draw() {
     if (!m_vk)
@@ -728,11 +796,114 @@ void VideoPlayer::draw_window(VideoEntry &e, int idx) {
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
     } else {
         ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_FirstUseEver);
+        if (m_on_open_image || m_on_open_online || m_on_open_recent)
+            flags |= ImGuiWindowFlags_MenuBar;
     }
 
     if (!ImGui::Begin(win_id.c_str(), &e.open, flags)) {
         ImGui::End();
         return;
+    }
+
+    // ---- Context menu (right-click anywhere in the window) -----------------
+    if (m_ctx_menu) {
+        // Build a minimal history entry; use cached history entry when available.
+        WindowStateToml::ImageHistoryEntry hist_entry;
+        if (m_ctx_lookup) {
+            if (const auto *found = m_ctx_lookup(e.source))
+                hist_entry = *found;
+        }
+        if (hist_entry.source.empty()) {
+            hist_entry.source = e.source;
+            hist_entry.kind   = e.kind;
+        }
+
+        const std::string popup_id = "##vctx_" + std::to_string(e.id);
+        if (ImGui::BeginPopupContextWindow(popup_id.c_str())) {
+            // --- History / save items (Remove from History, Save Video As…) ---
+            const auto ctx_result = m_ctx_menu->draw_menu_items(hist_entry);
+            if (ctx_result.erase && m_ctx_on_erase)
+                m_ctx_on_erase(ctx_result.erase_source);
+
+            // --- Open shortcuts -------------------------------------------
+            if (m_on_open_image || m_on_open_online || m_on_open_recent) {
+                ImGui::Separator();
+                if (m_on_open_image && ImGui::MenuItem("Open Image...", "Ctrl+O"))
+                    m_on_open_image();
+                if (m_on_open_online && ImGui::MenuItem("Open Online..."))
+                    m_on_open_online();
+                if (m_history_provider && m_on_open_recent) {
+                    const auto &hist = m_history_provider();
+                    if (!hist.empty() && ImGui::BeginMenu("Recent")) {
+                        constexpr int k_max = 20;
+                        int shown = 0;
+                        for (const auto &h : hist) {
+                            if (shown++ >= k_max)
+                                break;
+                            std::string label;
+                            if (h.kind == "file") {
+                                label = "[file]  ";
+                                label += std::filesystem::path(h.source).filename().string();
+                            } else {
+                                label = "[url]   ";
+                                label += h.source.size() > 60
+                                             ? h.source.substr(0, 57) + "..."
+                                             : h.source;
+                            }
+                            if (ImGui::MenuItem(label.c_str()))
+                                m_on_open_recent(h.source, h.kind);
+                            if (ImGui::IsItemHovered() && m_history_preview && m_ctx_lookup) {
+                                if (auto *entry = m_ctx_lookup(h.source))
+                                    m_history_preview->draw_for_hover(*entry);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    // ---- In-window File menu bar -------------------------------------------
+    if (!e.fullscreen && ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            if (m_on_open_image && ImGui::MenuItem("Open Image...", "Ctrl+O"))
+                m_on_open_image();
+            if (m_on_open_online && ImGui::MenuItem("Open Online..."))
+                m_on_open_online();
+
+            if (m_history_provider && m_on_open_recent) {
+                const auto &hist = m_history_provider();
+                if (!hist.empty() && ImGui::BeginMenu("Recent")) {
+                    constexpr int k_max = 20;
+                    int shown = 0;
+                    for (const auto &h : hist) {
+                        if (shown++ >= k_max)
+                            break;
+                        std::string label;
+                        if (h.kind == "file") {
+                            label = "[file]  ";
+                            label += std::filesystem::path(h.source).filename().string();
+                        } else {
+                            label = "[url]   ";
+                            label += h.source.size() > 60
+                                         ? h.source.substr(0, 57) + "..."
+                                         : h.source;
+                        }
+                        if (ImGui::MenuItem(label.c_str()))
+                            m_on_open_recent(h.source, h.kind);
+                        if (ImGui::IsItemHovered() && m_history_preview && m_ctx_lookup) {
+                            if (auto *entry = m_ctx_lookup(h.source))
+                                m_history_preview->draw_for_hover(*entry);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
     }
 
     // Escape exits fullscreen
@@ -825,8 +996,14 @@ void VideoPlayer::draw_window(VideoEntry &e, int idx) {
         mpv_command_string(e.mpv, "seek 10");
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::SmallButton("⟳"))
-        mpv_command_string(e.mpv, "set loop-file inf");
+    if (e.loop)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (ImGui::SmallButton("⟳")) {
+        e.loop = !e.loop;
+        mpv_command_string(e.mpv, e.loop ? "set loop-file inf" : "set loop-file no");
+    }
+    if (e.loop)
+        ImGui::PopStyleColor();
     
     ImGui::SameLine(0.0f, 4.0f);
     if (!has_next)

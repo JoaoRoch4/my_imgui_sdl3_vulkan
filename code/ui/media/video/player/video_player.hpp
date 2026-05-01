@@ -3,6 +3,8 @@
 #include "video_hover_preview.hpp"
 #include "video_seek_preview.hpp"
 #include "vulkan_context.hpp"
+#include "vulkan_upload_context.hpp"
+#include "window_state_toml.hpp"
 
 #include "imgui.h"
 
@@ -11,9 +13,13 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+
+class VideoContextMenu;
+class HistoryPreview;
 
 /// Manages one or more mpv-backed video/GIF/audio windows rendered into
 /// Vulkan textures via the libmpv software render API.
@@ -57,11 +63,40 @@ public:
     /// Returns VK_NULL_HANDLE until the first frame is ready.
     [[nodiscard]] VkDescriptorSet hover_thumbnail(const std::string &source);
 
+    /// Save the current hover frame to a PNG file.
+    /// Returns true on success; false if no valid frame has been rendered yet.
+    bool save_hover_frame(const std::filesystem::path &path);
+
     /// Return true if the given path should be opened in the video player.
     static bool is_video_path(const std::filesystem::path &path);
 
     /// Return true if the given URL should be streamed in the video player.
     static bool is_video_url(const std::string &url);
+
+    /// Attach a VideoContextMenu for right-click menus on video windows.
+    ///
+    /// @param ctx     Context menu instance (lifetime must exceed VideoPlayer).
+    /// @param lookup  Returns the history entry matching @p source, or nullptr.
+    /// @param on_erase  Called when the user picks "Remove from History".
+    void set_context_menu(
+        VideoContextMenu *ctx,
+        std::function<WindowStateToml::ImageHistoryEntry *(const std::string &)> lookup,
+        std::function<void(const std::string &)> on_erase);
+
+    /// Attach callbacks for the in-window "File" menu.
+    ///
+    /// @param on_open_image   Open the native file-open dialog.
+    /// @param on_open_online  Open the URL input popup.
+    /// @param on_open_recent  Open an item from history (source, kind).
+    /// @param history         Provider that returns the current history list.
+    /// @param preview         HistoryPreview for hover thumbnails (may be null).
+    void set_player_menu_callbacks(
+        std::function<void()> on_open_image,
+        std::function<void()> on_open_online,
+        std::function<void(const std::string &, const std::string &)> on_open_recent,
+        std::function<const std::vector<WindowStateToml::ImageHistoryEntry> &()> history,
+        HistoryPreview *preview = nullptr);
+
 
     /// Size used for hover/seek-preview thumbnails.
     static constexpr ImVec2 k_preview_size{320.0f, 180.0f};
@@ -99,6 +134,7 @@ private:
         int         id;
         bool        open;
         bool        fullscreen;
+        bool        loop;
 
         // Seek-preview thumbnail (dedicated mpv + jthread via VideoSeekPreview)
         VideoSeekPreview seek_preview;
@@ -116,8 +152,22 @@ private:
 
     // Shared hover thumbnail (one per VideoPlayer)
     VideoHoverPreview m_hover;
+    VulkanUploadContext m_seek_uploader;
 
     vulkan_context *m_vk;
     std::vector<std::unique_ptr<VideoEntry>> m_entries;
     int m_next_id;
+
+    // Optional context menu (set via set_context_menu)
+    VideoContextMenu *m_ctx_menu;
+    std::function<WindowStateToml::ImageHistoryEntry *(const std::string &)> m_ctx_lookup;
+    std::function<void(const std::string &)> m_ctx_on_erase;
+
+    // In-window File menu callbacks (set via set_player_menu_callbacks)
+    std::function<void()> m_on_open_image;
+    std::function<void()> m_on_open_online;
+    std::function<void(const std::string &, const std::string &)> m_on_open_recent;
+    std::function<const std::vector<WindowStateToml::ImageHistoryEntry> &()> m_history_provider;
+    HistoryPreview *m_history_preview;
 };
+

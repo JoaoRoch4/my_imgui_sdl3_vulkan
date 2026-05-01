@@ -5,18 +5,18 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
-#include "rendering/imgui_context.hpp"
-#include "rendering/sdl3_context.hpp"
-#include "rendering/vulkan_context.hpp"
-#include "ui/main_menu_bar.hpp"
-#include "ui/style_editor.hpp"
-#include "ui/window_state_toml.hpp"
+#include "imgui_context.hpp"
+#include "sdl3_context.hpp"
+#include "vulkan_context.hpp"
+#include "main_menu_bar.hpp"
+#include "style_editor.hpp"
+#include "window_state_toml.hpp"
 
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_vulkan.h>
 
-#include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -83,8 +83,11 @@ int App::run()
     MainMenuBar menu_bar;
     menu_bar.Setup(&style_editor, sdl.window, &vk, &show_demo_window, &show_another_window);
     menu_bar.LoadOpenedFilesHistoryFromToml(state_path);
+    menu_bar.SetStatePath(state_path);
     menu_bar.ApplyHistory(state);
     menu_bar.ApplyRuntimeConfig(state);
+    menu_bar.SetThumbDir(std::filesystem::path(SDL_GetBasePath()) / "thumbs");
+    menu_bar.SetDownloadCacheDir(std::filesystem::path(SDL_GetBasePath()) / "video_cache");
     ImVec4 clear_color = state.clear_color
                              ? ImVec4(static_cast<float>(state.clear_color->r) / 255.0f, static_cast<float>(state.clear_color->g) / 255.0f, static_cast<float>(state.clear_color->b) / 255.0f, static_cast<float>(state.clear_color->a) / 255.0f)
                              : ImVec4(0.45f, 0.55f, 0.60f, 1.00f);

@@ -1,7 +1,8 @@
 #pragma once
 
-#include "imgui.h"
-#include "imgui_impl_vulkan.h"
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
+#include <mutex>
 #include <vector>
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
@@ -39,6 +40,8 @@ public:
     void cleanup_window(ImGui_ImplVulkanH_Window *wd) const;
     void frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data, const ImVec4 &clear_color);
     void frame_present(ImGui_ImplVulkanH_Window *wd);
+    VkResult queue_submit(uint32_t submit_count, const VkSubmitInfo *submits, VkFence fence);
+    VkResult queue_present(const VkPresentInfoKHR *present_info);
 
     static void check_result(VkResult err);
 
@@ -52,4 +55,6 @@ private:
         uint64_t object, size_t location, int32_t messageCode,
         const char *pLayerPrefix, const char *pMessage, void *pUserData);
 #endif
+
+    std::mutex queue_mutex;
 };

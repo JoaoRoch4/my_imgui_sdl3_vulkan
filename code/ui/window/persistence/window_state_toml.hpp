@@ -121,9 +121,12 @@ struct WindowStateToml
     // One entry per image or URL opened by the user. Newest entry first.
     struct ImageHistoryEntry
     {
-        std::string source;     // absolute file path or URL
-        std::string kind;       // "file" | "url"
-        std::string opened_at;  // ISO 8601 timestamp (yyyy-mm-ddTHH:MM:SS)
+        std::string source;          // absolute file path or URL
+        std::string kind;            // "file" | "url"
+        std::string opened_at;       // ISO 8601 timestamp (yyyy-mm-ddTHH:MM:SS)
+        std::string thumbnail_path;  // path to cached thumbnail PNG (empty = not yet generated)
+        std::string cached_path;     // local downloaded copy of a URL video (empty = not cached)
+        std::string title;           // human-readable display name
     };
 
     bool show_demo_window         = true;

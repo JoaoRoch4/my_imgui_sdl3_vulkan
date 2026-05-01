@@ -8,16 +8,14 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <condition_variable>
 #include <fstream>
+#include <print>
 #include <string_view>
 #include <unistd.h>
 #include <utility>
 #include <vector>
-#include <mutex>
-#include <condition_variable>
-#include <filesystem>
-
-using std::jthread;
 
 ImVec2 g_history_preview_max_size = ImVec2(1000.0f, 1000.0f);
 
@@ -111,23 +109,27 @@ HistoryPreview::HistoryPreview()
     , m_active_texture{}
     , m_active_source{}
     , m_active_temp_path{}
+    , m_thumb_dir{}
 {
+}
+
+HistoryPreview::~HistoryPreview()
+{
+    shutdown();
 }
 
 void HistoryPreview::setup(vulkan_context *vk, VideoPlayer *vp, ImageViewerPanel *viewer)
 {
-
-    using JthreadWorker = std::jthread; /// Avoid including <thread> in the header just for this.
     shutdown();
 
-    m_vk           = vk;
+    m_vk = vk;
     m_video_player = vp;
-    m_viewer       = viewer;
+    m_viewer = viewer;
     m_has_pending_job = false;
     m_has_ready_result = false;
     m_pending_job = Job{};
     m_ready_result = JobResult{};
-    m_worker = JthreadWorker{&HistoryPreview::worker_loop, this}; // NOLINT
+    m_worker = std::jthread{&HistoryPreview::worker_loop, this};
 }
 
 void HistoryPreview::shutdown()
@@ -139,9 +141,8 @@ void HistoryPreview::shutdown()
     m_worker.request_stop();
     m_cv.notify_all();
 
-    if (m_worker.joinable()) {
+    if (m_worker.joinable())
         m_worker.join();
-    }
 
     clear_active_preview();
 
@@ -164,6 +165,7 @@ void HistoryPreview::request_preview(const WindowStateToml::ImageHistoryEntry &h
         m_pending_job.kind == hentry.kind)
         return;
 
+    std::println("[HistoryPreview] request_preview: kind={} source={}", hentry.kind, hentry.source);
     m_pending_job = Job{hentry.source, hentry.kind};
     m_has_pending_job = true;
     m_cv.notify_one();
@@ -215,12 +217,25 @@ void HistoryPreview::apply_ready_result(const WindowStateToml::ImageHistoryEntry
     }
 }
 
-void HistoryPreview::draw_for_hover(const WindowStateToml::ImageHistoryEntry &hentry)
+void HistoryPreview::set_thumb_dir(const std::filesystem::path &dir)
+{
+    m_thumb_dir = dir;
+    if (m_thumb_dir.empty())
+        return;
+
+    std::error_code ec;
+    std::filesystem::create_directories(m_thumb_dir, ec);
+    if (ec) {
+        std::println("[HistoryPreview] failed to create thumb dir: {} ({})",
+                     m_thumb_dir.string(), ec.message());
+    }
+}
+
+void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
 {
     if (!m_vk)
         return;
 
-    // Detect video entries and use VideoPlayer's hover thumbnail
     const bool is_video = m_video_player != nullptr &&
         (hentry.kind == "file"
             ? VideoPlayer::is_video_path(std::filesystem::path(hentry.source))
@@ -229,21 +244,75 @@ void HistoryPreview::draw_for_hover(const WindowStateToml::ImageHistoryEntry &he
     const ImVec2 mouse = ImGui::GetMousePos();
     ImGui::SetNextWindowPos(ImVec2(mouse.x + 24.0f, mouse.y + 24.0f), ImGuiCond_Always);
     ImGui::BeginTooltip();
-    ImGui::Text("%s", hentry.source.c_str());
+    const std::string &display_title =
+        !hentry.title.empty() ? hentry.title : std::filesystem::path(hentry.source).filename().string();
+    ImGui::TextUnformatted(display_title.c_str());
 
     if (is_video) {
-        // Try open playback frame first (live frame from running video),
-        // fall back to hover-mpv thumbnail for history entries.
-        VkDescriptorSet ds = m_video_player->get_open_thumbnail(hentry.source);
+        const bool has_cached_file = !hentry.cached_path.empty() &&
+            std::filesystem::exists(std::filesystem::path(hentry.cached_path));
+        const std::string &lookup_src = has_cached_file ? hentry.cached_path : hentry.source;
+        VkDescriptorSet ds = m_video_player->get_open_thumbnail(lookup_src);
         if (ds == VK_NULL_HANDLE)
-            ds = m_video_player->hover_thumbnail(hentry.source);
+            ds = m_video_player->hover_thumbnail(lookup_src);
 
-        if (ds != VK_NULL_HANDLE)
+        if (ds != VK_NULL_HANDLE) {
             ImGui::Image(std::bit_cast<ImTextureID>(ds), VideoHoverPreview::preview_size);
-        else
-            ImGui::TextDisabled("Loading preview...");
+
+            if (hentry.thumbnail_path.empty() && !m_thumb_dir.empty()) {
+                const auto fnv = [](const std::string &s) {
+                    uint64_t h = 14695981039346656037ULL;
+                    for (const unsigned char c : s) {
+                        h ^= c;
+                        h *= 1099511628211ULL;
+                    }
+                    return h;
+                };
+                char hex[17];
+                std::snprintf(hex, sizeof(hex), "%016llx",
+                              static_cast<unsigned long long>(fnv(hentry.source)));
+                const auto tp = m_thumb_dir / (std::string(hex) + ".png");
+                std::error_code ec;
+                std::filesystem::create_directories(tp.parent_path(), ec);
+                if (ec) {
+                    std::println("[HistoryPreview] failed to create thumb dir: {} ({})",
+                                 tp.parent_path().string(), ec.message());
+                }
+                std::println("[HistoryPreview] trying save_hover_frame: {}", tp.string());
+                if (!ec && m_video_player->save_hover_frame(tp)) {
+                    hentry.thumbnail_path = tp.string();
+                    std::println("[HistoryPreview] thumbnail saved: {}", tp.string());
+                }
+            }
+        } else {
+            bool drew_static_thumb = false;
+            if (!hentry.thumbnail_path.empty()) {
+                const std::filesystem::path tp(hentry.thumbnail_path);
+                if (std::filesystem::exists(tp)) {
+                    if (m_active_source != hentry.source) {
+                        clear_active_preview();
+                        if (m_active_texture.load(tp, *m_vk))
+                            m_active_source = hentry.source;
+                    }
+                    if (m_active_texture.is_loaded()) {
+                        const float src_w = static_cast<float>(m_active_texture.width);
+                        const float src_h = static_cast<float>(m_active_texture.height);
+                        const float max_w = VideoHoverPreview::preview_size.x;
+                        const float max_h = VideoHoverPreview::preview_size.y;
+                        const float scale = std::min(max_w / src_w, max_h / src_h);
+                        ImGui::Image(m_active_texture.imgui_id(),
+                                     ImVec2(src_w * scale, src_h * scale));
+                        drew_static_thumb = true;
+                    }
+                } else {
+                    hentry.thumbnail_path.clear();
+                }
+            }
+
+            if (!drew_static_thumb)
+                ImGui::TextDisabled("Loading preview...");
+        }
     } else {
-        // For image URLs: check if already open in the viewer first
         if (hentry.kind == "url" && m_viewer) {
             const ImTextureID existing = m_viewer->get_imgui_id_for_source(hentry.source);
             if (existing) {

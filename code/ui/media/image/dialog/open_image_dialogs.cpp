@@ -1,6 +1,6 @@
 #include "open_image_dialogs.hpp"
 
-#include "imgui.h"
+#include <imgui.h>
 
 #include <SDL3/SDL_dialog.h>
 

@@ -6,7 +6,9 @@
 #include "history_preview.hpp"
 #include "open_image_dialogs.hpp"
 #include "opened_files_window.hpp"
+#include "video_context_menu.hpp"
 #include "video_player.hpp"
+#include "video_downloader.hpp"
 #include "window_state_toml.hpp"
 
 #include <array>
@@ -56,11 +58,20 @@ public:
     /// Explicitly load opened-files history from TOML at startup.
     bool LoadOpenedFilesHistoryFromToml(const std::filesystem::path &file_path);
 
+    /// Set the TOML state path used for immediate metadata persistence.
+    void SetStatePath(const std::filesystem::path &file_path);
+
     /// Save image history into persisted state.
     void ExportHistory(WindowStateToml *state) const;
 
     /// Save runtime config values into persisted state.
     void ExportRuntimeConfig(WindowStateToml *state) const;
+
+    /// Set the directory where cached video thumbnail PNGs are written.
+    void SetThumbDir(const std::filesystem::path &dir);
+
+    /// Set the directory where background-downloaded video files are cached.
+    void SetDownloadCacheDir(const std::filesystem::path &dir);
 
     /// Unload all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
     void Shutdown();
@@ -72,7 +83,11 @@ private:
     static void current_timestamp(std::array<char, 20> &dst);
 
     /// Push one entry onto the front of m_history with the given source and kind.
-    void push_history(const std::string &source, const std::string &kind);
+    void push_history(const std::string &source, const std::string &kind,
+                      const std::string &title);
+
+    /// Persist current history metadata (including thumbnail/cache paths) to TOML.
+    void persist_history_metadata_to_toml() const;
 
     StyleEditor *m_style_editor;
     SDL_Window *m_window;
@@ -88,9 +103,15 @@ private:
     BulkImageOpenQueue m_bulk_image_open;
 
     VideoPlayer m_video_player;
+    VideoDownloader m_video_downloader;
 
     ConfigRuntime m_config_runtime;
 
+    std::filesystem::path m_thumb_dir;
+    std::filesystem::path m_download_cache_dir;
+    std::filesystem::path m_state_path;
+
     HistoryPreview m_history_preview;
     OpenedFilesWindow m_opened_files_window;
+    VideoContextMenu m_video_context_menu;
 };

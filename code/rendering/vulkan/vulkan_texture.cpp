@@ -1,4 +1,5 @@
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "vulkan_texture.hpp"
 
 #include "imgui_impl_vulkan.h"
@@ -6,6 +7,7 @@
 #include <imgui.h>
 
 #include <stb_image.h>
+#include <stb_image_write.h>
 #include <webp/decode.h>
 
 #include <bit>
@@ -162,7 +164,7 @@ bool VulkanTexture::load(const std::filesystem::path& path, vulkan_context& vk) 
         vkGetImageMemoryRequirements(vk.device, m_image, &req);
         
         VkMemoryAllocateInfo alloc = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-        alloc.allocationSize = req.size;
+alloc.allocationSize = req.size;   // MUST be this
         alloc.memoryTypeIndex = find_memory_type(vk.physical_device, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         
         if (alloc.memoryTypeIndex == 0xFFFFFFFFu) { cleanup_pixels(); return false; }
@@ -261,7 +263,7 @@ bool VulkanTexture::load(const std::filesystem::path& path, vulkan_context& vk) 
         VkSubmitInfo s_info = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
         s_info.commandBufferCount = 1;
         s_info.pCommandBuffers = &cmd;
-        vkQueueSubmit(vk.queue, 1, &s_info, fence);
+        vk.queue_submit(1, &s_info, fence);
         
         vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, vk.allocator);

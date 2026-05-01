@@ -27,24 +27,42 @@ find_package(CURL REQUIRED)
 pkg_check_modules(MPV REQUIRED mpv)
 
 add_executable(example_sdl3_vulkan
-    code/main.cpp
-    code/app.cpp
-    code/ui/main_menu_bar.cpp
-    code/ui/bulk_image_open_queue.cpp
-    code/ui/history_preview.cpp
-    code/ui/open_image_dialogs.cpp
-    code/ui/opened_files_window.cpp
-    code/ui/video_player.cpp
-    code/ui/video_hover_preview.cpp
-    code/ui/video_seek_preview.cpp
-    code/ui/config_runtime.cpp
-    code/ui/window_state_toml.cpp
-    code/ui/style_editor.cpp
-    code/ui/Image_viewer_panel.cpp
+
+    code/main/main.cpp
+    code/main/app.cpp
+
+    code/ui/window/widgets/main_menu_bar.cpp
+    code/ui/window/widgets/opened_files_window.cpp
+    code/ui/window/widgets/history_context_menu.cpp
+    code/ui/window/widgets/video_context_menu.cpp
+
+    code/ui/window/persistence/window_state_toml.cpp
+    code/ui/window/persistence/style_editor.cpp
+
+    code/ui/media/preview_ui/history_preview.cpp
+
+    code/ui/media/image/Image_viewer_panel.cpp
+
+    code/ui/media/image/dialog/bulk_image_open_queue.cpp
+    code/ui/media/image/dialog/open_image_dialogs.cpp
+
+    code/ui/media/video/player/video_player.cpp
+
+    code/ui/media/video/downloader/video_downloader.cpp
+
+    code/ui/media/video/video_preview/video_hover_preview.cpp
+    code/ui/media/video/video_preview/video_seek_preview.cpp
+
+    code/ui/config/app_config.cpp
+    code/ui/config/config_runtime.cpp
+        
     code/rendering/sdl3_context.cpp
-    code/rendering/vulkan_context.cpp
     code/rendering/imgui_context.cpp
-    code/rendering/vulkan_texture.cpp
+
+    code/rendering/vulkan/vulkan_context.cpp
+    code/rendering/vulkan/vulkan_upload_context.cpp
+    code/rendering/vulkan/vulkan_texture.cpp
+   
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_demo.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -59,9 +77,23 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMGUI_DIR}/misc/freetype
+
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/main
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/window/widgets
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/window/persistence
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/preview_ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/image/dialog
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/player
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/downloader
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/media/video/video_preview
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/ui/config
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering/vulkan
+
     ${SDL3_INCLUDE_DIRS}
     ${VULKAN_INCLUDE_DIRS}
     ${FREETYPE_INCLUDE_DIRS}
