@@ -1,0 +1,48 @@
+# Clangd configuration file
+# See https://clangd.llvm.org/config for more information.
+
+# Apply config conditionally (e.g. only for specific files)
+# If:
+#   PathMatch: .*\.h
+
+CompileFlags:
+  CompilationDatabase: /home/joao/vscode/my_imgui/Project_sdl3_vulkan
+  # Add flags to the compile command
+  Add:
+    - -I/home/joao/vscode/my_imgui/External/Imgui-Viewports
+    - -I/home/joao/vscode/my_imgui/External/Imgui-Viewports/backends
+    - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/vcpkg_installed/x64-linux/include
+    - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code
+    - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/rendering
+    - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/ui
+    - -Wunused-variable
+    - -Winfinite-recursion
+    - -Warray-bounds
+    - -Wreturn-stack-address
+    - -Werror=implicit-function-declaration
+    - -Wshadow
+    - -Wshadow-field-in-constructor-modified
+    - -Wshadow-ivar
+    - -Wuninitialized
+    - -Wunused-label
+    - -Wunused-lambda-capture
+
+# Press Ctrl+Space to bring up completion suggestions
+Index:
+  StandardLibrary: true
+
+Hover:
+  ShowAKA: true
+  MacroContentsLimit: 2048
+
+InlayHints:
+  BlockEnd: false
+  Designators: true
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+  DefaultArguments: true
+  TypeNameLimit: 24
+
+Documentation:
+  CommentFormat: Plaintext

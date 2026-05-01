@@ -1,0 +1,15 @@
+{
+  "name": "my-imgui-app",
+  "version": "1.0",
+  "dependencies": [
+    {
+      "name": "reflectcpp",
+      "features": [
+        "toml"
+      ]
+    },
+    "stb",
+    "libwebp",
+    "curl"
+  ]
+}

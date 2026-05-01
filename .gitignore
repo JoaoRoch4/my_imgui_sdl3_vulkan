@@ -1,0 +1,33 @@
+# Build output
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+
+# Generated settings/state
+/imgui.ini
+/window_state.toml
+/compile_commands.json
+
+# vcpkg local installation cache
+/vcpkg_installed/
+
+# CMake/cache dirs
+/.cache/
+/.cmake/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Generic binaries
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
