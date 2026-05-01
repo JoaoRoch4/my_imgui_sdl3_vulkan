@@ -24,11 +24,20 @@ find_package(reflectcpp CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
+pkg_check_modules(MPV REQUIRED mpv)
 
 add_executable(example_sdl3_vulkan
     code/main.cpp
     code/app.cpp
     code/ui/main_menu_bar.cpp
+    code/ui/bulk_image_open_queue.cpp
+    code/ui/history_preview.cpp
+    code/ui/open_image_dialogs.cpp
+    code/ui/opened_files_window.cpp
+    code/ui/video_player.cpp
+    code/ui/video_hover_preview.cpp
+    code/ui/video_seek_preview.cpp
+    code/ui/config_runtime.cpp
     code/ui/window_state_toml.cpp
     code/ui/style_editor.cpp
     code/ui/Image_viewer_panel.cpp
@@ -59,6 +68,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${PLUTOSVG_INCLUDE_DIRS}
     ${Stb_INCLUDE_DIR}
     ${WEBP_INCLUDE_DIR}
+    ${MPV_INCLUDE_DIRS}
 )
 
 target_compile_options(example_sdl3_vulkan PRIVATE
@@ -82,5 +92,6 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     reflectcpp::reflectcpp
     WebP::webp
     CURL::libcurl
+    ${MPV_LIBRARIES}
     ${CMAKE_DL_LIBS}
 )

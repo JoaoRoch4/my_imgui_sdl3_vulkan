@@ -1,7 +1,14 @@
 # for more options, type ctrl + space to bring up the auto-completion list
 HeaderFilterRegex: ".*/code/.*"
+CheckOptions:
+  - key:             modernize-use-auto.MinTypeNameLength
+    value:           '0'
+FormatStyle: file
+ExcludeHeaderFilterRegex: ".*/External/.*"
 Checks:
     -*,
+    std=c++23
+    Wall 
     bugprone-argument-comment,
     bugprone-assert-side-effect,
     bugprone-bad-signal-to-kill-thread,
@@ -126,7 +133,6 @@ Checks:
     readability-avoid-const-params-in-decls,
     readability-const-return-type,
     readability-container-size-empty,
-    readability-convert-member-functions-to-static,
     readability-delete-null-pointer,
     readability-deleted-default,
     readability-inconsistent-declaration-parameter-name,

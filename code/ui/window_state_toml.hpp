@@ -138,6 +138,9 @@ struct WindowStateToml
     WindowRectToml style_editor_window;
     StyleToml      style;
     std::vector<ImageHistoryEntry> image_history;  // newest first, persisted across runs
+
+    std::optional<Vec2Toml> hover_preview_size;
+    std::optional<Vec2Toml> seek_preview_size;
 };
 
 bool LoadWindowStateToml(const std::filesystem::path& file_path, WindowStateToml& state);

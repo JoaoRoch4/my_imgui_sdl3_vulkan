@@ -39,8 +39,9 @@
 
 #include "Image_viewer_panel.hpp"
 
+#include "imgui_internal.h"
+
 #include <algorithm> /// std::clamp, std::erase_if
-#include <cmath>     /// std::max
 #include <string>    /// std::to_string
 
 // ============================================================================
@@ -53,6 +54,7 @@
 ImageViewerPanel::ImageViewerPanel()
     : m_images{}   /// No images open at startup.
     , m_next_id{0} /// IDs start at zero and increment monotonically.
+    , m_requested_focus_id{-1}
 {
 }
 
@@ -63,9 +65,8 @@ ImageViewerPanel::ImageViewerPanel()
 /**
  * @brief Load a texture from disk and register it as a new viewer window.
  *
- * Returns false (and does nothing) if:
- *   - The k_max_images cap is already reached.
- *   - VulkanTexture::load() fails to decode or upload the image.
+ * Returns false (and does nothing) if VulkanTexture::load() fails to decode
+ * or upload the image.
  *
  * @param path  Path to the image file on disk.
  * @param vk    Active Vulkan context for GPU upload.
@@ -73,10 +74,6 @@ ImageViewerPanel::ImageViewerPanel()
  */
 bool ImageViewerPanel::add_from_path(const std::filesystem::path &path,
                                      vulkan_context &vk) {
-    /// Reject early if we have hit the hard limit.
-    if (static_cast<int>(m_images.size()) >= k_max_images)
-        return false;
-
     /// Build the entry before moving it into m_images so that only a
     /// fully initialised, successfully loaded entry is ever committed.
     ImageEntry entry;
@@ -84,6 +81,8 @@ bool ImageViewerPanel::add_from_path(const std::filesystem::path &path,
     /// Show only the filename part as the window title
     /// (e.g. "/home/user/photos/cat.png"  →  "cat.png").
     entry.title = path.filename().string();
+    entry.source = path.string();
+    entry.kind = "file";
 
     /// Assign a unique ID that will never be reused in this session.
     entry.id = m_next_id++;
@@ -113,13 +112,12 @@ bool ImageViewerPanel::add_from_path(const std::filesystem::path &path,
  */
 bool ImageViewerPanel::add_from_url_temp(const std::filesystem::path &tmp_path,
                                          const std::string &display_title,
+                                         const std::string &source_url,
                                          vulkan_context &vk) {
-    /// Same cap guard as add_from_path.
-    if (static_cast<int>(m_images.size()) >= k_max_images)
-        return false;
-
     ImageEntry entry;
     entry.title = display_title; /// Caller derives this from the URL (e.g. filename part).
+    entry.source = source_url;
+    entry.kind = "url";
     entry.id = m_next_id++;
     entry.open = true;
 
@@ -150,25 +148,41 @@ void ImageViewerPanel::shutdown(vulkan_context &vk) {
     m_images.clear();
 }
 
+void ImageViewerPanel::request_focus(int id) {
+    m_requested_focus_id = id;
+}
+
 // ============================================================================
 // Capacity queries
 // ============================================================================
-
-/**
- * @brief Returns true when the viewer already holds k_max_images images.
- *
- * Used by MainMenuBar to disable "Open Image" menu items and to skip
- * pending file / URL processing without attempting a doomed load.
- */
-bool ImageViewerPanel::is_at_capacity() const {
-    return static_cast<int>(m_images.size()) >= k_max_images;
-}
 
 /**
  * @brief Returns the number of currently managed ImageEntry objects.
  */
 int ImageViewerPanel::count() const {
     return static_cast<int>(m_images.size());
+}
+
+std::vector<ImageViewerPanel::OpenedFileInfo> ImageViewerPanel::opened_files() const {
+    std::vector<OpenedFileInfo> files;
+    files.reserve(m_images.size());
+
+    for (const auto &entry : m_images) {
+        if (!entry.open)
+            continue;
+
+        files.push_back(OpenedFileInfo{entry.title, entry.source, entry.kind, entry.id});
+    }
+
+    return files;
+}
+
+ImTextureID ImageViewerPanel::get_imgui_id_for_source(const std::string &source) const {
+    for (const auto &entry : m_images) {
+        if (entry.open && entry.source == source && entry.texture.is_loaded())
+            return entry.texture.imgui_id();
+    }
+    return ImTextureID{};
 }
 
 // ============================================================================
@@ -242,6 +256,9 @@ void ImageViewerPanel::draw_single_window(ImageEntry &entry) {
     const std::string win_id = entry.title + "###img_" + std::to_string(entry.id);
     ImGui::SetNextWindowSize(ImVec2(1000.f, 1000.f), ImGuiCond_FirstUseEver);
 
+    if (entry.id == m_requested_focus_id)
+        ImGui::SetNextWindowFocus();
+
     ImGui::SetNextWindowSizeConstraints(
         ImVec2(200.f, 200.f), ImVec2(FLT_MAX, FLT_MAX),
         [](ImGuiSizeCallbackData *data) {
@@ -252,9 +269,19 @@ void ImageViewerPanel::draw_single_window(ImageEntry &entry) {
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 1.0f));
     if (!ImGui::Begin(win_id.c_str(), &entry.open)) {
+        if (entry.id == m_requested_focus_id)
+            m_requested_focus_id = -1;
         ImGui::End();
         ImGui::PopStyleColor(1);
         return;
+    }
+
+    if (entry.id == m_requested_focus_id)
+        m_requested_focus_id = -1;
+
+    if (ImGuiWindow *window = ImGui::GetCurrentWindowRead()) {
+        if ((window->DC.DockTabItemStatusFlags & ImGuiItemStatusFlags_HoveredRect) != 0)
+            render_tab_hover_preview(entry);
     }
 
     // 2. Logic Execution
@@ -353,4 +380,26 @@ void ImageViewerPanel::render_image(ImageEntry &entry, ImVec2 pos, ImVec2 size, 
 void ImageViewerPanel::render_overlay(ImageEntry &entry, ImVec2 pos, ImVec2 size) {
     ImGui::SetCursorScreenPos({pos.x + 10.0f, pos.y + size.y - 30.0f});
     ImGui::TextDisabled("%.0f %%", static_cast<double>(entry.zoom * 100.0f));
+}
+
+void ImageViewerPanel::render_tab_hover_preview(const ImageEntry &entry) const {
+    if (!entry.texture.is_loaded())
+        return;
+
+    const ImVec2 mouse = ImGui::GetMousePos();
+    ImGui::SetNextWindowPos(ImVec2(mouse.x + 24.0f, mouse.y + 24.0f), ImGuiCond_Always);
+
+    ImGui::BeginTooltip();
+    ImGui::Text("%s", entry.title.c_str());
+
+    const float src_w = static_cast<float>(entry.texture.width);
+    const float src_h = static_cast<float>(entry.texture.height);
+    const float max_w = 280.0f;
+    const float max_h = 180.0f;
+    const float scale = std::min(max_w / src_w, max_h / src_h);
+    const float draw_w = src_w * std::min(scale, 1.0f);
+    const float draw_h = src_h * std::min(scale, 1.0f);
+
+    ImGui::Image(entry.texture.imgui_id(), ImVec2(draw_w, draw_h));
+    ImGui::EndTooltip();
 }

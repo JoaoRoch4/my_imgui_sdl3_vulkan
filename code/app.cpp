@@ -82,9 +82,11 @@ int App::run()
 
     MainMenuBar menu_bar;
     menu_bar.Setup(&style_editor, sdl.window, &vk, &show_demo_window, &show_another_window);
+    menu_bar.LoadOpenedFilesHistoryFromToml(state_path);
     menu_bar.ApplyHistory(state);
+    menu_bar.ApplyRuntimeConfig(state);
     ImVec4 clear_color = state.clear_color
-                             ? ImVec4(state.clear_color->r / 255.0f, state.clear_color->g / 255.0f, state.clear_color->b / 255.0f, state.clear_color->a / 255.0f)
+                             ? ImVec4(static_cast<float>(state.clear_color->r) / 255.0f, static_cast<float>(state.clear_color->g) / 255.0f, static_cast<float>(state.clear_color->b) / 255.0f, static_cast<float>(state.clear_color->a) / 255.0f)
                              : ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
     bool done = false;
@@ -255,13 +257,14 @@ int App::run()
     state.show_another_window = show_another_window;
     state.vsync = vsync;
     state.clear_color = WindowStateToml::ColorToml{
-        static_cast<int>(std::lround<int>(clear_color.x * 255.0f) + 0.5f),
-        static_cast<int>(std::lround<int>(clear_color.y * 255.0f) + 0.5f),
-        static_cast<int>(std::lround<int>(clear_color.z * 255.0f) + 0.5f),
-        static_cast<int>(std::lround<int>(clear_color.w * 255.0f) + 0.5f)
+        static_cast<int>(std::lround(clear_color.x * 255.0f + 0.5f)),
+        static_cast<int>(std::lround(clear_color.y * 255.0f + 0.5f)),
+        static_cast<int>(std::lround(clear_color.z * 255.0f + 0.5f)),
+        static_cast<int>(std::lround(clear_color.w * 255.0f + 0.5f))
     };
     style_editor.ExportLayout(&state);
     menu_bar.ExportHistory(&state);
+    menu_bar.ExportRuntimeConfig(&state);
     SaveWindowStateToml(state_path, state);
     imgui.shutdown();
     vk.cleanup_window(wd);

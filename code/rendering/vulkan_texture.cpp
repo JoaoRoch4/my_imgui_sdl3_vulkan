@@ -1,4 +1,3 @@
-#include <climits>
 #define STB_IMAGE_IMPLEMENTATION
 #include "vulkan_texture.hpp"
 
@@ -9,11 +8,9 @@
 #include <stb_image.h>
 #include <webp/decode.h>
 
-#include <array>
 #include <bit>
 #include <cstring>
 #include <fstream>
-#include <utility>
 
 VulkanTexture::VulkanTexture()
     : width               { 0 }
@@ -123,7 +120,10 @@ bool VulkanTexture::load(const std::filesystem::path& path, vulkan_context& vk) 
         if (!file.is_open()) return false;
         std::vector<uint8_t> buf(static_cast<size_t>(file.tellg()));
         file.seekg(0);
-        file.read(reinterpret_cast<char*>(buf.data()), buf.size());
+        auto* res = std::bit_cast<char*>(buf.data());
+        if (res == nullptr) return false;   
+        auto buf_size = static_cast<std::streamsize>(buf.size());
+        file.read(res, buf_size);
         pixels = WebPDecodeRGBA(buf.data(), buf.size(), &width, &height);
         is_webp = true;
     } else {
@@ -221,7 +221,7 @@ bool VulkanTexture::load(const std::filesystem::path& path, vulkan_context& vk) 
     // 6. Execute Transfer
     {
         VkCommandBufferAllocateInfo c_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-        c_info.commandPool = vk.main_window_data.Frames[vk.main_window_data.FrameIndex].CommandPool;
+        c_info.commandPool = vk.main_window_data.Frames[static_cast<int>(vk.main_window_data.FrameIndex)].CommandPool;
         c_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         c_info.commandBufferCount = 1;
 

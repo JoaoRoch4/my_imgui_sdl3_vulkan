@@ -1,9 +1,16 @@
 #pragma once
 
 #include "Image_viewer_panel.hpp"
+#include "bulk_image_open_queue.hpp"
+#include "config_runtime.hpp"
+#include "history_preview.hpp"
+#include "open_image_dialogs.hpp"
+#include "opened_files_window.hpp"
+#include "video_player.hpp"
 #include "window_state_toml.hpp"
 
 #include <array>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -43,8 +50,17 @@ public:
     /// Restore image history from persisted state.
     void ApplyHistory(const WindowStateToml &state);
 
+    /// Restore runtime config values from persisted state.
+    void ApplyRuntimeConfig(const WindowStateToml &state);
+
+    /// Explicitly load opened-files history from TOML at startup.
+    bool LoadOpenedFilesHistoryFromToml(const std::filesystem::path &file_path);
+
     /// Save image history into persisted state.
     void ExportHistory(WindowStateToml *state) const;
+
+    /// Save runtime config values into persisted state.
+    void ExportRuntimeConfig(WindowStateToml *state) const;
 
     /// Unload all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
     void Shutdown();
@@ -52,17 +68,11 @@ public:
     bool request_quit; ///< Set to true when File > Quit is clicked.
 
 private:
-    /// SDL file-dialog callback — fires on the main thread with the chosen paths.
-    static void file_dialog_callback(void *userdata,
-                                     const char *const *filelist,
-                                     int filter);
-
     /// Emit a timestamp string "YYYY-MM-DDTHH:MM:SS" into dst.
     static void current_timestamp(std::array<char, 20> &dst);
 
     /// Push one entry onto the front of m_history with the given source and kind.
     void push_history(const std::string &source, const std::string &kind);
-    void handle_interactions(struct ImageEntry &entry, ImVec2 pos, ImVec2 size, float base_scale);
 
     StyleEditor *m_style_editor;
     SDL_Window *m_window;
@@ -74,10 +84,13 @@ private:
 
     std::vector<WindowStateToml::ImageHistoryEntry> m_history; ///< Recently opened items.
 
-    bool m_has_pending_path;                  ///< Set by file_dialog_callback.
-    std::vector<std::string> m_pending_paths; ///< Paths queued from the file dialog.
-    std::vector<std::string> m_pending_urls;  ///< URLs queued to download.
+    OpenImageDialogs m_open_image_dialogs;
+    BulkImageOpenQueue m_bulk_image_open;
 
-    bool m_show_url_popup;           ///< Triggers OpenPopup on the next frame.
-    std::array<char, 512> m_url_buf; ///< Input buffer for the URL popup.
+    VideoPlayer m_video_player;
+
+    ConfigRuntime m_config_runtime;
+
+    HistoryPreview m_history_preview;
+    OpenedFilesWindow m_opened_files_window;
 };

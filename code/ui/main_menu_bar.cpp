@@ -14,12 +14,12 @@
 
 #include "main_menu_bar.hpp"
 #include "Image_viewer_panel.hpp"
+#include "video_player.hpp"
 
 #include "imgui.h"
 #include "style_editor.hpp"
 
 #include <curl/curl.h>
-#include <SDL3/SDL_dialog.h>
 
 #include <algorithm>
 #include <array>
@@ -182,11 +182,11 @@ MainMenuBar::MainMenuBar()
     , m_show_another_window{nullptr}
     , m_viewer{} /// Default-construct the image panel.
     , m_history{}
-    , m_has_pending_path{false}
-    , m_pending_paths{}
-    , m_pending_urls{}
-    , m_show_url_popup{false}
-    , m_url_buf{} {
+    , m_open_image_dialogs{}
+    , m_bulk_image_open{}
+    , m_video_player{}
+    , m_history_preview{}
+    , m_opened_files_window{} {
 }
 
 // ============================================================================
@@ -215,6 +215,10 @@ void MainMenuBar::Setup(StyleEditor *style_editor,
 
     /// Initialise the libcurl global state once per process.
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    m_open_image_dialogs.setup(m_window);
+    m_video_player.setup(m_vk);
+    m_history_preview.setup(m_vk, &m_video_player, &m_viewer);
 }
 
 /**
@@ -225,6 +229,12 @@ void MainMenuBar::Setup(StyleEditor *style_editor,
 void MainMenuBar::Shutdown() {
     if (!m_vk)
         return;
+
+    m_bulk_image_open.shutdown();
+
+    m_video_player.shutdown();
+
+    m_history_preview.shutdown();
 
     /// Let ImageViewerPanel free all VkImage / VkSampler / etc. resources.
     m_viewer.shutdown(*m_vk);
@@ -243,6 +253,21 @@ void MainMenuBar::Shutdown() {
  */
 void MainMenuBar::ApplyHistory(const WindowStateToml &state) {
     m_history = state.image_history; /// Replace in-memory history with the saved list.
+    m_opened_files_window.apply_history(state);
+}
+
+void MainMenuBar::ApplyRuntimeConfig(const WindowStateToml &state) {
+    m_config_runtime.ApplyLayout(state);
+}
+
+bool MainMenuBar::LoadOpenedFilesHistoryFromToml(const std::filesystem::path &file_path) {
+    const bool loaded = m_opened_files_window.load_history_from_toml(file_path);
+    if (loaded) {
+        WindowStateToml state;
+        if (LoadWindowStateToml(file_path, state))
+            m_history = state.image_history;
+    }
+    return loaded;
 }
 
 /**
@@ -262,35 +287,13 @@ void MainMenuBar::ExportHistory(WindowStateToml *state) const {
         m_history.begin() + static_cast<std::ptrdiff_t>(count));
 }
 
+void MainMenuBar::ExportRuntimeConfig(WindowStateToml *state) const {
+    m_config_runtime.ExportLayout(state);
+}
+
 // ============================================================================
 // Private helpers
 // ============================================================================
-
-/**
- * @brief SDL3 file-dialog callback — called on the main thread when the user
- *        confirms a file selection.
- *
- * SDL guarantees this is called on the main thread, which is the same
- * thread that runs Build(), so no synchronisation is needed.
- *
- * @param userdata   Pointer to the owning MainMenuBar instance.
- * @param filelist   NULL-terminated array of selected paths, or nullptr on cancel.
- * @param filter     Index of the active file-filter (unused here).
- */
-void MainMenuBar::file_dialog_callback(void *userdata,
-                                       const char *const *filelist,
-                                       int /*filter*/) {
-    auto *self = static_cast<MainMenuBar *>(userdata); /// Recover 'this' from the void*.
-
-    if (filelist == nullptr)
-        return; /// User cancelled the dialog.
-
-    /// Append each selected path to the pending list.
-    for (int i = 0; filelist[i] != nullptr; ++i) {
-        self->m_pending_paths.emplace_back(filelist[i]);
-        self->m_has_pending_path = true; /// Signal Build() to process the list.
-    }
-}
 
 /**
  * @brief Write the current local time as "YYYY-MM-DDTHH:MM:SS" into dst.
@@ -327,7 +330,9 @@ void MainMenuBar::push_history(const std::string &source, const std::string &kin
     /// Insert at the front so the most recent item appears first.
     m_history.insert(m_history.begin(),
                      WindowStateToml::ImageHistoryEntry{source, kind, ts.data()});
+    m_opened_files_window.sync_history(m_history);
 }
+
 void ImageViewerPanel::evict_closed(vulkan_context &vk) {
     // First, identify if we actually have anything to delete
     auto it = std::find_if(m_images.begin(), m_images.end(),
@@ -388,37 +393,66 @@ void MainMenuBar::Build() {
      * file_dialog_callback() populates m_pending_paths on the main thread.
      * We drain the queue here — at most one full file-dialog batch per frame.
      */
-    if (m_has_pending_path && m_vk) {
-        m_has_pending_path = false; /// Acknowledge the pending flag immediately.
+    std::vector<std::string> pending_paths = m_open_image_dialogs.take_pending_paths();
+    if (!pending_paths.empty() && m_vk) {
 
-        for (const auto &path : m_pending_paths) {
-            /**
-             * Stop adding when the cap is reached so we don't attempt a
-             * load that will certainly fail.
-             */
-            if (m_viewer.is_at_capacity())
-                break;
-
-            /**
-             * Hand the path to ImageViewerPanel; it decodes, uploads, and
-             * registers the window.  If it succeeds, record the history entry.
-             */
-            if (m_viewer.add_from_path(path, *m_vk))
-                push_history(path, "file");
+        if (pending_paths.size() > 1) {
+            // Split the batch: route videos to VideoPlayer, images to bulk queue
+            std::vector<std::string> image_paths;
+            for (const auto &path : pending_paths) {
+                if (VideoPlayer::is_video_path(path)) {
+                    m_video_player.add_from_path(path);
+                    push_history(path, "file");
+                } else {
+                    image_paths.push_back(path);
+                }
+            }
+            if (!image_paths.empty())
+                m_bulk_image_open.enqueue_batch(std::move(image_paths));
+        } else {
+            for (const auto &path : pending_paths) {
+                if (VideoPlayer::is_video_path(path)) {
+                    if (m_video_player.add_from_path(path))
+                        push_history(path, "file");
+                } else {
+                    if (m_viewer.add_from_path(path, *m_vk))
+                        push_history(path, "file");
+                }
+            }
         }
 
-        m_pending_paths.clear(); /// Drain the queue regardless of success.
+    }
+
+    // Process at most one validated batch item per frame to avoid descriptor churn.
+    if (m_vk) {
+        std::string next_path;
+        m_bulk_image_open.try_pop_ready(&next_path);
+
+        if (!next_path.empty()) {
+            if (VideoPlayer::is_video_path(next_path)) {
+                if (m_video_player.add_from_path(next_path))
+                    push_history(next_path, "file");
+            } else {
+                if (m_viewer.add_from_path(next_path, *m_vk))
+                    push_history(next_path, "file");
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
     // Step 3 — download and load images from the URL queue
     // -------------------------------------------------------------------------
 
-    if (!m_pending_urls.empty() && m_vk) {
-        for (const auto &url : m_pending_urls) {
-            /// Skip if the cap was already reached by a previous URL in this batch.
-            if (m_viewer.is_at_capacity())
-                break;
+    std::vector<std::string> pending_urls = m_open_image_dialogs.take_pending_urls();
+    if (!pending_urls.empty() && m_vk) {
+        for (const auto &url : pending_urls) {
+            // Video URLs are streamed directly by mpv (no download needed)
+            if (VideoPlayer::is_video_url(url)) {
+                const std::string title = title_from_url(url);
+                if (m_video_player.add_from_url(url, title))
+                    push_history(url, "url");
+                continue;
+            }
 
             /// Blocking download — writes bytes to a temp file with the right extension.
             const std::filesystem::path tmp = download_to_temp(url);
@@ -434,14 +468,12 @@ void MainMenuBar::Build() {
                  * Hand the temp file to ImageViewerPanel.
                  * ImageViewerPanel reads the file; we delete it afterward.
                  */
-                if (m_viewer.add_from_url_temp(tmp, title, *m_vk))
+                if (m_viewer.add_from_url_temp(tmp, title, url, *m_vk))
                     push_history(url, "url");
 
                 std::filesystem::remove(tmp); /// Clean up the temp file.
             }
         }
-
-        m_pending_urls.clear(); /// Drain the queue.
     }
 
     // -------------------------------------------------------------------------
@@ -451,60 +483,14 @@ void MainMenuBar::Build() {
     if (!ImGui::BeginMainMenuBar())
         return; /// Menu bar not visible (e.g. fullscreen game mode).
 
-    // --- Capacity warning (right-aligned in the menu bar) --------------------
-
-    /**
-     * When all slots are full, display a dim warning label on the far right
-     * of the menu bar so the user knows why "Open Image" is disabled.
-     */
-    if (m_viewer.is_at_capacity()) {
-        /// Build the warning string using the actual cap constant.
-        const std::string warn = "Image limit reached (" + std::to_string(m_viewer.count()) + "/" + std::to_string(8) /// Must match k_max_images in panel.
-                                 + ")";
-
-        const float warn_w = ImGui::CalcTextSize(warn.c_str()).x; /// Width of the warning text.
-        const float avail = ImGui::GetContentRegionAvail().x;     /// Remaining menu bar width.
-
-        /// Only show the warning if it fits in the available space.
-        if (avail > warn_w + 8.0f) {
-            /// Shift the cursor right so the text appears at the far-right edge.
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - warn_w - 4.0f);
-            ImGui::TextDisabled("%s", warn.c_str());
-        }
-    }
-
     // --- File menu -----------------------------------------------------------
 
     if (ImGui::BeginMenu("File")) {
-        /**
-         * "Open Image..." is disabled when the viewer is at capacity.
-         * BeginDisabled() greys out and blocks interaction with child widgets.
-         */
-        ImGui::BeginDisabled(m_viewer.is_at_capacity());
-        if (ImGui::MenuItem("Open Image...", "Ctrl+O")) {
-            /// File-type filter list shown in the native dialog.
-            static const SDL_DialogFileFilter filters[] = {
-                {"Image files", "png;jpg;jpeg;bmp;tga;gif;webp"},
-                {"All files", "*"},
-            };
+        if (ImGui::MenuItem("Open Image...", "Ctrl+O"))
+            m_open_image_dialogs.begin_open_image_dialog();
 
-            /**
-             * SDL3 shows the OS-native file picker asynchronously.
-             * When the user confirms, file_dialog_callback() fires on
-             * the main thread, populating m_pending_paths.
-             */
-            SDL_ShowOpenFileDialog(file_dialog_callback, this, m_window,
-                                   filters, 2, nullptr, /*allow_many=*/true);
-        }
-        ImGui::EndDisabled(); /// Re-enable widgets after the Open button.
-
-        /// "Open Online..." also respects the cap.
-        ImGui::BeginDisabled(m_viewer.is_at_capacity());
-        if (ImGui::MenuItem("Open Online...")) {
-            m_url_buf[0] = '\0';     /// Clear the text buffer.
-            m_show_url_popup = true; /// Trigger OpenPopup on the next section.
-        }
-        ImGui::EndDisabled();
+        if (ImGui::MenuItem("Open Online..."))
+            m_open_image_dialogs.open_online_popup();
 
         // --- Recent sub-menu -------------------------------------------------
 
@@ -533,24 +519,16 @@ void MainMenuBar::Build() {
                                  : hentry.source;
                 }
 
-                /// Disable the item if the viewer is already at capacity.
-                ImGui::BeginDisabled(m_viewer.is_at_capacity());
                 if (ImGui::MenuItem(label.c_str())) {
-                    /// Re-open the item via the appropriate loading path.
-                    if (hentry.kind == "file") {
-                        m_pending_paths.push_back(hentry.source);
-                        m_has_pending_path = true;
-                    } else {
-                        m_pending_urls.push_back(hentry.source);
-                    }
+                    if (hentry.kind == "file")
+                        m_open_image_dialogs.queue_path(hentry.source);
+                    else
+                        m_open_image_dialogs.queue_url(hentry.source);
                 }
-                ImGui::EndDisabled();
 
                 /// Show the full source and timestamp as a tooltip on hover.
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s\n%s",
-                                      hentry.source.c_str(),
-                                      hentry.opened_at.c_str());
+                    m_history_preview.draw_for_hover(hentry);
             }
 
             /// If the history is longer than k_max_shown, indicate the overflow.
@@ -561,8 +539,10 @@ void MainMenuBar::Build() {
             }
 
             ImGui::Separator();
-            if (ImGui::MenuItem("Clear History"))
+            if (ImGui::MenuItem("Clear History")) {
                 m_history.clear(); /// Wipe the in-memory history (persisted on next save).
+                m_opened_files_window.sync_history(m_history);
+            }
 
             ImGui::EndMenu();
         }
@@ -588,6 +568,9 @@ void MainMenuBar::Build() {
         if (m_show_another_window)
             ImGui::MenuItem("Another Window", nullptr, m_show_another_window);
 
+        ImGui::MenuItem("Opened Files", nullptr, &m_opened_files_window.IsOpen);
+        ImGui::MenuItem("Runtime Config", nullptr, &m_config_runtime.IsOpen);
+
         /**
          * Delegate image toggle items to the panel.
          * Each item lets the user re-show a minimised or closed window.
@@ -611,48 +594,32 @@ void MainMenuBar::Build() {
      * then immediately clear the flag so the popup opens exactly once.
      * OpenPopup must be called OUTSIDE of BeginPopupModal.
      */
-    if (m_show_url_popup) {
-        ImGui::OpenPopup("Open Online");
-        m_show_url_popup = false;
-    }
-
-    if (ImGui::BeginPopupModal("Open Online", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter image URL:");
-
-        /// Fixed-width input field; EnterReturnsTrue lets the user press Enter to confirm.
-        ImGui::SetNextItemWidth(480.0f);
-        const bool enter_pressed = ImGui::InputText(
-            "##url", m_url_buf.data(), m_url_buf.size(),
-            ImGuiInputTextFlags_EnterReturnsTrue);
-
-        /// Keep focus on the text field by default when the popup opens.
-        ImGui::SetItemDefaultFocus();
-
-        const bool ok = ImGui::Button("Open", ImVec2(100.0f, 0.0f)) || enter_pressed;
-        ImGui::SameLine();
-        const bool cancel = ImGui::Button("Cancel", ImVec2(100.0f, 0.0f));
-
-        if (ok && m_url_buf[0] != '\0') {
-            /// Queue the entered URL for download in the next Build() call.
-            m_pending_urls.emplace_back(m_url_buf.data());
-            m_url_buf[0] = '\0'; /// Clear the buffer for next use.
-            ImGui::CloseCurrentPopup();
-        } else if (cancel || (enter_pressed && m_url_buf[0] == '\0')) {
-            /// Cancel: close without queuing anything.
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::EndPopup();
-    }
+    m_open_image_dialogs.draw_url_popup();
 
     // -------------------------------------------------------------------------
     // Step 6 — image viewer windows
     // -------------------------------------------------------------------------
+
+    m_video_player.update_frames();
+    m_config_runtime.Draw();
 
     /**
      * Delegate all per-image ImGui window rendering to ImageViewerPanel.
      * This draws one window per open image with zoom, pan, and black bg.
      */
     m_viewer.draw_windows();
+    m_video_player.draw();
+
+    int focus_id = -1;
+    const auto activated = m_opened_files_window.draw(m_viewer, m_history_preview, &focus_id);
+    if (focus_id >= 0)
+        m_viewer.request_focus(focus_id);
+
+    if (activated.has_value()) {
+        if (activated->kind == "file") {
+            m_open_image_dialogs.queue_path(activated->source);
+        } else if (activated->kind == "url") {
+            m_open_image_dialogs.queue_url(activated->source);
+        }
+    }
 }

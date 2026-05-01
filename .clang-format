@@ -8,11 +8,11 @@ UseTab: Never
 AccessModifierOffset: -4
 
 # header/using sort
-SortIncludes: CaseInsensitive
-SortUsingDeclarations: true
+SortUsingDeclarations: Never
 
 # constructor initializer settings
-PackConstructorInitializers: Never
+PackConstructorInitializers: BinPack
+
 BreakConstructorInitializersBeforeComma: true
 
 # line length settings
