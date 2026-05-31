@@ -1,14 +1,10 @@
 #pragma once
+#include "pch.hpp"
 
-#include <imgui.h>
-#include <imgui_impl_vulkan.h>
-#include <mutex>
-#include <vector>
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
 #include <volk.h>
 #else
-#include <vulkan/vulkan.h>
 #endif
 
 #ifdef _DEBUG
@@ -27,10 +23,19 @@ public:
     VkQueue queue;
     VkPipelineCache pipeline_cache;
     VkDescriptorPool descriptor_pool;
+    VkBuffer vram_reserve_buffer;
+    VkDeviceMemory vram_reserve_memory;
+    VkDeviceSize vram_reserve_bytes;
+    bool vram_reserve_active;
 
     ImGui_ImplVulkanH_Window main_window_data;
     uint32_t min_image_count;
     bool swap_chain_rebuild;
+
+    /// True when the device was created with the Vulkan 1.2 features libplacebo
+    /// requires for an imported device (hostQueryReset + timelineSemaphore).
+    /// The libplacebo zero-copy video path is only attempted when this is set.
+    bool placebo_features_enabled = false;
 
     void setup(std::vector<const char *> instance_extensions);
     void setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const;

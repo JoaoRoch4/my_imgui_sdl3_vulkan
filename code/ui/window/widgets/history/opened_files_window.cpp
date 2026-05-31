@@ -4,14 +4,11 @@
 #include "video_context_menu.hpp"
 #include "video_player.hpp"
 
-#include "imgui.h"
 
-#include <algorithm>
 
 namespace {
 
-static WindowStateToml::ImageHistoryEntry make_history_entry(const ImageViewerPanel::OpenedFileInfo &file)
-{
+static WindowStateToml::ImageHistoryEntry make_history_entry(const ImageViewerPanel::OpenedFileInfo &file) { // NOLINT
     return WindowStateToml::ImageHistoryEntry{file.source, file.kind, ""};
 }
 
@@ -22,11 +19,15 @@ OpenedFilesWindow::OpenedFilesWindow()
     , m_filter{}
     , m_history{}
     , m_on_erase_entry{nullptr}
-{
+    , m_on_restart_preview{nullptr}
+    , m_on_rescan_toml{nullptr}
+    , m_on_open_image{nullptr}
+    , m_on_open_online{nullptr}
+    , m_on_fix_videos{nullptr}
+    , m_is_startup_videos_fixed{nullptr} {
 }
 
-bool OpenedFilesWindow::load_history_from_toml(const std::filesystem::path &file_path)
-{
+bool OpenedFilesWindow::load_history_from_toml(const std::filesystem::path &file_path) {
     WindowStateToml state;
     if (!LoadWindowStateToml(file_path, state))
         return false;
@@ -35,32 +36,77 @@ bool OpenedFilesWindow::load_history_from_toml(const std::filesystem::path &file
     return true;
 }
 
-void OpenedFilesWindow::apply_history(const WindowStateToml &state)
-{
+void OpenedFilesWindow::apply_history(const WindowStateToml &state) {
     m_history = state.image_history;
 }
 
-void OpenedFilesWindow::sync_history(const std::vector<WindowStateToml::ImageHistoryEntry> &history)
-{
+void OpenedFilesWindow::ApplyLayout(const WindowStateToml &state) {
+    IsOpen = state.show_opened_files_window;
+}
+
+void OpenedFilesWindow::ExportLayout(WindowStateToml *state) const {
+    state->show_opened_files_window = IsOpen;
+}
+
+void OpenedFilesWindow::sync_history(const std::vector<WindowStateToml::ImageHistoryEntry> &history) {
     m_history = history;
 }
 
-void OpenedFilesWindow::SetEraseHistoryEntryCallback(std::function<void(const std::string &)> cb)
-{
+void OpenedFilesWindow::SetEraseHistoryEntryCallback(std::function<void(const std::string &)> cb) {
     m_on_erase_entry = std::move(cb);
+}
+
+void OpenedFilesWindow::SetRestartPreviewCallback(std::function<void()> cb) {
+    m_on_restart_preview = std::move(cb);
+}
+
+void OpenedFilesWindow::SetRescanTomlCallback(std::function<void()> cb) {
+    m_on_rescan_toml = std::move(cb);
+}
+
+void OpenedFilesWindow::SetMenuShortcutsCallbacks(std::function<void()> on_open_image,
+                                                  std::function<void()> on_open_online,
+                                                  std::function<void()> on_fix_videos,
+                                                  std::function<bool()> is_startup_videos_fixed) {
+    m_on_open_image = std::move(on_open_image);
+    m_on_open_online = std::move(on_open_online);
+    m_on_fix_videos = std::move(on_fix_videos);
+    m_is_startup_videos_fixed = std::move(is_startup_videos_fixed);
+}
+
+void OpenedFilesWindow::SetQuitCallback(std::function<void()> cb) {
+    m_on_quit = std::move(cb);
 }
 
 std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const ImageViewerPanel &viewer,
                                                                           HistoryPreview &preview,
                                                                           int *focus_id,
-                                                                          VideoContextMenu *video_ctx)
-{
+                                                                          VideoContextMenu *video_ctx) {
     if (!IsOpen)
         return std::nullopt;
 
-    if (!ImGui::Begin("Opened Files", &IsOpen)) {
+    if (!ImGui::Begin("Opened Files", &IsOpen, ImGuiWindowFlags_MenuBar)) {
         ImGui::End();
         return std::nullopt;
+    }
+
+    if (ImGui::BeginMenuBar()) {
+        const bool startup_fixed = m_is_startup_videos_fixed && m_is_startup_videos_fixed();
+        const char *startup_label = startup_fixed ? "Unfix Startup Videos" : "Set Startup Videos";
+
+        if (ImGui::BeginMenu("File")) {
+            if (m_on_open_image && ImGui::MenuItem("Open Image...", "Ctrl+O"))
+                m_on_open_image();
+            if (m_on_open_online && ImGui::MenuItem("Open Online..."))
+                m_on_open_online();
+            if (m_on_fix_videos && ImGui::MenuItem(startup_label))
+                m_on_fix_videos();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Rescan TOML") && m_on_rescan_toml)
+                m_on_rescan_toml();
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
     }
 
     const auto files = viewer.opened_files();
@@ -88,6 +134,9 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
     }
 
     m_filter.Draw("Search", 260.0f);
+    ImGui::SameLine();
+    if (ImGui::Button("Rescan TOML") && m_on_rescan_toml)
+        m_on_rescan_toml();
 
     int filtered_count = 0;
     for (const auto &file : ordered) {
@@ -116,19 +165,34 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                     if (!m_filter.PassFilter(haystack.c_str()))
                         continue;
 
-                    const std::string label = "[" + hentry.kind + "] " + hentry.source;
+                    std::string display;
+                    if (hentry.kind == "file") {
+                        display = std::filesystem::path(hentry.source).filename().string();
+                    } else {
+                        display = !hentry.title.empty() ? hentry.title : hentry.source;
+                        if (display.size() > 80)
+                            display = display.substr(0, 77) + "...";
+                    }
+                    const std::string label = "[" + hentry.kind + "] " + display;
                     if (ImGui::Selectable(label.c_str(), false))
                         activated_entry = hentry;
                     if (ImGui::IsItemHovered())
                         preview.draw_for_hover(hentry);
                     const bool is_video = VideoPlayer::is_video_path(hentry.source) ||
-                                         VideoPlayer::is_video_url(hentry.source);
+                                          VideoPlayer::is_video_url(hentry.source);
                     if (is_video && video_ctx) {
-                        if (const auto r = video_ctx->draw_for_item(hentry); r.erase)
-                            if (m_on_erase_entry) m_on_erase_entry(r.erase_source);
+                        if (const auto r = video_ctx->draw_for_item(hentry); r.erase || r.restart_preview || r.quit) {
+                            if (r.erase && m_on_erase_entry)
+                                m_on_erase_entry(r.erase_source);
+                            if (r.restart_preview && m_on_restart_preview)
+                                m_on_restart_preview();
+                            if (r.quit && m_on_quit)
+                                m_on_quit();
+                        }
                     } else {
                         if (const auto erase = HistoryContextMenu::draw_for_item(hentry.source))
-                            if (m_on_erase_entry) m_on_erase_entry(*erase);
+                            if (m_on_erase_entry)
+                                m_on_erase_entry(*erase);
                     }
                 }
             }
@@ -160,11 +224,18 @@ std::optional<WindowStateToml::ImageHistoryEntry> OpenedFilesWindow::draw(const 
                 const bool is_video_file = VideoPlayer::is_video_path(file.source) ||
                                            VideoPlayer::is_video_url(file.source);
                 if (is_video_file && video_ctx && it != m_history.end()) {
-                    if (const auto r = video_ctx->draw_for_item(*it); r.erase)
-                        if (m_on_erase_entry) m_on_erase_entry(r.erase_source);
+                    if (const auto r = video_ctx->draw_for_item(*it); r.erase || r.restart_preview || r.quit) {
+                        if (r.erase && m_on_erase_entry)
+                            m_on_erase_entry(r.erase_source);
+                        if (r.restart_preview && m_on_restart_preview)
+                            m_on_restart_preview();
+                        if (r.quit && m_on_quit)
+                            m_on_quit();
+                    }
                 } else {
                     if (const auto erase = HistoryContextMenu::draw_for_item(file.source))
-                        if (m_on_erase_entry) m_on_erase_entry(*erase);
+                        if (m_on_erase_entry)
+                            m_on_erase_entry(*erase);
                 }
             }
         }

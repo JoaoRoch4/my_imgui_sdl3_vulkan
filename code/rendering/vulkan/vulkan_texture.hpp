@@ -1,9 +1,7 @@
 #pragma once
 
 #include "vulkan_context.hpp"
-#include "imgui.h"
 
-#include <filesystem>
 
 // Owns a GPU-side RGBA texture loaded from disk via stb_image.
 // Usage:

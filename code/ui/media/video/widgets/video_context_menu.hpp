@@ -1,9 +1,9 @@
 #pragma once
 
+#include "pch.hpp"
+
 #include "window_state_toml.hpp"
 
-#include <filesystem>
-#include <string>
 
 struct SDL_Window;
 
@@ -19,8 +19,12 @@ class VideoContextMenu {
 public:
     /// Result reported back to the caller after draw_for_item().
     struct Result {
-        bool        erase  = false;
+        bool        erase           = false;
         std::string erase_source;
+        bool        restart_preview = false;
+        bool        playback_mode_changed = false;
+        int         playback_mode   = 0;
+        bool        quit            = false;
     };
 
     VideoContextMenu();
@@ -30,6 +34,25 @@ public:
 
     /// Store the SDL window used to parent the native save-file dialog.
     void setup(SDL_Window *window);
+
+    /// Register a callback invoked after a successful save copy.
+    void set_on_save_success(
+        std::function<void(const std::string &, const std::filesystem::path &)> cb);
+
+    void set_playback_mode_callbacks(std::function<bool(const std::string &)> can_set,
+                                     std::function<int(const std::string &)> get_mode,
+                                     std::function<void(const std::string &, int)> set_mode);
+
+    void set_vsync_callbacks(std::function<bool()> get_vsync,
+                             std::function<void(bool)> set_vsync);
+
+    [[nodiscard]] bool can_set_playback_mode(const std::string &source) const;
+    [[nodiscard]] int get_playback_mode(const std::string &source) const;
+    void set_playback_mode(const std::string &source, int mode) const;
+
+    [[nodiscard]] bool has_vsync_control() const;
+    [[nodiscard]] bool vsync_enabled() const;
+    void apply_vsync(bool enabled) const;
 
     /// Attach a context menu popup to the last rendered ImGui item.
     ///
@@ -66,6 +89,16 @@ private:
     /// Source path stored when the user picks "Save Video As…".
     std::filesystem::path m_copy_source;
 
+    /// Logical history source associated with the pending save operation.
+    std::string m_copy_history_source;
+
     /// Destination path stored by the dialog callback; empty = nothing pending.
     std::filesystem::path m_copy_dest;
+
+    std::function<void(const std::string &, const std::filesystem::path &)> m_on_save_success;
+    std::function<bool(const std::string &)> m_can_set_playback_mode;
+    std::function<int(const std::string &)> m_get_playback_mode;
+    std::function<void(const std::string &, int)> m_on_set_playback_mode;
+    std::function<bool()> m_get_vsync;
+    std::function<void(bool)> m_set_vsync;
 };

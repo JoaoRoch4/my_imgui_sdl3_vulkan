@@ -1,8 +1,7 @@
+#include "pch.hpp"
 #include "vulkan_upload_context.hpp"
 #include "vulkan_context.hpp"
-
-#include <algorithm>
-#include <cstring>
+#include <bit>
 
 namespace {
 
@@ -50,6 +49,22 @@ void VulkanUploadContext::init(vulkan_context* vk, size_t staging_size)
     vkAllocateMemory(vk->device, &a_info, vk->allocator, &m_staging_memory);
     vkBindBufferMemory(vk->device, m_staging_buffer, m_staging_memory, 0);
     vkMapMemory(vk->device, m_staging_memory, 0, req.size, 0, &m_mapped);
+
+    VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pool_info.queueFamilyIndex = vk->queue_family;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    vkCreateCommandPool(vk->device, &pool_info, vk->allocator, &m_cmd_pool);
+
+    VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmd_info.commandPool = m_cmd_pool;
+    cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd_info.commandBufferCount = 1;
+    vkAllocateCommandBuffers(vk->device, &cmd_info, &m_cmd);
+
+    VkFenceCreateInfo fence_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    // First upload waits on this fence before any submit; start signaled to avoid deadlock.
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    vkCreateFence(vk->device, &fence_info, vk->allocator, &m_fence);
 }
 
 VulkanUploadContext::~VulkanUploadContext()
@@ -61,17 +76,27 @@ void VulkanUploadContext::shutdown()
 {
     if (!m_vk) return;
 
+    vkDeviceWaitIdle(m_vk->device);
+
     if (m_mapped)
         vkUnmapMemory(m_vk->device, m_staging_memory);
     if (m_staging_buffer)
         vkDestroyBuffer(m_vk->device, m_staging_buffer, m_vk->allocator);
     if (m_staging_memory)
         vkFreeMemory(m_vk->device, m_staging_memory, m_vk->allocator);
+    if (m_fence)
+        vkDestroyFence(m_vk->device, m_fence, m_vk->allocator);
+    if (m_cmd_pool)
+        vkDestroyCommandPool(m_vk->device, m_cmd_pool, m_vk->allocator);
 
     m_staging_buffer = VK_NULL_HANDLE;
     m_staging_memory = VK_NULL_HANDLE;
+    m_cmd_pool = VK_NULL_HANDLE;
+    m_cmd = VK_NULL_HANDLE;
+    m_fence = VK_NULL_HANDLE;
     m_mapped = nullptr;
     m_capacity = 0;
+    m_image_layouts.clear();
     m_vk = nullptr;
 }
 
@@ -93,6 +118,8 @@ void VulkanUploadContext::upload_to_image(
     uint32_t height
 )
 {
+    std::scoped_lock lock(m_upload_mutex);
+
     size_t size = width * height * 4; // RGBA8
 
     if (!m_vk || !data)
@@ -103,27 +130,35 @@ void VulkanUploadContext::upload_to_image(
     // copiar CPU -> staging
     std::memcpy(m_mapped, data, size);
 
-    VkCommandPool pool =
-        m_vk->main_window_data.Frames[static_cast<int>(m_vk->main_window_data.FrameIndex)].CommandPool;
+    if (m_cmd == VK_NULL_HANDLE || m_fence == VK_NULL_HANDLE)
+        return;
 
-    VkCommandBufferAllocateInfo c_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    c_info.commandPool = pool;
-    c_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    c_info.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(m_vk->device, &c_info, &cmd);
+    vkWaitForFences(m_vk->device, 1, &m_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(m_vk->device, 1, &m_fence);
+    vkResetCommandBuffer(m_cmd, 0);
 
     VkCommandBufferBeginInfo b_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     b_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &b_info);
+    vkBeginCommandBuffer(m_cmd, &b_info);
 
-    // layout: undefined -> transfer dst
+    const uint64_t image_key = std::bit_cast<uint64_t>(image);
+    const VkImageLayout old_layout = m_image_layouts.contains(image_key)
+        ? m_image_layouts.at(image_key)
+        : VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkAccessFlags src_access = 0;
+    if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        src_access = VK_ACCESS_SHADER_READ_BIT;
+    }
+
+    // layout: old -> transfer dst
     VkImageMemoryBarrier barrier1{};
     barrier1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier1.oldLayout = old_layout;
     barrier1.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier1.srcAccessMask = 0;
+    barrier1.srcAccessMask = src_access;
     barrier1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier1.image = image;
     barrier1.subresourceRange = {
@@ -131,8 +166,8 @@ void VulkanUploadContext::upload_to_image(
     };
 
     vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        m_cmd,
+        src_stage,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier1
     );
@@ -143,7 +178,7 @@ void VulkanUploadContext::upload_to_image(
     region.imageExtent = {width, height, 1};
 
     vkCmdCopyBufferToImage(
-        cmd,
+        m_cmd,
         m_staging_buffer,
         image,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -159,24 +194,18 @@ void VulkanUploadContext::upload_to_image(
     barrier2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
     vkCmdPipelineBarrier(
-        cmd,
+        m_cmd,
         VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier2
     );
 
-    vkEndCommandBuffer(cmd);
-
-    VkFence fence = VK_NULL_HANDLE;
-    VkFenceCreateInfo f_info{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    vkCreateFence(m_vk->device, &f_info, m_vk->allocator, &fence);
+    vkEndCommandBuffer(m_cmd);
 
     VkSubmitInfo s_info{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     s_info.commandBufferCount = 1;
-    s_info.pCommandBuffers = &cmd;
-    m_vk->queue_submit(1, &s_info, fence);
+    s_info.pCommandBuffers = &m_cmd;
+    m_vk->queue_submit(1, &s_info, m_fence);
 
-    vkWaitForFences(m_vk->device, 1, &fence, VK_TRUE, UINT64_MAX);
-    vkDestroyFence(m_vk->device, fence, m_vk->allocator);
-    vkFreeCommandBuffers(m_vk->device, pool, 1, &cmd);
+    m_image_layouts[image_key] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }

@@ -1,8 +1,6 @@
 #include "history_context_menu.hpp"
 
-#include "imgui.h"
 
-#include <filesystem>
 
 std::optional<std::string> HistoryContextMenu::draw_for_item(const std::string &source)
 {

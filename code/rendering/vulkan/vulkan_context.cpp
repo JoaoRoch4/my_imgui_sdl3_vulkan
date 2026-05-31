@@ -1,10 +1,7 @@
+#include "pch.hpp"
+
 #include "vulkan_context.hpp"
-#include <array>
-#include <print>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <vector>
+#include "debug_log.hpp"
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
 #define VOLK_IMPLEMENTATION
@@ -20,6 +17,10 @@ vulkan_context::vulkan_context()
     , queue(VK_NULL_HANDLE)
     , pipeline_cache(VK_NULL_HANDLE)
     , descriptor_pool(VK_NULL_HANDLE)
+    , vram_reserve_buffer(VK_NULL_HANDLE)
+    , vram_reserve_memory(VK_NULL_HANDLE)
+    , vram_reserve_bytes(0)
+    , vram_reserve_active(false)
     , min_image_count(2)
     , swap_chain_rebuild(false)
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
@@ -66,12 +67,20 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     volkInitialize();
 #endif
 
-    std::println("[vulkan_context] setup begin");
+    APP_DEBUG_LOG("[vulkan_context] setup begin");
 
     // Create Vulkan Instance
     {
         VkInstanceCreateInfo create_info = {};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+
+        // Request Vulkan 1.2 so the device may enable the promoted 1.2 feature
+        // structs (hostQueryReset / timelineSemaphore) that libplacebo's
+        // imported-device path requires.
+        VkApplicationInfo app_info = {};
+        app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+        app_info.apiVersion = VK_API_VERSION_1_2;
+        create_info.pApplicationInfo = &app_info;
 
         uint32_t properties_count;
         std::vector<VkExtensionProperties> properties;
@@ -96,15 +105,17 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         instance_extensions.push_back("VK_EXT_debug_report");
 #endif
 
-    std::println("[vulkan_context] instance extensions requested: {}", instance_extensions.size());
-    for (const char* ext : instance_extensions)
-        std::println("[vulkan_context]   instance ext: {}", ext ? ext : "<null>");
+        APP_DEBUG_LOG("[vulkan_context] instance extensions requested: {}", instance_extensions.size());
+        for (const char *ext : instance_extensions) {
+            (void)ext;
+            APP_DEBUG_LOG("[vulkan_context]   instance ext: {}", ext ? ext : "<null>");
+        }
 
         create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
         create_info.ppEnabledExtensionNames = instance_extensions.data();
         err = vkCreateInstance(&create_info, allocator, &instance);
         check_result(err);
-    std::println("[vulkan_context] vkCreateInstance OK");
+        APP_DEBUG_LOG("[vulkan_context] vkCreateInstance OK");
 
 #ifdef IMGUI_IMPL_VULKAN_USE_VOLK
         volkLoadInstance(instance);
@@ -126,17 +137,22 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
     // Select Physical Device (GPU)
     physical_device = ImGui_ImplVulkanH_SelectPhysicalDevice(instance);
     IM_ASSERT(physical_device != VK_NULL_HANDLE);
-    std::println("[vulkan_context] selected physical device: {}", static_cast<const void*>(physical_device));
+    APP_DEBUG_LOG("[vulkan_context] selected physical device: {}", static_cast<const void *>(physical_device));
 
     // Select graphics queue family
     queue_family = ImGui_ImplVulkanH_SelectQueueFamilyIndex(physical_device);
     IM_ASSERT(queue_family != static_cast<uint32_t>(-1));
-    std::println("[vulkan_context] selected queue family: {}", queue_family);
+    APP_DEBUG_LOG("[vulkan_context] selected queue family: {}", queue_family);
 
     // Create Logical Device
     {
         std::vector<const char *> requested_device_extensions;
         requested_device_extensions.push_back("VK_KHR_swapchain");
+        // Required for Vulkan ↔ OpenGL/libplacebo zero-copy interop
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME);
+        requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
 
         uint32_t properties_count;
         std::vector<VkExtensionProperties> properties;
@@ -148,27 +164,29 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
             requested_device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
 #endif
 
-        std::vector<const char*> device_extensions;
-        for (const char* ext : requested_device_extensions) {
+        std::vector<const char *> device_extensions;
+        for (const char *ext : requested_device_extensions) {
             if (!ext)
                 continue;
 
             if (strcmp(ext, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0) {
-                std::println("[vulkan_context] skip invalid device extension: {}", ext);
+                APP_DEBUG_LOG("[vulkan_context] skip invalid device extension: {}", ext);
                 continue;
             }
 
             if (!is_extension_available(properties, ext)) {
-                std::println("[vulkan_context] skip unavailable device extension: {}", ext);
+                APP_DEBUG_LOG("[vulkan_context] skip unavailable device extension: {}", ext);
                 continue;
             }
 
             device_extensions.push_back(ext);
         }
 
-        std::println("[vulkan_context] device extensions enabled: {}", device_extensions.size());
-        for (const char* ext : device_extensions)
-            std::println("[vulkan_context]   device ext: {}", ext ? ext : "<null>");
+        APP_DEBUG_LOG("[vulkan_context] device extensions enabled: {}", device_extensions.size());
+        for (const char *ext : device_extensions) {
+            (void)ext;
+            APP_DEBUG_LOG("[vulkan_context]   device ext: {}", ext ? ext : "<null>");
+        }
 
         std::array<float, 1> queue_priority = {1.0f};
         std::array<VkDeviceQueueCreateInfo, 1> queue_info = {};
@@ -182,14 +200,112 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         create_info.pQueueCreateInfos = queue_info.data();
         create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
         create_info.ppEnabledExtensionNames = device_extensions.data();
+
+        // libplacebo's imported-device path (zero-copy video) requires the
+        // Vulkan 1.2 features hostQueryReset and timelineSemaphore.  Query
+        // support first and only enable them when present, so the application
+        // still runs (via the software video path) on GPUs/drivers that lack
+        // them rather than failing vkCreateDevice outright.
+        VkPhysicalDeviceVulkan12Features vk12_supported = {};
+        vk12_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        VkPhysicalDeviceFeatures2 features_query = {};
+        features_query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features_query.pNext = &vk12_supported;
+        vkGetPhysicalDeviceFeatures2(physical_device, &features_query);
+
+        VkPhysicalDeviceVulkan12Features vk12_enable = {};
+        vk12_enable.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        if (vk12_supported.hostQueryReset && vk12_supported.timelineSemaphore) {
+            vk12_enable.hostQueryReset   = VK_TRUE;
+            vk12_enable.timelineSemaphore = VK_TRUE;
+            create_info.pNext = &vk12_enable; // pEnabledFeatures must stay null
+            placebo_features_enabled = true;
+            APP_DEBUG_LOG("[vulkan_context] libplacebo features enabled "
+                          "(hostQueryReset + timelineSemaphore)");
+        } else {
+            APP_DEBUG_LOG("[vulkan_context] libplacebo features unavailable — "
+                          "zero-copy video path disabled");
+        }
+
         err = vkCreateDevice(physical_device, &create_info, allocator, &device);
         check_result(err);
         vkGetDeviceQueue(device, queue_family, 0, &queue);
-        std::println("[vulkan_context] vkCreateDevice OK");
+        APP_DEBUG_LOG("[vulkan_context] vkCreateDevice OK");
     }
 
     // Create Descriptor Pool
     {
+
+        // Reserve a chunk of VRAM up front to keep memory headroom predictable
+        // for this application workload. Best-effort only: failure is logged.
+        constexpr VkDeviceSize k_vram_reserve_size =
+            static_cast<VkDeviceSize>(2ULL) * 1024ULL * 1024ULL * 1024ULL;
+
+        VkBufferCreateInfo reserve_buffer_info = {};
+        reserve_buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        reserve_buffer_info.size = k_vram_reserve_size;
+        reserve_buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        reserve_buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult reserve_err = vkCreateBuffer(device, &reserve_buffer_info, allocator, &vram_reserve_buffer);
+        if (reserve_err == VK_SUCCESS) {
+            VkMemoryRequirements reserve_mem_req{};
+            vkGetBufferMemoryRequirements(device, vram_reserve_buffer, &reserve_mem_req);
+
+            VkPhysicalDeviceMemoryProperties mem_props{};
+            vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+
+            auto find_memory_type = [&](uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *out_index) {
+                for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
+                    const bool type_supported = (type_bits & (1u << i)) != 0;
+                    const bool flags_match = (mem_props.memoryTypes[i].propertyFlags & required) == required;
+                    if (type_supported && flags_match) {
+                        *out_index = i;
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            uint32_t memory_type_index = 0;
+            bool memory_type_found =
+                find_memory_type(reserve_mem_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index);
+            if (!memory_type_found)
+                memory_type_found = find_memory_type(reserve_mem_req.memoryTypeBits, 0, &memory_type_index);
+
+            if (memory_type_found) {
+                VkMemoryAllocateInfo reserve_alloc_info = {};
+                reserve_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                reserve_alloc_info.allocationSize = reserve_mem_req.size;
+                reserve_alloc_info.memoryTypeIndex = memory_type_index;
+
+                reserve_err = vkAllocateMemory(device, &reserve_alloc_info, allocator, &vram_reserve_memory);
+                if (reserve_err == VK_SUCCESS) {
+                    reserve_err = vkBindBufferMemory(device, vram_reserve_buffer, vram_reserve_memory, 0);
+                    if (reserve_err == VK_SUCCESS) {
+                        vram_reserve_bytes = reserve_mem_req.size;
+                        vram_reserve_active = true;
+                        APP_DEBUG_LOG("[vulkan_context] reserved VRAM bytes={}",
+                                      static_cast<unsigned long long>(vram_reserve_bytes));
+                    }
+                }
+            } else {
+                reserve_err = VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+        }
+
+        if (!vram_reserve_active) {
+            if (vram_reserve_memory != VK_NULL_HANDLE) {
+                vkFreeMemory(device, vram_reserve_memory, allocator);
+                vram_reserve_memory = VK_NULL_HANDLE;
+            }
+            if (vram_reserve_buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, vram_reserve_buffer, allocator);
+                vram_reserve_buffer = VK_NULL_HANDLE;
+            }
+            vram_reserve_bytes = 0;
+            APP_DEBUG_LOG("[vulkan_context] VRAM reserve skipped (2GB unavailable)");
+        }
 
         std::array<VkDescriptorPoolSize, 1> pool_sizes = {
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1024}};
@@ -205,7 +321,7 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
         check_result(err);
     }
 
-    std::println("[vulkan_context] setup done");
+    APP_DEBUG_LOG("[vulkan_context] setup done");
 }
 
 void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const {
@@ -251,7 +367,19 @@ void vulkan_context::resize_window(ImGui_ImplVulkanH_Window *wd, int width, int 
 }
 
 void vulkan_context::cleanup() {
-    std::println("[vulkan_context] cleanup begin");
+    APP_DEBUG_LOG("[vulkan_context] cleanup begin");
+
+    if (vram_reserve_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, vram_reserve_memory, allocator);
+        vram_reserve_memory = VK_NULL_HANDLE;
+    }
+    if (vram_reserve_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device, vram_reserve_buffer, allocator);
+        vram_reserve_buffer = VK_NULL_HANDLE;
+    }
+    vram_reserve_active = false;
+    vram_reserve_bytes = 0;
+
     vkDestroyDescriptorPool(device, descriptor_pool, allocator);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
@@ -261,7 +389,7 @@ void vulkan_context::cleanup() {
 
     vkDestroyDevice(device, allocator);
     vkDestroyInstance(instance, allocator);
-    std::println("[vulkan_context] cleanup done");
+    APP_DEBUG_LOG("[vulkan_context] cleanup done");
 }
 
 void vulkan_context::cleanup_window(ImGui_ImplVulkanH_Window *wd) const {

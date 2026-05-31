@@ -1,24 +1,18 @@
+#include "pch.hpp"
+
 #include "app.hpp"
 
-#include <imgui.h>
-#include <imgui_internal.h>
-#include <imgui_impl_sdl3.h>
-#include <imgui_impl_vulkan.h>
 
 #include "imgui_context.hpp"
+#include "fps_plot.hpp"
 #include "sdl3_context.hpp"
 #include "vulkan_context.hpp"
-#include "main_menu_bar.hpp"
+#include "app_coordinator.hpp"
 #include "style_editor.hpp"
+#include "window_fullscreen_utils.hpp"
 #include "window_state_toml.hpp"
 
-#include <SDL3/SDL_mouse.h>
-#include <SDL3/SDL_vulkan.h>
-
-#include <cstdio>
-#include <filesystem>
-#include <string>
-#include <vector>
+#include <imgui.h>
 
 App::App()
 {
@@ -26,6 +20,8 @@ App::App()
 
 int App::run()
 {
+    const auto app_start_time = std::chrono::steady_clock::now();
+
     sdl3_context sdl;
     if (!sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
         return 1;
@@ -58,6 +54,9 @@ int App::run()
 
     imgui_context imgui;
     imgui.init(sdl.window, vk, wd, sdl.main_scale);
+    ImPlot::CreateContext();
+
+    FpsPlot fps_plot;
 
     StyleEditor style_editor;
     style_editor.InitDefaults();
@@ -80,8 +79,16 @@ int App::run()
     bool vsync = state.vsync;
     vk.set_vsync(wd, vsync);
 
-    MainMenuBar menu_bar;
-    menu_bar.Setup(&style_editor, sdl.window, &vk, &show_demo_window, &show_another_window);
+    AppCoordinator menu_bar;
+    menu_bar.Setup(&style_editor,
+                   sdl.window,
+                   &vk,
+                   &show_demo_window,
+                   &show_another_window,
+                   [&](bool enabled) {
+                       vsync = enabled;
+                       vk.set_vsync(wd, vsync);
+                   });
     menu_bar.LoadOpenedFilesHistoryFromToml(state_path);
     menu_bar.SetStatePath(state_path);
     menu_bar.ApplyHistory(state);
@@ -102,6 +109,7 @@ int App::run()
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
+            menu_bar.HandleSdlEvent(event);
             ImGui_ImplSDL3_ProcessEvent(&event);
             ImGuiIO& io = ImGui::GetIO();
             (void)io;
@@ -152,9 +160,7 @@ int App::run()
             {
                 if (event.key.key == SDLK_F11)
                 {
-                    Uint32 flags = SDL_GetWindowFlags(sdl.window);
-                    bool is_fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
-                    SDL_SetWindowFullscreen(sdl.window, !is_fullscreen);
+                    toggle_window_fullscreen(sdl.window);
                 }
             }
         }
@@ -175,7 +181,17 @@ int App::run()
 
         imgui.new_frame();
 
+        const auto uptime_now = std::chrono::steady_clock::now();
+        const double uptime_seconds = std::chrono::duration<double>(uptime_now - app_start_time).count();
+        const auto uptime_total_seconds = static_cast<int>(uptime_seconds);
+        const int uptime_hours = uptime_total_seconds / 3600;
+        const int uptime_minutes = (uptime_total_seconds % 3600) / 60;
+        const int uptime_secs = uptime_total_seconds % 60;
+
+        fps_plot.add_sample(ImGui::GetIO().Framerate);
+
         menu_bar.Build();
+        fps_plot.draw(uptime_seconds);
 
         {
             const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -220,6 +236,7 @@ int App::run()
             ImGui::Checkbox("Demo Window", &show_demo_window);
             ImGui::Checkbox("Another Window", &show_another_window);
             ImGui::Checkbox("Style Editor", &style_editor.IsOpen);
+
             if (ImGui::Checkbox("VSync", &vsync))
                 vk.set_vsync(wd, vsync);
             ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
@@ -229,6 +246,7 @@ int App::run()
             ImGui::SameLine();
             ImGui::Text("counter = %d", counter);
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+            ImGui::Text("Uptime: %02d:%02d:%02d", uptime_hours, uptime_minutes, uptime_secs);
             ImGui::End();
         }
 
@@ -254,6 +272,8 @@ int App::run()
         imgui.render(wd, vk, clear_color);
     }
 
+    const bool reopen_requested = menu_bar.request_reopen;
+
     vkDeviceWaitIdle(vk.device);
     menu_bar.Shutdown();
     state.show_demo_window = show_demo_window;
@@ -269,10 +289,11 @@ int App::run()
     menu_bar.ExportHistory(&state);
     menu_bar.ExportRuntimeConfig(&state);
     SaveWindowStateToml(state_path, state);
+    ImPlot::DestroyContext();
     imgui.shutdown();
     vk.cleanup_window(wd);
     vk.cleanup();
     sdl.shutdown();
 
-    return 0;
+    return reopen_requested ? App::k_reopen_exit_code : 0;
 }

@@ -1,117 +1,36 @@
 #pragma once
+#include "pch.hpp"
 
-#include "Image_viewer_panel.hpp"
-#include "bulk_image_open_queue.hpp"
-#include "config_runtime.hpp"
-#include "history_preview.hpp"
-#include "open_image_dialogs.hpp"
-#include "opened_files_window.hpp"
-#include "video_context_menu.hpp"
-#include "video_player.hpp"
-#include "video_downloader.hpp"
-#include "window_state_toml.hpp"
-
-#include <array>
-#include <filesystem>
-#include <string>
-#include <vector>
-
-struct SDL_Window;
+class AppContext;
 class StyleEditor;
+namespace ImGui {
+class FileBrowser;
+}
 
 /**
- * Owns the application main menu bar.
+ * Renders the application's main menu bar (the File and View menus) and
+ * dispatches the immediate action for each item.
  *
- * Responsibilities:
- *   File > Open Image   — native OS file dialog via SDL3.
- *   File > Open Online  — URL input popup; downloads and displays the image.
- *   File > Recent       — persisted history of opened files and URLs.
- *   File > Quit         — sets request_quit = true.
- *   View                — delegates image toggle items to ImageViewerPanel.
- *
- * Image rendering is fully delegated to the ImageViewerPanel member.
- * MainMenuBar only handles file loading, URL downloading, and history.
+ * MainMenuBar holds no state: everything it needs is supplied per-frame through
+ * MenuContext.  Ownership of the subsystems lives in AppContext / AppCoordinator
+ * — this class only reads them (via the context getters) to build the menu.
  */
 class MainMenuBar {
 public:
-    MainMenuBar();
-    ~MainMenuBar() = default;
+  /// Per-frame inputs for drawing the menu bar.
+  struct MenuContext {
+    AppContext *ctx = nullptr;          ///< subsystem access (getters)
+    StyleEditor *style_editor = nullptr;
+    bool *show_demo_window = nullptr;   ///< toggled by "Demo Window"
+    bool *show_another_window = nullptr;
+    bool *show_console = nullptr;       ///< toggled by "Console"
+    bool *show_file_explorer = nullptr; ///< toggled by "File Explorer"
+    ImGui::FileBrowser *file_explorer = nullptr; ///< Open()/Close() target
+    bool *request_quit = nullptr;       ///< set true by "Quit" / context menu
+    bool use_video_player_placebo = false;
+  };
 
-    MainMenuBar(const MainMenuBar &) = delete;
-    MainMenuBar &operator=(const MainMenuBar &) = delete;
-
-    void Setup(StyleEditor *style_editor,
-               SDL_Window *window,
-               vulkan_context *vk,
-               bool *show_demo_window,
-               bool *show_another_window);
-
-    /// Call once per frame between NewFrame() and Render().
-    void Build();
-
-    /// Restore image history from persisted state.
-    void ApplyHistory(const WindowStateToml &state);
-
-    /// Restore runtime config values from persisted state.
-    void ApplyRuntimeConfig(const WindowStateToml &state);
-
-    /// Explicitly load opened-files history from TOML at startup.
-    bool LoadOpenedFilesHistoryFromToml(const std::filesystem::path &file_path);
-
-    /// Set the TOML state path used for immediate metadata persistence.
-    void SetStatePath(const std::filesystem::path &file_path);
-
-    /// Save image history into persisted state.
-    void ExportHistory(WindowStateToml *state) const;
-
-    /// Save runtime config values into persisted state.
-    void ExportRuntimeConfig(WindowStateToml *state) const;
-
-    /// Set the directory where cached video thumbnail PNGs are written.
-    void SetThumbDir(const std::filesystem::path &dir);
-
-    /// Set the directory where background-downloaded video files are cached.
-    void SetDownloadCacheDir(const std::filesystem::path &dir);
-
-    /// Unload all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
-    void Shutdown();
-
-    bool request_quit; ///< Set to true when File > Quit is clicked.
-
-private:
-    /// Emit a timestamp string "YYYY-MM-DDTHH:MM:SS" into dst.
-    static void current_timestamp(std::array<char, 20> &dst);
-
-    /// Push one entry onto the front of m_history with the given source and kind.
-    void push_history(const std::string &source, const std::string &kind,
-                      const std::string &title);
-
-    /// Persist current history metadata (including thumbnail/cache paths) to TOML.
-    void persist_history_metadata_to_toml() const;
-
-    StyleEditor *m_style_editor;
-    SDL_Window *m_window;
-    vulkan_context *m_vk;
-    bool *m_show_demo_window;
-    bool *m_show_another_window;
-
-    ImageViewerPanel m_viewer; ///< Owns all image windows.
-
-    std::vector<WindowStateToml::ImageHistoryEntry> m_history; ///< Recently opened items.
-
-    OpenImageDialogs m_open_image_dialogs;
-    BulkImageOpenQueue m_bulk_image_open;
-
-    VideoPlayer m_video_player;
-    VideoDownloader m_video_downloader;
-
-    ConfigRuntime m_config_runtime;
-
-    std::filesystem::path m_thumb_dir;
-    std::filesystem::path m_download_cache_dir;
-    std::filesystem::path m_state_path;
-
-    HistoryPreview m_history_preview;
-    OpenedFilesWindow m_opened_files_window;
-    VideoContextMenu m_video_context_menu;
+  /// Draw the menu bar.  Returns false when BeginMainMenuBar() fails; callers
+  /// should then skip the rest of their per-frame UI (historical behaviour).
+  bool Draw(const MenuContext &mc);
 };

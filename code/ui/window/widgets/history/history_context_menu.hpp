@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-#include <string>
 
 /// Renders a right-click context menu for a single history entry.
 ///

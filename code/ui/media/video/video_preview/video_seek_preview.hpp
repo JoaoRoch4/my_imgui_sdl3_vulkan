@@ -1,15 +1,7 @@
 #pragma once
-#include <vulkan/vulkan.h>
-#include <imgui.h>
 
-#include <mpv/client.h>
-#include <mpv/render.h>
+#include "pch.hpp"
 
-#include <atomic>
-#include <mutex>
-#include <thread>
-#include <vector>
-#include <string>
 
 class vulkan_context;
 class VulkanUploadContext;
@@ -28,8 +20,18 @@ public:
                VulkanUploadContext* uploader,
                const std::string& source);
 
+    // Stores params and allocates GPU resources, but does NOT start the mpv
+    // instance or background thread. Call once when a video is opened.
+    void prepare(vulkan_context* vk,
+                 VulkanUploadContext* uploader,
+                 const std::string& source);
+
+    // Lazily starts the mpv instance and worker thread on first use.
+    // Safe to call every frame; no-op if already active.
+    void ensure_active();
+
     void shutdown();
-    void stop_thread();
+    void stop_thread(bool unregister_watch = true);
 
     void update();
     void seek(double time_sec);
@@ -45,12 +47,15 @@ private:
     void destroy_gpu_resources(vulkan_context* vk);
 
 private:
+    std::mutex m_lifecycle_mutex;
+
     // mpv
     mpv_handle* m_mpv = nullptr;
     mpv_render_context* m_render_ctx = nullptr;
 
     // threading
     std::jthread m_thread;
+    std::atomic<uint64_t> m_thread_watch_id{0};
     std::atomic<bool> m_frame_dirty{false};
     std::atomic<bool> m_buf_ready{false};
     std::atomic<double> m_seek_req{-1.0};
@@ -70,4 +75,6 @@ private:
 
     int m_w = 0;
     int m_h = 0;
+
+    std::string m_source; // stored by prepare(); consumed by ensure_active()
 };

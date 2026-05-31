@@ -1,7 +1,6 @@
 #include "app_config.hpp"
 #include <rfl/toml.hpp>
 #include <rfl.hpp>
-#include <filesystem>
 
 bool app_config_load(app_config& cfg, const std::string& path)
 {

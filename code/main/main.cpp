@@ -2,6 +2,10 @@
 
 int main(int, char**)
 {
-    App app;
-    return app.run();
+    while (true) {
+        App app;
+        const int code = app.run();
+        if (code != App::k_reopen_exit_code)
+            return code;
+    }
 }
