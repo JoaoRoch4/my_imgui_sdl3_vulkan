@@ -1,6 +1,8 @@
+#include "pch.hpp"
+
+
 #include "video_osd_overlay.hpp"
 
-#include <algorithm>
 
 VideoOsdOverlay::VideoOsdOverlay()
     : m_message{}

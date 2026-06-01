@@ -1,8 +1,8 @@
+#include "pch.hpp"
+
 #include "video_downloader.hpp"
 #include "core/log/debug_log.hpp"
 #include "core/thread/thread_overwatch.hpp"
-#include "pch.hpp"
-#include <mpv/client.h>
 
 // ---------------------------------------------------------------------------
 // Helpers

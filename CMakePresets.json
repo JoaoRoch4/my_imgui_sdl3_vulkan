@@ -27,6 +27,19 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
+    },
+    {
+      "name": "release-log",
+      "displayName": "Release with Log",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-log",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_MESSAGE_LOG_LEVEL": "VERBOSE"
+      }
     }
   ],
   "buildPresets": [
@@ -39,6 +52,11 @@
       "name": "build-release",
       "displayName": "Build Release",
       "configurePreset": "release"
+    },
+    {
+      "name": "build-release-log",
+      "displayName": "Build Release with Log",
+      "configurePreset": "release-log"
     }
   ]
 }

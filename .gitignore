@@ -16,6 +16,7 @@
 # CMake/cache dirs
 /.cache/
 /.cmake/
+/cache/
 
 # Editor/OS
 .vscode/
@@ -31,3 +32,4 @@
 *.dylib
 *.exe
 *.out
+external/*

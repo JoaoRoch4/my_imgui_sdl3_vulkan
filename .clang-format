@@ -230,8 +230,6 @@ RequiresExpressionIndentation: OuterScope
 SeparateDefinitionBlocks: Leave
 ShortNamespaceLines: 1
 SkipMacroDefinitionBody: false
-SortIncludes: Preserve
-SortIncludesCaseSensitivity: false
 SortJavaStaticImport: Before
 SortUsingDeclarations: Lexicographic
 SpaceAfterCStyleCast: false

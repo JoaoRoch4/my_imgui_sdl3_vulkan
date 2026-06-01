@@ -1,7 +1,6 @@
 #include "pch.hpp"
 
 #include "imgui_context.hpp"
-#include <imgui_impl_sdl3.h>
 
 imgui_context::imgui_context()
     : font_cousine(nullptr)

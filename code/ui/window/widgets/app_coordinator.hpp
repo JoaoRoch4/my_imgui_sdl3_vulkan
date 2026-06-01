@@ -1,7 +1,7 @@
 #pragma once
-#include "pch.hpp"
 
-#include <SDL3/SDL_events.h>
+#include "pch.hpp" // NOLINT
+
 
 #include "main_menu_bar.hpp"
 

@@ -1,13 +1,8 @@
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <string>
-#include <regex>
-#include <cmath>
+#include "pch.hpp"
+
 
 #include "TextEditor.hpp"
 
-#include "imgui.h"
 
 // TODO
 // - multiline comments vs single-line: latter is blocking start of a ML

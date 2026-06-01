@@ -1,3 +1,5 @@
+#include "pch.hpp"
+
 #include "file_thumbnail_cache.hpp"
 #include "rendering/vulkan/vulkan_texture.hpp"
 #include "rendering/vulkan/vulkan_context.hpp"

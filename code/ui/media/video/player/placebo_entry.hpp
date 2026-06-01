@@ -4,16 +4,6 @@
 #include "placebo_egl_context.hpp"
 #include "video_osd_overlay.hpp"
 
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <GL/gl.h>
-#include <GL/glext.h>
-
-#include <mpv/render_gl.h>
-
-#include <libplacebo/vulkan.h>
-#include <libplacebo/renderer.h>
-
 // ---------------------------------------------------------------------------
 // PlaceboEntry
 //

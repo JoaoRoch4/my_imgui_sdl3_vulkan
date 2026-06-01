@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pch.hpp"
 
 struct app_config
 {
@@ -8,7 +9,7 @@ struct app_config
     float clear_b = 0.60f;
     float clear_a = 1.00f;
 
-    ImVec4 clear_color() const { return ImVec4(clear_r, clear_g, clear_b, clear_a); }
+    [[nodiscard]] ImVec4 clear_color() const;
     void   set_clear_color(const ImVec4& c) { clear_r = c.x; clear_g = c.y; clear_b = c.z; clear_a = c.w; }
 };
 

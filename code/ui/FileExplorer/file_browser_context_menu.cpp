@@ -1,10 +1,7 @@
+#include "pch.hpp"
+
+
 #include "file_browser_context_menu.hpp"
-
-#include "imgui.h"
-
-#include <cstdlib>
-#include <filesystem>
-#include <system_error>
 
 // ---- helpers ---------------------------------------------------------------
 

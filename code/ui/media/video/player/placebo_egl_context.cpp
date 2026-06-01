@@ -1,10 +1,7 @@
+#include "pch.hpp"
+
 #include "placebo_egl_context.hpp"
 #include "core/log/debug_log.hpp"
-
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <GL/gl.h>
-#include <GL/glext.h>
 
 // ---------------------------------------------------------------------------
 // PlaceboEglContext implementation
@@ -13,7 +10,7 @@
 bool PlaceboEglContext::create() {
     // Use EGL_MESA_platform_surfaceless for a headless context (no window needed).
     auto eglGetPlatformDisplayEXT =
-        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+        std::bit_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
             eglGetProcAddress("eglGetPlatformDisplayEXT"));
 
     if (eglGetPlatformDisplayEXT) {
@@ -45,9 +42,15 @@ bool PlaceboEglContext::create() {
         return false;
     }
 
-    // Choose a minimal config — surfaceless contexts don't need surface attrs.
+    // Choose an OpenGL-capable config.  EGL_SURFACE_TYPE must be specified:
+    // eglChooseConfig() defaults it to EGL_WINDOW_BIT, and a surfaceless
+    // display exposes no window configs, so omitting it makes the call return
+    // zero configs.  We never bind a real surface (we render to FBOs backed by
+    // imported memory and make the context current with EGL_NO_SURFACE), so
+    // request EGL_PBUFFER_BIT purely to obtain a usable config.
     static const EGLint config_attribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+        EGL_SURFACE_TYPE,    EGL_PBUFFER_BIT,
         EGL_NONE,
     };
     EGLConfig config = nullptr;
@@ -112,5 +115,5 @@ bool PlaceboEglContext::release() {
 }
 
 void *PlaceboEglContext::get_proc_address(void * /*ctx*/, const char *name) {
-    return reinterpret_cast<void *>(eglGetProcAddress(name));
+    return std::bit_cast<void *>(eglGetProcAddress(name));
 }

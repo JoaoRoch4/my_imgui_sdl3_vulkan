@@ -1,13 +1,6 @@
+#include "pch.hpp" // NOLINT
+
 #include "metadata_editor.hpp"
-
-#include <taglib/fileref.h>
-#include <taglib/tag.h>
-#include <taglib/audioproperties.h>
-#include <taglib/toolkit/tpropertymap.h>
-
-#include <sys/xattr.h>
-
-#include <imgui.h>
 
 // ─── constructor ─────────────────────────────────────────────────────────────
 

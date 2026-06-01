@@ -1,7 +1,6 @@
 #include "pch.hpp"
 #include "vulkan_upload_context.hpp"
 #include "vulkan_context.hpp"
-#include <bit>
 
 namespace {
 

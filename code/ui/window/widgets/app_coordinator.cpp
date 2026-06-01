@@ -5,8 +5,7 @@
 
 #include "pch.hpp"
 
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_keycode.h>
+
 
 #include "app_coordinator.hpp"
 
@@ -281,10 +280,14 @@ void AppCoordinator::Setup(StyleEditor *style_editor, SDL_Window *window,
         [this](bool enabled) { set_window_fullscreen(m_window, enabled); });
   };
 
-  if (m_use_video_player_placebo)
-    bind_player_menus(m_video_player_placebo);
-  else
-    bind_player_menus(m_video_player);
+  // Wire menu/fullscreen callbacks on BOTH players.  The active player can be
+  // switched at runtime (e.g. selecting "NVDEC libplacebo" flips
+  // m_use_video_player_placebo), and the load/restore paths route videos to
+  // whichever player is then active.  Binding only the initially-active player
+  // would leave the other one with empty std::function callbacks, which crash
+  // when invoked during draw.
+  bind_player_menus(m_video_player_placebo);
+  bind_player_menus(m_video_player);
 
   m_config_runtime->SetClearHistoryMetadataCallback(
       [this]() { m_history_mgr->clear(*m_opened_files_window); });

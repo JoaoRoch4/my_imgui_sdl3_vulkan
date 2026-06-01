@@ -1,18 +1,12 @@
 #pragma once
 
+#include "pch.hpp"
+
+
 #include "video_osd_overlay.hpp"
 #include "video_seek_preview.hpp"
 #include "window_state_toml.hpp"
 
-#include "imgui.h"
-
-#include <SDL3/SDL_stdinc.h>
-#include <mpv/client.h>
-#include <vulkan/vulkan.h>
-
-#include <functional>
-#include <string>
-#include <vector>
 
 class HistoryPreview;
 class VideoContextMenu;

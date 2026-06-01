@@ -1,10 +1,10 @@
 #pragma once
 
+#include "pch.hpp"
+
+
 #include "window_state_toml.hpp"
 
-#include <functional>
-#include <string>
-#include <vector>
 
 class RecentHistoryMenu {
 public:

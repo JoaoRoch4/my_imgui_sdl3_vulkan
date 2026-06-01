@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 
 #include "video_player_placebo.hpp"
 
@@ -32,7 +32,7 @@ struct GlExtFuncs {
     if (loaded)
       return true;
 #define GLOAD(T, name)                                                         \
-  name = reinterpret_cast<T>(eglGetProcAddress(#name));                        \
+  name = std::bit_cast<T>(eglGetProcAddress(#name));                        \
   if (!(name)) {                                                                 \
     APP_DEBUG_LOG("[GlExtFuncs] failed to load: " #name);                      \
     return false;                                                              \
@@ -346,7 +346,7 @@ bool VideoPlayerPlacebo::create_placeholder_texture() {
     return false;
 
   m_placeholder_descriptor_set = ImGui_ImplVulkan_AddTexture(
-      m_placeholder_sampler, m_placeholder_image_view,
+      m_placeholder_image_view,
       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   VkBuffer staging_buf = VK_NULL_HANDLE;
@@ -793,9 +793,9 @@ bool VideoPlayerPlacebo::init_placebo_gpu() {
   }
 
   // Load Vulkan extension function pointers
-  s_vkGetMemoryFdKHR = reinterpret_cast<PFN_vkGetMemoryFdKHR>(
+  s_vkGetMemoryFdKHR = std::bit_cast<PFN_vkGetMemoryFdKHR>(
       vkGetDeviceProcAddr(m_vk->device, "vkGetMemoryFdKHR"));
-  s_vkGetSemaphoreFdKHR = reinterpret_cast<PFN_vkGetSemaphoreFdKHR>(
+  s_vkGetSemaphoreFdKHR = std::bit_cast<PFN_vkGetSemaphoreFdKHR>(
       vkGetDeviceProcAddr(m_vk->device, "vkGetSemaphoreFdKHR"));
 
   if (!s_vkGetMemoryFdKHR || !s_vkGetSemaphoreFdKHR) {
@@ -1075,7 +1075,7 @@ bool VideoPlayerPlacebo::entry_create_shared_image(PlaceboEntry &e, int w,
   }
 
   e.descriptor_set =
-      ImGui_ImplVulkan_AddTexture(e.output_sampler, e.output_image_view,
+ImGui_ImplVulkan_AddTexture(e.output_image_view,
                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   APP_DEBUG_LOG("[VideoPlayerPlacebo] shared image {}x{} created", w, h);

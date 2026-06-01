@@ -9,6 +9,8 @@
 //   tex.load("path/to/image.png", vk);
 //   ImGui::Image(tex.imgui_id(), ImVec2(tex.width, tex.height));
 //   tex.unload(vk);  // before ImGui_ImplVulkan_Shutdown
+#include "pch.hpp"
+
 class VulkanTexture
 {
 public:

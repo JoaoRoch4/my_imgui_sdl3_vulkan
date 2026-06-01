@@ -1,5 +1,6 @@
+#include "pch.hpp"
+
 #include "sdl3_context.hpp"
-#include <stdio.h>
 
 sdl3_context::sdl3_context()
     : window(nullptr)

@@ -1,12 +1,8 @@
 #pragma once
 
+#include "pch.hpp"
+
 #include "window_state_toml.hpp"
-
-
-#include <array>
-#include <filesystem>
-#include <string>
-#include <vector>
 
 class OpenedFilesWindow;
 

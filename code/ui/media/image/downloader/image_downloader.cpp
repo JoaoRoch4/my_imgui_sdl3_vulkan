@@ -1,9 +1,6 @@
+#include "pch.hpp"
+
 #include "image_downloader.hpp"
-
-#include <curl/curl.h>
-
-#include <string_view>
-#include <unistd.h>
 
 // ============================================================================
 // File-local helpers

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "pch.hpp"
+
+
 
 /// Renders a right-click context menu for a single history entry.
 ///

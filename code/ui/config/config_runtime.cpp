@@ -7,7 +7,6 @@
 #include "video_playback_mode.hpp"
 #include "video_seek_preview.hpp"
 
-#include <algorithm>
 
 namespace {
 

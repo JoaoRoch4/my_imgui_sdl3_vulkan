@@ -1,8 +1,10 @@
+
+#include "pch.hpp" // NOLINT
+
 #include "video_hover_preview.hpp"
 #include "core/thread/thread_overwatch.hpp"
 #include "vulkan_context.hpp"
-#include <print>
-#include <stb_image_write.h>
+
 
 #ifndef VIDEO_HOVER_DEBUG
     #ifdef NDEBUG
@@ -17,6 +19,10 @@
 #else
 #define _Debug(fmt, ...) ((void)0)
 #endif
+
+
+#include <stb_image.h>
+#include <stb_image_write.h>
 
 namespace {
 
@@ -517,7 +523,7 @@ bool VideoHoverPreview::create_slot() {
     vkCreateSampler(m_vk->device, &sampler, nullptr, &m_slot.sampler);
 
     m_slot.descriptor = ImGui_ImplVulkan_AddTexture(
-        m_slot.sampler, m_slot.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        m_slot.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     m_slot.layout    = VK_IMAGE_LAYOUT_UNDEFINED;
     m_slot.has_frame = false;
@@ -633,9 +639,10 @@ bool VideoHoverPreview::save_frame(const std::filesystem::path &path) {
             return false; // black frame — skip
     }
 
-    return stbi_write_png(
+    bool res = static_cast<bool> (stbi_write_png(
                path.string().c_str(),
                m_w, m_h, 4,
                m_buf.data(),
-               m_w * 4) != 0;
+               m_w * 4) != 0);
+    return res;
 }

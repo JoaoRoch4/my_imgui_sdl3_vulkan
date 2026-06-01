@@ -2,7 +2,6 @@
 
 #include "open_image_dialogs.hpp"
 
-#include <SDL3/SDL_dialog.h>
 
 OpenImageDialogs::OpenImageDialogs()
     : m_window{nullptr}, m_pending_paths{}, m_pending_urls{},

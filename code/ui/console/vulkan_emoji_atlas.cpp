@@ -1,7 +1,8 @@
+#include "pch.hpp" // NOLINT
+
+
 #include "vulkan_emoji_atlas.hpp"
 #include "vulkan_context.hpp"
-
-#include <cstring> // std::memcpy
 
 VulkanEmojiAtlas::VulkanEmojiAtlas(vulkan_context& vk)
     : m_vk(vk)
@@ -118,7 +119,7 @@ ImTextureID VulkanEmojiAtlas::UploadRGBA(const std::vector<uint8_t>& pixels,
 
     // ── 3. Register with ImGui ─────────────────────────────────────────────
     m_descriptor_set = ImGui_ImplVulkan_AddTexture(
-        m_sampler, m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     // ── 4. Staging buffer ──────────────────────────────────────────────────
     VkBuffer       staging_buf = VK_NULL_HANDLE;

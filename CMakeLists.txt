@@ -24,7 +24,7 @@ set(CMAKE_DEBUG_POSTFIX "_d")
 
 # ── External library paths ────────────────────────────────────────────────────
 # ImGui docking/viewports fork lives outside this repo.
-set(IMGUI_DIR /home/joao/vscode/my_imgui/External/Imgui-Viewports)
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
 # ImPlot is vendored under external/ inside this repo.
 set(IMPLOT_DIR ${CMAKE_SOURCE_DIR}/external/implot)
 
@@ -43,14 +43,7 @@ find_package(reflectcpp CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-
-# ── TagLib (vendored) ─────────────────────────────────────────────────────────
-# Disable all optional components that are not needed to keep build fast.
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTS       OFF CACHE BOOL "" FORCE)
-set(BUILD_EXAMPLES    OFF CACHE BOOL "" FORCE)
-set(BUILD_BINDINGS    OFF CACHE BOOL "" FORCE)
-add_subdirectory(external/taglib EXCLUDE_FROM_ALL)
+find_package(taglib REQUIRED)
 
 # Use bundled mpv headers from external/mpv/include instead of system headers.
 # The shared library is still resolved from the system at link time.
@@ -146,7 +139,7 @@ add_executable(example_sdl3_vulkan
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
     ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
 
-    # ImPlot
+    # ImPlot (v0.17 with ImGui 1.92.x fixes)
     ${IMPLOT_DIR}/implot.cpp
     ${IMPLOT_DIR}/implot_items.cpp
 
@@ -212,10 +205,6 @@ target_include_directories(example_sdl3_vulkan PRIVATE
 # External / vendored / system headers — marked SYSTEM so the compiler
 # treats them as system headers and suppresses all warnings from them.
 target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
-    ${CMAKE_SOURCE_DIR}/external/taglib
-    ${CMAKE_BINARY_DIR}/external/taglib
-    ${CMAKE_SOURCE_DIR}/external/taglib/taglib
-    ${CMAKE_SOURCE_DIR}/external/taglib/taglib/toolkit
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMGUI_DIR}/misc/freetype
@@ -284,10 +273,10 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     reflectcpp::reflectcpp
     WebP::webp
     CURL::libcurl
+    TagLib::tag
     ${MPV_LIBRARIES}
     ${EGL_LIBRARIES}
     ${GL_LIBRARIES}
     ${LIBPLACEBO_LIBRARIES}
     ${CMAKE_DL_LIBS}   # dlopen/dlclose for Vulkan loader
-    tag
 )

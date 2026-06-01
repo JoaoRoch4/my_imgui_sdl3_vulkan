@@ -10,6 +10,7 @@
     },
     "stb",
     "libwebp",
-    "curl"
+    "curl",
+    "taglib"
   ]
 }

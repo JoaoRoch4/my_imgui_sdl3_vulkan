@@ -1,12 +1,6 @@
 #include "pch.hpp"
 
-// POSIX PTY / process headers not covered by pch.hpp
-#include <fcntl.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+
 
 #include "imgui_console.hpp"
 #include "emoji_atlas.hpp"

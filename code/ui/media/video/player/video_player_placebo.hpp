@@ -4,10 +4,6 @@
 #include "placebo_entry.hpp"
 #include "window_state_toml.hpp"
 
-#include <libplacebo/log.h>
-#include <libplacebo/renderer.h>
-#include <libplacebo/vulkan.h>
-
 class vulkan_context;
 class VideoPlayer;
 class VideoContextMenu;

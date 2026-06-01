@@ -10,13 +10,14 @@
  * the history survives crashes without a clean shutdown.
  */
 
+#include "pch.hpp"
+
+
 #include "media_history_manager.hpp"
 #include "image_downloader.hpp"
 #include "opened_files_window.hpp"
 #include "video_playback_mode.hpp"
 #include "window_state_toml.hpp"
-
-#include <ctime>
 
 namespace {
 

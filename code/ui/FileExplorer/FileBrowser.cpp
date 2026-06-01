@@ -2,7 +2,6 @@
 
 #include "FileBrowser.hpp"
 
-#include <sys/xattr.h>
 
 ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags,
                                 std::filesystem::path defaultDirectory)
@@ -97,7 +96,7 @@ void ImGui::FileBrowser::SetWindowSize(int width, int height) noexcept {
 void ImGui::FileBrowser::SetTitle(std::string title) {
   title_ = std::move(title);
 
-  const std::string thisPtrStr = std::to_string(reinterpret_cast<size_t>(this));
+  const std::string thisPtrStr = std::to_string(std::bit_cast<size_t>(this));
   openLabel_ = title_ + "##filebrowser_" + thisPtrStr;
   openNewDirLabel_ = "new dir##new_dir_" + thisPtrStr;
 }

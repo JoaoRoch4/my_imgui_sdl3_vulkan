@@ -1,3 +1,5 @@
+#include "pch.hpp"
+
 #include "bulk_image_open_queue.hpp"
 #include "core/thread/thread_overwatch.hpp"
 

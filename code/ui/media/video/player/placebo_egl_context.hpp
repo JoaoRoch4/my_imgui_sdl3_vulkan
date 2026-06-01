@@ -1,9 +1,7 @@
 #pragma once
 
 #include "pch.hpp"
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <mpv/render_gl.h>
+
 
 // ---------------------------------------------------------------------------
 // PlaceboEglContext

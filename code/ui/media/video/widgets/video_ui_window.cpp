@@ -1,59 +1,97 @@
+#include "pch.hpp" // NOLINT
+
 #include "video_ui_window.hpp"
 
 #include "history_preview.hpp"
 #include "recent_history_menu.hpp"
 #include "video_context_menu.hpp"
 
-#include <algorithm>
-#include <array>
-#include <bit>
-#include <chrono>
-#include <cstdio>
-#include <cstring>
-#include <dlfcn.h>
-#include <filesystem>
-#include <fstream>
-#include <string>
-#include <unordered_map>
+struct GpuStats { int util_pct = -1; int64_t vram_used_mb = -1; int64_t vram_total_mb = -1; };
 
-namespace {
+struct CpuTimes { unsigned long long idle = 0, total = 0; };
 
-    /**
- * @brief Reads the CPU model name from /proc/cpuinfo (first "model name" entry).
- *
- * Cached by the caller via a function-local static; this function is called
- * at most once per process.  Returns "Unknown CPU" if the file is absent or
- * the key is missing.
- *
- * @return Trimmed string, e.g. "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
- */
-[[nodiscard]] static std::string read_cpu_name_linux()
-{
-    // /proc/cpuinfo is a virtual kernel file; open cost is negligible.
-    std::ifstream f("/proc/cpuinfo");
-    if (!f.is_open())
-        return "Unknown CPU";                                                      // kernel file absent
+// // Fallback: read GPU utilisation from sysfs (amdgpu / radeon).
+// static bool query_gpu_sysfs(GpuStats &out)
+// {
+//     namespace fs = std::filesystem;
+//     static std::string s_util_path, s_vram_used_path, s_vram_total_path;
+//     static bool s_scanned = false;
+//     if (!s_scanned) {
+//         s_scanned = true;
+//         std::error_code ec;
+//         for (const auto &entry : fs::directory_iterator("/sys/class/drm", ec)) {
+//             const auto name = entry.path().filename().string();
+//             if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos)
+//                 continue;
+//             const auto base = entry.path() / "device";
+//             const auto u    = base / "gpu_busy_percent";
+//             if (fs::exists(u, ec)) {
+//                 s_util_path        = u.string();
+//                 s_vram_used_path   = (base / "mem_info_vram_used").string();
+//                 s_vram_total_path  = (base / "mem_info_vram_total").string();
+//                 break;
+//             }
+//         }
+//     }
+//     if (s_util_path.empty()) return false;
 
-    std::string line;
-    while (std::getline(f, line)) {
-        if (!line.starts_with("model name"))
-            continue;                                                               // skip unrelated keys
+//     auto read_int = [](const std::string &path, int64_t &val) {
+//         std::ifstream f(path);
+//         return static_cast<bool>(f >> val);
+//     };
+//     int64_t util = -1, vram_used = -1, vram_total = -1;
+//     if (!read_int(s_util_path, util)) return false;
+//     out.util_pct = static_cast<int>(util);
+//     read_int(s_vram_used_path,  vram_used);
+//     read_int(s_vram_total_path, vram_total);
+//     if (vram_used  >= 0) out.vram_used_mb  = vram_used  / (1024 * 1024);
+//     if (vram_total >= 0) out.vram_total_mb = vram_total / (1024 * 1024);
+//     return true;
+// }
 
-        const std::size_t colon = line.find(':');                                  // separator position
-        if (colon == std::string::npos)
-            continue;                                                               // malformed line
+// // Try NVML via dlopen; return false if unavailable.
+// static bool query_gpu_nvml(GpuStats &out)
+// {
+//     using nvmlReturn_t = int;
+//     using nvmlDevice_t = void *;
+//     struct nvmlUtilization_t { unsigned int gpu; unsigned int memory; };
+//     struct nvmlMemory_t { unsigned long long total; unsigned long long free; unsigned long long used; };
 
-        // Advance past ": " to reach the bare model string.
-        std::string name = line.substr(colon + 2);
+//     static void *lib = nullptr;
+//     static bool tried = false;
+//     if (!tried) {
+//         tried = true;
+//         lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+//         if (!lib) lib = dlopen("libnvidia-ml.so", RTLD_LAZY | RTLD_LOCAL);
+//         if (lib) {
+//             auto init = std::bit_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit_v2"));
+//             if (!init) init = std::bit_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit"));
+//             if (init) init();
+//         }
+//     }
+//     if (!lib) return false;
 
-        // Strip trailing whitespace / carriage-return (CRLF files on some kernels).
-        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
-            name.pop_back();
+//     auto getHandle = std::bit_cast<nvmlReturn_t(*)(unsigned int, nvmlDevice_t *)>(
+//         dlsym(lib, "nvmlDeviceGetHandleByIndex_v2"));
+//     auto getUtil   = std::bit_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlUtilization_t *)>(
+//         dlsym(lib, "nvmlDeviceGetUtilizationRates"));
+//     auto getMem    = std::bit_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlMemory_t *)>(
+//         dlsym(lib, "nvmlDeviceGetMemoryInfo"));
+//     if (!getHandle || !getUtil || !getMem) return false;
 
-        return name;                                                               // first core entry is enough
-    }
-    return "Unknown CPU";                                                          // key not found in file
-}
+//     nvmlDevice_t dev = nullptr;
+//     if (getHandle(0, &dev) != 0 || !dev) return false;
+
+//     nvmlUtilization_t util{};
+//     if (getUtil(dev, &util) == 0) out.util_pct = static_cast<int>(util.gpu);
+
+//     nvmlMemory_t mem{};
+//     if (getMem(dev, &mem) == 0) {
+//         out.vram_used_mb  = static_cast<int64_t>(mem.used  / (1024 * 1024));
+//         out.vram_total_mb = static_cast<int64_t>(mem.total / (1024 * 1024));
+//     }
+//     return out.util_pct >= 0;
+// }
 
 /**
  * @brief Reads the GPU model name from the NVIDIA sysfs tree or DRM fallback.
@@ -123,173 +161,14 @@ namespace {
     return "Unknown GPU";                                                          // neither path produced a result
 }
 
-std::string format_time(double time_seconds)
-{
-    const int total_seconds = static_cast<int>(time_seconds);
-    char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", total_seconds / 60, total_seconds % 60);
-    return std::string(buffer);
-}
 
-void draw_recent_menu(const VideoUiWindow::Callbacks &callbacks)
-{
-    if (!callbacks.history_provider || !callbacks.on_open_recent)
-        return;
+// static GpuStats query_gpu()
+// {
+//     GpuStats g;
+//     if (!query_gpu_nvml(g)) query_gpu_sysfs(g);
+//     return g;
+// }
 
-    const auto &history = callbacks.history_provider();
-    if (history.empty() || !ImGui::BeginMenu("Recent"))
-        return;
-
-    RecentHistoryMenu::draw_entries(
-        history,
-        {
-            .on_open = [&callbacks](WindowStateToml::ImageHistoryEntry &entry) {
-                callbacks.on_open_recent(entry.source, entry.kind);
-            },
-            .on_hover = [&callbacks](WindowStateToml::ImageHistoryEntry &entry) {
-                if (!callbacks.history_preview || !callbacks.lookup_history)
-                    return;
-                if (auto *found = callbacks.lookup_history(entry.source))
-                    callbacks.history_preview->draw_for_hover(*found);
-            },
-            .on_after_item = nullptr,
-        });
-
-    ImGui::EndMenu();
-}
-
-void draw_open_shortcuts(const std::string &source,
-                         const char        *startup_label,
-                         const VideoUiWindow::Callbacks &callbacks)
-{
-    if (callbacks.on_open_image && ImGui::MenuItem("Open Image...", "Ctrl+O"))
-        callbacks.on_open_image();
-    if (callbacks.on_open_online && ImGui::MenuItem("Open Online..."))
-        callbacks.on_open_online();
-    if (callbacks.on_toggle_startup_video && ImGui::MenuItem(startup_label))
-        callbacks.on_toggle_startup_video(source);
-
-    draw_recent_menu(callbacks);
-}
-
-// ---------------------------------------------------------------------------
-// CPU / GPU usage helpers
-// ---------------------------------------------------------------------------
-
-struct CpuTimes { unsigned long long idle = 0, total = 0; };
-
-static CpuTimes read_cpu_times()
-{
-    std::ifstream f("/proc/stat");
-    std::string tag;
-    unsigned long long u, n, s, i, wa, irq, si, steal;
-    f >> tag >> u >> n >> s >> i >> wa >> irq >> si >> steal;
-    CpuTimes t;
-    t.idle  = i + wa;
-    t.total = u + n + s + i + wa + irq + si + steal;
-    return t;
-}
-
-// Returns 0-100 CPU usage between two snapshots.
-static int cpu_usage_pct(const CpuTimes &a, const CpuTimes &b)
-{
-    const unsigned long long dt = b.total - a.total;
-    if (dt == 0) return 0;
-    const unsigned long long di = b.idle  - a.idle;
-    return static_cast<int>(100ULL * (dt - di) / dt);
-}
-
-struct GpuStats { int util_pct = -1; int64_t vram_used_mb = -1; int64_t vram_total_mb = -1; };
-
-// Try NVML via dlopen; return false if unavailable.
-static bool query_gpu_nvml(GpuStats &out)
-{
-    using nvmlReturn_t = int;
-    using nvmlDevice_t = void *;
-    struct nvmlUtilization_t { unsigned int gpu; unsigned int memory; };
-    struct nvmlMemory_t { unsigned long long total; unsigned long long free; unsigned long long used; };
-
-    static void *lib = nullptr;
-    static bool tried = false;
-    if (!tried) {
-        tried = true;
-        lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
-        if (!lib) lib = dlopen("libnvidia-ml.so", RTLD_LAZY | RTLD_LOCAL);
-        if (lib) {
-            auto init = reinterpret_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit_v2"));
-            if (!init) init = reinterpret_cast<nvmlReturn_t(*)()>(dlsym(lib, "nvmlInit"));
-            if (init) init();
-        }
-    }
-    if (!lib) return false;
-
-    auto getHandle = reinterpret_cast<nvmlReturn_t(*)(unsigned int, nvmlDevice_t *)>(
-        dlsym(lib, "nvmlDeviceGetHandleByIndex_v2"));
-    auto getUtil   = reinterpret_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlUtilization_t *)>(
-        dlsym(lib, "nvmlDeviceGetUtilizationRates"));
-    auto getMem    = reinterpret_cast<nvmlReturn_t(*)(nvmlDevice_t, nvmlMemory_t *)>(
-        dlsym(lib, "nvmlDeviceGetMemoryInfo"));
-    if (!getHandle || !getUtil || !getMem) return false;
-
-    nvmlDevice_t dev = nullptr;
-    if (getHandle(0, &dev) != 0 || !dev) return false;
-
-    nvmlUtilization_t util{};
-    if (getUtil(dev, &util) == 0) out.util_pct = static_cast<int>(util.gpu);
-
-    nvmlMemory_t mem{};
-    if (getMem(dev, &mem) == 0) {
-        out.vram_used_mb  = static_cast<int64_t>(mem.used  / (1024 * 1024));
-        out.vram_total_mb = static_cast<int64_t>(mem.total / (1024 * 1024));
-    }
-    return out.util_pct >= 0;
-}
-
-// Fallback: read GPU utilisation from sysfs (amdgpu / radeon).
-static bool query_gpu_sysfs(GpuStats &out)
-{
-    namespace fs = std::filesystem;
-    static std::string s_util_path, s_vram_used_path, s_vram_total_path;
-    static bool s_scanned = false;
-    if (!s_scanned) {
-        s_scanned = true;
-        std::error_code ec;
-        for (const auto &entry : fs::directory_iterator("/sys/class/drm", ec)) {
-            const auto name = entry.path().filename().string();
-            if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos)
-                continue;
-            const auto base = entry.path() / "device";
-            const auto u    = base / "gpu_busy_percent";
-            if (fs::exists(u, ec)) {
-                s_util_path        = u.string();
-                s_vram_used_path   = (base / "mem_info_vram_used").string();
-                s_vram_total_path  = (base / "mem_info_vram_total").string();
-                break;
-            }
-        }
-    }
-    if (s_util_path.empty()) return false;
-
-    auto read_int = [](const std::string &path, int64_t &val) {
-        std::ifstream f(path);
-        return static_cast<bool>(f >> val);
-    };
-    int64_t util = -1, vram_used = -1, vram_total = -1;
-    if (!read_int(s_util_path, util)) return false;
-    out.util_pct = static_cast<int>(util);
-    read_int(s_vram_used_path,  vram_used);
-    read_int(s_vram_total_path, vram_total);
-    if (vram_used  >= 0) out.vram_used_mb  = vram_used  / (1024 * 1024);
-    if (vram_total >= 0) out.vram_total_mb = vram_total / (1024 * 1024);
-    return true;
-}
-
-static GpuStats query_gpu()
-{
-    GpuStats g;
-    if (!query_gpu_nvml(g)) query_gpu_sysfs(g);
-    return g;
-}
 
 struct StatsCache {
     std::chrono::steady_clock::time_point next_sample;
@@ -300,9 +179,42 @@ struct StatsCache {
     float box_h = 0.0f;
 };
 
-struct AutoHideState {
-    std::chrono::steady_clock::time_point last_input;
-};
+    /**
+ * @brief Reads the CPU model name from /proc/cpuinfo (first "model name" entry).
+ *
+ * Cached by the caller via a function-local static; this function is called
+ * at most once per process.  Returns "Unknown CPU" if the file is absent or
+ * the key is missing.
+ *
+ * @return Trimmed string, e.g. "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
+ */
+[[nodiscard]] static std::string read_cpu_name_linux()
+{
+    // /proc/cpuinfo is a virtual kernel file; open cost is negligible.
+    std::ifstream f("/proc/cpuinfo");
+    if (!f.is_open())
+        return "Unknown CPU";                                                      // kernel file absent
+
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.starts_with("model name"))
+            continue;                                                               // skip unrelated keys
+
+        const std::size_t colon = line.find(':');                                  // separator position
+        if (colon == std::string::npos)
+            continue;                                                               // malformed line
+
+        // Advance past ": " to reach the bare model string.
+        std::string name = line.substr(colon + 2);
+
+        // Strip trailing whitespace / carriage-return (CRLF files on some kernels).
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+            name.pop_back();
+
+        return name;                                                               // first core entry is enough
+    }
+    return "Unknown CPU";                                                          // key not found in file
+}
 
 void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
 {
@@ -355,7 +267,7 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
             else
                 std::snprintf(buf.data(), buf.size(), "%lld Kbps",
                               static_cast<long long>(bps / 1000));
-            return std::string(buf.data());
+            return {buf.data()};
         };
         auto format_duration = [](double secs) -> std::string {
             if (secs <= 0.0) return "?";
@@ -367,7 +279,7 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
                 std::snprintf(buf.data(), buf.size(), "%d:%02d:%02d", h, m, s);
             else
                 std::snprintf(buf.data(), buf.size(), "%d:%02d", m, s);
-            return std::string(buf.data());
+            return {buf.data()};
         };
         auto format_size = [](double bytes) -> std::string {
             std::array<char, 32> buf{};
@@ -377,21 +289,21 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
                 std::snprintf(buf.data(), buf.size(), "%.1f MiB", bytes / 1048576.0);
             else
                 std::snprintf(buf.data(), buf.size(), "%.0f KiB", bytes / 1024.0);
-            return std::string(buf.data());
+            return {buf.data()};
         };
 
         std::string res_str = "Resolution: ";
         if (width > 0 && height > 0)
             res_str += std::to_string(width) + "x" + std::to_string(height);
         else
-            res_str += "?";
+            res_str += '?';
 
         std::string fps_str = "FPS:        ";
         if (fps > 0.0) {
             std::array<char, 16> buf{};
             std::snprintf(buf.data(), buf.size(), "%.2f", fps);
             fps_str += buf.data();
-        } else { fps_str += "?"; }
+        } else { fps_str += '?'; }
 
         const int64_t total_bitrate = video_bitrate + audio_bitrate;
 
@@ -459,6 +371,96 @@ void draw_stats_overlay(mpv_handle *mpv, ImVec2 image_pos, ImVec2 display_size)
             cache.lines[static_cast<size_t>(i)].c_str());
     }
 }
+
+
+
+
+
+namespace {
+
+
+
+std::string format_time(double time_seconds)
+{
+    const int total_seconds = static_cast<int>(time_seconds);
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", total_seconds / 60, total_seconds % 60);
+    return std::string(buffer);
+}
+
+void draw_recent_menu(const VideoUiWindow::Callbacks &callbacks)
+{
+    if (!callbacks.history_provider || !callbacks.on_open_recent)
+        return;
+
+    const auto &history = callbacks.history_provider();
+    if (history.empty() || !ImGui::BeginMenu("Recent"))
+        return;
+
+    RecentHistoryMenu::draw_entries(
+        history,
+        {
+            .on_open = [&callbacks](WindowStateToml::ImageHistoryEntry &entry) {
+                callbacks.on_open_recent(entry.source, entry.kind);
+            },
+            .on_hover = [&callbacks](WindowStateToml::ImageHistoryEntry &entry) {
+                if (!callbacks.history_preview || !callbacks.lookup_history)
+                    return;
+                if (auto *found = callbacks.lookup_history(entry.source))
+                    callbacks.history_preview->draw_for_hover(*found);
+            },
+            .on_after_item = nullptr,
+        });
+
+    ImGui::EndMenu();
+}
+
+void draw_open_shortcuts(const std::string &source,
+                         const char        *startup_label,
+                         const VideoUiWindow::Callbacks &callbacks)
+{
+    if (callbacks.on_open_image && ImGui::MenuItem("Open Image...", "Ctrl+O"))
+        callbacks.on_open_image();
+    if (callbacks.on_open_online && ImGui::MenuItem("Open Online..."))
+        callbacks.on_open_online();
+    if (callbacks.on_toggle_startup_video && ImGui::MenuItem(startup_label))
+        callbacks.on_toggle_startup_video(source);
+
+    draw_recent_menu(callbacks);
+}
+
+// ---------------------------------------------------------------------------
+// CPU / GPU usage helpers
+// ---------------------------------------------------------------------------
+
+
+// static CpuTimes read_cpu_times()
+// {
+//     std::ifstream f("/proc/stat");
+//     std::string tag;
+//     unsigned long long u, n, s, i, wa, irq, si, steal;
+//     f >> tag >> u >> n >> s >> i >> wa >> irq >> si >> steal;
+//     CpuTimes t;
+//     t.idle  = i + wa;
+//     t.total = u + n + s + i + wa + irq + si + steal;
+//     return t;
+// }
+
+// // Returns 0-100 CPU usage between two snapshots.
+// static int cpu_usage_pct(const CpuTimes &a, const CpuTimes &b)
+// {
+//     const unsigned long long dt = b.total - a.total;
+//     if (dt == 0) return 0;
+//     const unsigned long long di = b.idle  - a.idle;
+//     return static_cast<int>(100ULL * (dt - di) / dt);
+// }
+
+
+
+struct AutoHideState {
+    std::chrono::steady_clock::time_point last_input;
+};
+
 
 } // namespace
 
@@ -784,3 +786,5 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::End();
 }
+
+

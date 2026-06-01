@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pch.hpp"
+
 #include "window_state_toml.hpp"
 
 // StyleEditor owns the Dear ImGui style preset selection, preset switching

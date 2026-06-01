@@ -1,7 +1,6 @@
-#include <cstdint>
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 #include "vulkan_texture.hpp"
 
 #include <stb_image.h>
@@ -188,7 +187,7 @@ bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) 
     }
 
     // 4. ImGui Registration
-    m_descriptor_set = ImGui_ImplVulkan_AddTexture(m_sampler, m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    m_descriptor_set = ImGui_ImplVulkan_AddTexture(m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     // 5. Staging & Upload Logic
     VkBuffer staging_buf;

@@ -1,3 +1,6 @@
+#include "pch.hpp"
+
+
 #include "opened_files_window.hpp"
 #include "history_context_menu.hpp"
 #include "history_preview.hpp"

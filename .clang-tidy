@@ -5,6 +5,10 @@ CheckOptions:
     value:           '0'
 FormatStyle: file
 ExcludeHeaderFilterRegex: ".*/External/.*"
+Diagnostics:
+  UnusedIncludes: None
+Includes:
+    IgnoreHeader: pch.hpp
 Checks:
     -*,
     std=c++23

@@ -1,10 +1,9 @@
+#include "pch.hpp"
+
 #include "image_context_menu.hpp"
 
 #include "core/log/debug_log.hpp"
 #include "image_downloader.hpp"
-
-#include <SDL3/SDL_dialog.h>
-#include <imgui.h>
 
 
 // ---------------------------------------------------------------------------

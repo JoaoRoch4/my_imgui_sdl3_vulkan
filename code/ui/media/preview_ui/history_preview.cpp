@@ -9,6 +9,8 @@
  * the display edge.
  */
 
+ #include "pch.hpp"
+
 #include "history_preview.hpp"
 #include "Image_viewer_panel.hpp"
 #include "core/log/debug_log.hpp"
@@ -16,12 +18,6 @@
 #include "video_hover_preview.hpp"
 #include "video_player.hpp"
 #include "video_player_placebo.hpp"
-
-#include <curl/curl.h>
-
-#include <string_view>
-#include <utility>
-#include <unistd.h>
 
 /// Global cap on the image preview size (width × height in pixels).
 ImVec2 g_history_preview_max_size = ImVec2(1000.0f, 1000.0f);

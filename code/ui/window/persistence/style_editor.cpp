@@ -1,3 +1,6 @@
+#include "pch.hpp"
+
+
 #include "style_editor.hpp"
 
 namespace {

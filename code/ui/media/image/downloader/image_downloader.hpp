@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pch.hpp"
 
 /**
  * @brief Utility for downloading images from URLs to temporary files.

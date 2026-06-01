@@ -1,6 +1,7 @@
+#include "pch.hpp"
+
 #include "app_config.hpp"
-#include <rfl/toml.hpp>
-#include <rfl.hpp>
+ImVec4 app_config::clear_color() const { return ImVec4(clear_r, clear_g, clear_b, clear_a); }
 
 bool app_config_load(app_config& cfg, const std::string& path)
 {

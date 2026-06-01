@@ -1,20 +1,34 @@
-file rename
-edit file metadata
+now:
+git commit
+clangd errors
+ffmpeg tags for videos
+
+fix:
+video thumb black
+keyboard keys suport: space in video player
+image thumb aspect ratio
+
+todo:
+metada manager window
+download manager window
+gpu file explorer
 download in osd
 download percentage
 loop and acelleration on runtime configs
-fix loop button symbol
-cuda hwdec
-file explorer 
-text editor
-image contexct menu
-image save
-hide video ui togle 
-auto hide video ui togle
+cuda hwdec fox previews
 togle preview thread
-image preview size
-file exp contexct menu, search bar, sort
-fix: if a video is finished set the time im toml to 00:00
-fix: broken loopbutton
-fix: runtime config
-image preview size
+gpu accleration for previews
+
+improve:
+image contexct menu
+sort acending/descending
+tags
+sort by modified
+
+create:
+text editor
+.a precompile external libs: implot imgui-1.92.8-docking
+git update script
+image save
+
+create akill about video and pictures metadata read/write using ffmpeg for videos and exiftool for images. 

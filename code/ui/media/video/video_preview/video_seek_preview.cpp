@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 
 #include "thread_overwatch.hpp"
 #include "video_seek_preview.hpp"
@@ -249,7 +249,7 @@ bool VideoSeekPreview::create_gpu_resources(vulkan_context *vk) {
   vkCreateSampler(device, &samp, nullptr, &m_sampler);
 
   m_descriptor_set = ImGui_ImplVulkan_AddTexture(
-      m_sampler, m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   // Transition once so first sampling is valid before any upload happens.
   {

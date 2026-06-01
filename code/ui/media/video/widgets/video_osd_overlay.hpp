@@ -1,9 +1,7 @@
 #pragma once
 
-#include <chrono>
-#include <string>
+#include "pch.hpp"
 
-#include "imgui.h"
 
 class VideoOsdOverlay {
 public:

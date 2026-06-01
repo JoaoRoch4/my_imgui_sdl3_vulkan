@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 
 #include "app.hpp"
 
@@ -12,7 +12,6 @@
 #include "window_fullscreen_utils.hpp"
 #include "window_state_toml.hpp"
 
-#include <imgui.h>
 
 App::App()
 {
@@ -93,8 +92,14 @@ int App::run()
     menu_bar.SetStatePath(state_path);
     menu_bar.ApplyHistory(state);
     menu_bar.ApplyRuntimeConfig(state);
-    menu_bar.SetThumbDir(std::filesystem::path(SDL_GetBasePath()) / "thumbs");
-    menu_bar.SetDownloadCacheDir(std::filesystem::path(SDL_GetBasePath()) / "video_cache");
+    
+    // Use shared cache folder at project root (not inside build/debug, build/release, etc.)
+    auto exe_dir = std::filesystem::path(SDL_GetBasePath());
+    auto project_root = exe_dir.parent_path().parent_path();  // Go up from build/* to project root
+    auto cache_dir = project_root / "cache";
+    std::filesystem::create_directories(cache_dir);
+    menu_bar.SetThumbDir(cache_dir / "thumbs");
+    menu_bar.SetDownloadCacheDir(cache_dir / "video_cache");
     ImVec4 clear_color = state.clear_color
                              ? ImVec4(static_cast<float>(state.clear_color->r) / 255.0f, static_cast<float>(state.clear_color->g) / 255.0f, static_cast<float>(state.clear_color->b) / 255.0f, static_cast<float>(state.clear_color->a) / 255.0f)
                              : ImVec4(0.45f, 0.55f, 0.60f, 1.00f);

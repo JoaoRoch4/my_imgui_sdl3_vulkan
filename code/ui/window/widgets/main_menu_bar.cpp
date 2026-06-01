@@ -8,7 +8,7 @@
  * supplied MenuContext.
  */
 
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 
 #include "main_menu_bar.hpp"
 
@@ -25,7 +25,6 @@
 #include "recent_history_menu.hpp"
 #include "style_editor.hpp"
 #include "video_context_menu.hpp"
-#include "video_playback_mode.hpp"
 #include "video_player.hpp"
 #include "video_player_placebo.hpp"
 #include "window_state_toml.hpp"

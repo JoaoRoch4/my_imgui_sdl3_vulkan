@@ -1,17 +1,15 @@
-#include "pch.hpp"
+#include "pch.hpp" // NOLINT
 
 #include "video_player.hpp"
 #include "video_context_menu.hpp"
 #include "history_preview.hpp"
 #include "video_downloader.hpp"
-#include "image_downloader.hpp"
 #include "core/log/debug_log.hpp"
 #include "video_ui_window.hpp"
 #include "video_osd_overlay.hpp"
 #include "video_ui_window.hpp"
 #include "video_hover_preview.hpp"
 #include "video_seek_preview.hpp"
-#include "window_fullscreen_utils.hpp"
 #include "video_seek_preview.hpp"
 #include "window_state_toml.hpp"
 #include "VideoEntry.hpp"
@@ -28,54 +26,6 @@
 // ============================================================================
 
 using std::move;
-
-namespace {
-
-    // ============================================================================
-// Linux system-info helpers (OSD)
-// ============================================================================
-
-/**
- * @brief Reads the CPU model name from the Linux kernel's /proc/cpuinfo.
- *
- * Iterates lines looking for the "model name" key.  Only the first occurrence
- * (physical socket 0, logical core 0) is returned; for multi-socket machines
- * the first socket's label is representative enough for an OSD string.
- *
- * If the file cannot be opened, or the key is absent (unlikely on any x86-64
- * Linux), the function returns the literal string "Unknown CPU" so callers
- * never receive an empty string.
- *
- * @return A trimmed string such as "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
- */
-[[nodiscard]] static std::string read_cpu_name_linux()
-{
-    // Open the virtual file exposed by the kernel for CPU topology.
-    std::ifstream f("/proc/cpuinfo");
-    if (!f.is_open())
-        return "Unknown CPU";                                                      // file not available
-
-    std::string line;
-    while (std::getline(f, line)) {
-        // The "model name" key appears once per logical core; grab the first hit.
-        if (!line.starts_with("model name"))
-            continue;
-
-        const std::size_t colon = line.find(':');                                  // find the separator
-        if (colon == std::string::npos)
-            continue;                                                               // malformed line — skip
-
-        // Skip ": " (colon + space) to get the bare model string.
-        std::string name = line.substr(colon + 2);
-
-        // Trim any trailing whitespace or carriage-return left by the kernel.
-        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
-            name.pop_back();
-
-        return name;                                                               // first occurrence is enough
-    }
-    return "Unknown CPU";                                                          // key not found
-}
 
 /**
  * @brief Reads the GPU model name from the NVIDIA kernel driver's sysfs tree
@@ -154,6 +104,56 @@ namespace {
 
     return "Unknown GPU";                                                          // neither path succeeded
 }
+    // ============================================================================
+// Linux system-info helpers (OSD)
+// ============================================================================
+
+/**
+ * @brief Reads the CPU model name from the Linux kernel's /proc/cpuinfo.
+ *
+ * Iterates lines looking for the "model name" key.  Only the first occurrence
+ * (physical socket 0, logical core 0) is returned; for multi-socket machines
+ * the first socket's label is representative enough for an OSD string.
+ *
+ * If the file cannot be opened, or the key is absent (unlikely on any x86-64
+ * Linux), the function returns the literal string "Unknown CPU" so callers
+ * never receive an empty string.
+ *
+ * @return A trimmed string such as "Intel(R) Core(TM) i7-7700 CPU @ 3.60GHz".
+ */
+[[nodiscard]] static std::string read_cpu_name_linux()
+{
+    // Open the virtual file exposed by the kernel for CPU topology.
+    std::ifstream f("/proc/cpuinfo");
+    if (!f.is_open())
+        return "Unknown CPU";                                                      // file not available
+
+    std::string line;
+    while (std::getline(f, line)) {
+        // The "model name" key appears once per logical core; grab the first hit.
+        if (!line.starts_with("model name"))
+            continue;
+
+        const std::size_t colon = line.find(':');                                  // find the separator
+        if (colon == std::string::npos)
+            continue;                                                               // malformed line — skip
+
+        // Skip ": " (colon + space) to get the bare model string.
+        std::string name = line.substr(colon + 2);
+
+        // Trim any trailing whitespace or carriage-return left by the kernel.
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\r'))
+            name.pop_back();
+
+        return name;                                                               // first occurrence is enough
+    }
+    return "Unknown CPU";                                                          // key not found
+}
+
+namespace {
+
+
+
 
 const std::unordered_set<std::string> k_video_exts = {
     ".mp4",
@@ -641,7 +641,7 @@ bool VideoPlayer::create_gpu_resources(VideoEntry &e)
     // ImGui descriptor — registers the sampler + view as a draw-able texture.
     // -------------------------------------------------------------------------
     e.descriptor_set = ImGui_ImplVulkan_AddTexture(
-        e.sampler, e.image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        e.image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
  
     // -------------------------------------------------------------------------
     // Command pool — shared by both staging slots, reset per command buffer.
@@ -1951,10 +1951,14 @@ bool VideoPlayer::draw_window(VideoEntry &e, int idx) {
         },
         nullptr, // on_seek_preview_hover — no-op
         [this]() -> bool {
-          return m_on_get_app_fullscreen();
+          // Guard: this callback may be unset if menus were wired while the
+          // other player was active.  Fall back to "not fullscreen" instead of
+          // invoking an empty std::function (which throws bad_function_call).
+          return m_on_get_app_fullscreen ? m_on_get_app_fullscreen() : false;
         },
         [this](bool fullscreen) {
-          m_on_set_app_fullscreen(fullscreen);
+          if (m_on_set_app_fullscreen)
+            m_on_set_app_fullscreen(fullscreen);
         },
     };
 

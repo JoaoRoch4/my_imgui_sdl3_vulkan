@@ -2,10 +2,6 @@
 
 #include "pch.hpp"
 
-#include <filesystem>
-#include <array>
-#include <string>
-
 /// ImGui window for viewing and editing audio/video file metadata tags.
 ///
 /// Uses TagLib's PropertyMap API — the same key names (TITLE, ARTIST, ALBUM, …)

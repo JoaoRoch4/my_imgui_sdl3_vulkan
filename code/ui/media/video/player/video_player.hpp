@@ -3,7 +3,6 @@
 #include "pch.hpp"
 #include "window_state_toml.hpp"
 
-#include <SDL3/SDL_keycode.h>
 
 class VideoContextMenu;
 class HistoryPreview;

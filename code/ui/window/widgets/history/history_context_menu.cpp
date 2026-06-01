@@ -1,3 +1,6 @@
+#include "pch.hpp"
+
+
 #include "history_context_menu.hpp"
 
 

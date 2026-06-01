@@ -1,8 +1,8 @@
+#include "pch.hpp"
+
+
 #include "recent_history_menu.hpp"
 
-#include "imgui.h"
-
-#include <filesystem>
 
 std::string RecentHistoryMenu::build_label(const WindowStateToml::ImageHistoryEntry &entry)
 {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <array>
+#include "pch.hpp"
 
 // Playback mode selector shared across Runtime Config and Video Context Menu.
 enum class VideoPlaybackMode : int {

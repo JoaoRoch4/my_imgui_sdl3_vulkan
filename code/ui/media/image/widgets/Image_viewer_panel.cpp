@@ -43,6 +43,8 @@
  *   → Δoffset = C * (1/ppm_old − 1/ppm_new)
  */
 
+ #include "pch.hpp"
+
 #include "Image_viewer_panel.hpp"
 
 #include "imgui_internal.h"
