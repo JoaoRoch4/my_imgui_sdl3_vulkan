@@ -981,7 +981,7 @@ void ImGui::FileBrowser::SetTypeFilters(
 			}
 
 			if (i > 0) {
-				allFiltersName += ",";
+				allFiltersName += ',';
 			}
 			allFiltersName += typeFilters[i];
 		}
