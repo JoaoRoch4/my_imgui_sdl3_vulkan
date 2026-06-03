@@ -2,6 +2,48 @@
 
 #include "imgui_context.hpp"
 
+#include "debug_log.hpp"
+
+namespace {
+
+// True when this process is being traced (TracerPid != 0 in /proc/self/status) -- i.e. running
+// under a debugger. Re-read on every call (calls are rare) so attaching later is still picked up.
+[[nodiscard]] bool is_debugger_present() noexcept {
+    constexpr std::string_view tracer_key{"TracerPid:"};
+
+    std::ifstream status{"/proc/self/status"};
+    if (!status.is_open()) {
+        APP_DEBUG_LOG("[imgui_context] is_debugger_present: cannot open /proc/self/status");
+        return false;
+    }
+
+    for (std::string line; std::getline(status, line);) {
+        std::string_view view{line};
+        if (!view.starts_with(tracer_key)) {
+            continue;
+        }
+
+        // Trim the key and surrounding whitespace using bounds-checked string_view
+        // index operations -- no pointer arithmetic, no fixed-size buffers.
+        view.remove_prefix(tracer_key.size());
+        const std::size_t first = view.find_first_not_of(" \t");
+        const std::size_t last = view.find_last_not_of(" \t");
+        if (first == std::string_view::npos) {
+            break;
+        }
+        view = view.substr(first, last - first + 1);
+
+        const bool attached = view != "0";
+        APP_DEBUG_LOG("[imgui_context] is_debugger_present: TracerPid='{}' attached={}", view, attached);
+        return attached;
+    }
+
+    APP_DEBUG_LOG("[imgui_context] is_debugger_present: TracerPid line not found");
+    return false;
+}
+
+} // namespace
+
 imgui_context::imgui_context()
     : font_cousine(nullptr)
     , font_droid_sans(nullptr)
@@ -23,7 +65,7 @@ void imgui_context::init(SDL_Window* window, vulkan_context& vk, ImGui_ImplVulka
     // buttons) when a debugger is actually attached. The Item Picker itself is
     // always available, but its IM_DEBUG_BREAK() is made inert when undebugged
     // (see imconfig.h: ImAppIsDebuggerAttached), so it can't crash a normal run.
-    io.ConfigDebugIsDebuggerPresent = ImAppIsDebuggerAttached();
+    io.ConfigDebugIsDebuggerPresent = is_debugger_present();
 
     ImGui::StyleColorsDark();
 
