@@ -4,7 +4,8 @@
 #include "rendering/vulkan/vulkan_texture.hpp"
 #include "rendering/vulkan/vulkan_context.hpp"
 #include <stb_image.h>
-#define STB_IMAGE_RESIZE2_IMPLEMENTATION
+// STB_IMAGE_RESIZE2_IMPLEMENTATION now lives in file_browser_thumbnail_context_thread.cpp
+// (this file is retired in the thumbnail-engine refactor). Include for declarations only.
 #include <stb_image_resize2.h>
 #include <stb_image_write.h>
 
