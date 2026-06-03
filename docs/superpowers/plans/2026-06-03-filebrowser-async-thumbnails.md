@@ -368,12 +368,13 @@ void FileBrowserFileOperations::run_job(const Job& job, std::uint64_t watch_id) 
         }
     };
 
-    const std::uint64_t total = count_entries(job.from);
+    std::uint64_t total = 0; // counted lazily — the move fast-path skips it entirely
     std::uint64_t done = 0;
     std::error_code ec;
 
     switch (job.op) {
     case Op::Remove: {
+        total = count_entries(job.from);
         // Recursive, entry-by-entry so we can heartbeat + honour aborts.
         if (std::filesystem::is_directory(job.from, ec)) {
             std::vector<std::filesystem::path> entries;
@@ -403,9 +404,10 @@ void FileBrowserFileOperations::run_job(const Job& job, std::uint64_t watch_id) 
         if (job.op == Op::Move) {
             std::error_code rec;
             std::filesystem::rename(job.from, job.to, rec);
-            if (!rec) { finish(true, {}); return; }
+            if (!rec) { finish(true, {}); return; } // same-device: instant, no tree walk
             // else fall through to copy-then-remove (cross-device).
         }
+        total = count_entries(job.from); // only reached for a copy or cross-device move
         if (std::filesystem::is_directory(job.from, ec)) {
             std::filesystem::create_directories(job.to, ec);
             for (auto it = std::filesystem::recursive_directory_iterator(
@@ -808,7 +810,6 @@ public:
     [[nodiscard]] static bool is_thumbnailable(const std::filesystem::path& p);
 
     static constexpr int k_max_uploads_per_frame = 4;
-    static constexpr int k_retire_frames         = 3;
 
 private:
     enum class State { Queued, Generating, PixelsReady, DiskReady, Ready, Failed };
@@ -829,6 +830,7 @@ private:
     std::unordered_map<std::string, Entry> m_entries;
     std::vector<Retired>                   m_retire;
     int                                    m_uploads_this_frame = 0;
+    int                                    m_retire_frames = 4; // set to ImageCount+1 in setup()
     vulkan_context*                        m_vk = nullptr;
     std::filesystem::path                  m_thumb_dir;
     bool                                   m_setup = false;
@@ -880,6 +882,11 @@ void FileBrowserThumbnailContext::setup(vulkan_context* vk, std::filesystem::pat
     m_vk = vk;
     m_thumb_dir = std::move(thumb_dir);
     m_setup = true;
+    // A texture last drawn in frame N is safe to free only after the GPU finishes
+    // the ImageCount in-flight frames cycle; +1 for margin. (Replaces the old
+    // evict() vkDeviceWaitIdle full-pipeline stall with a non-stalling delay.)
+    if (vk)
+        m_retire_frames = static_cast<int>(vk->main_window_data.ImageCount) + 1;
     std::error_code ec;
     std::filesystem::create_directories(m_thumb_dir, ec);
     m_thread.start([this](const std::string& key, std::vector<std::uint8_t> rgba, bool ok) {
@@ -935,6 +942,10 @@ void FileBrowserThumbnailContext::on_generated(const std::string& key,
 ImTextureID FileBrowserThumbnailContext::get(const std::filesystem::path& path) {
     if (!m_setup || !m_vk)
         return 0;
+    // Gate non-media here (the retired provider lambda did this before calling the
+    // cache). Without it, browsing .cpp/.txt files would each spawn a 13s mpv decode.
+    if (!is_thumbnailable(path))
+        return 0;
     const std::string key = key_for(path);
 
     std::lock_guard lock(m_mutex);
@@ -987,7 +998,7 @@ void FileBrowserThumbnailContext::evict(const std::filesystem::path& path) {
     if (it == m_entries.end())
         return;
     if (it->second.texture)
-        m_retire.push_back({std::move(it->second.texture), k_retire_frames}); // deferred free
+        m_retire.push_back({std::move(it->second.texture), m_retire_frames}); // deferred free
     if (!it->second.png_path.empty()) {
         std::error_code ec;
         std::filesystem::remove(it->second.png_path, ec);
@@ -1002,7 +1013,7 @@ void FileBrowserThumbnailContext::clear() {
     std::lock_guard lock(m_mutex);
     for (auto& [k, e] : m_entries) {
         if (e.texture)
-            m_retire.push_back({std::move(e.texture), k_retire_frames});
+            m_retire.push_back({std::move(e.texture), m_retire_frames});
         if (!e.png_path.empty()) {
             std::error_code ec;
             std::filesystem::remove(e.png_path, ec);
