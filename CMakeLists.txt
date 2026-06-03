@@ -182,7 +182,8 @@ add_executable(example_sdl3_vulkan
     code/ui/config/app_config.cpp
     code/ui/config/config_runtime.cpp
 
-    code/ui/FileExplorer/FileBrowser.cpp
+    code/ui/FileExplorer/file_browser_ui.cpp
+    code/ui/FileExplorer/file_browser_thread.cpp
     code/ui/FileExplorer/file_browser_context_menu.cpp
     code/ui/FileExplorer/file_thumbnail_cache.cpp
 
@@ -200,6 +201,8 @@ add_executable(example_sdl3_vulkan
 
     # FPS overlay
     code/ui/window/widgets/fps_plot.cpp
+    code/ui/config/config_runtime_ui_context.hpp
+    code/ui/config/config_runtime_ui_context.cpp
 )
 
 # ── Multi-config output layout + "build everything" target ────────────────────
@@ -347,6 +350,8 @@ $<$<CONFIG:RelWithDebInfo>:__APP_FORCE_LOGS>
     
     # Enable OT-SVG emoji rendering via PlutoSVG
     IMGUI_ENABLE_FREETYPE_PLUTOSVG
+
+    APP_USE_UNLIMITED_FRAME_RATE
 )
 
 # ── Linker search paths ───────────────────────────────────────────────────────

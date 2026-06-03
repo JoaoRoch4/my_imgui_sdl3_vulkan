@@ -12,8 +12,8 @@
 
 #include "main_menu_bar.hpp"
 
-#include "FileBrowser.hpp"
 #include "app_context.hpp"
+#include "file_browser_ui.hpp"
 
 #include "Image_viewer_panel.hpp"
 #include "config_runtime.hpp"

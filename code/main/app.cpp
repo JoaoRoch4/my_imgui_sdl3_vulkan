@@ -17,13 +17,13 @@ App::App()
 {
 }
 
-int App::run()
+bool App::run()
 {
     const auto app_start_time = std::chrono::steady_clock::now();
 
     sdl3_context sdl;
     if (!sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
-        return 1;
+        return false;
 
     vulkan_context vk;
     {

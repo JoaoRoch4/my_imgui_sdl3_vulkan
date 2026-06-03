@@ -28,7 +28,7 @@
 #include "window_fullscreen_utils.hpp"
 #include "window_state_toml.hpp"
 
-#include "FileBrowser.hpp"
+#include "file_browser_ui.hpp"
 #include "app_context.hpp"
 #include "file_thumbnail_cache.hpp"
 #include "imgui_console.hpp"
@@ -686,7 +686,7 @@ void AppCoordinator::Build() {
     m_video_player_placebo->update_frames();
   else
     m_video_player->update_frames();
-  m_config_runtime->Draw();
+  m_config_runtime_ui.DrawUi();
   m_viewer->draw_windows();
   if (m_use_video_player_placebo)
     m_video_player_placebo->draw();

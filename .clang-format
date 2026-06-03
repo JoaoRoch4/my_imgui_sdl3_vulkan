@@ -4,67 +4,67 @@ AccessModifierOffset: -4
 AlignAfterOpenBracket: DontAlign
 AlignArrayOfStructures: None
 AlignConsecutiveAssignments:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: false
   AlignFunctionPointers: false
   PadOperators: true
 AlignConsecutiveBitFields:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: false
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignConsecutiveDeclarations:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: true
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignConsecutiveMacros:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
-  AlignFunctionDeclarations: false
+  AcrossComments: true
+  AlignCompound: true
+  AlignFunctionDeclarations: true
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignConsecutiveShortCaseStatements:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCaseArrows: false
-  AlignCaseColons: false
+  AcrossComments: true
+  AlignCaseArrows: true
+  AlignCaseColons: true
 AlignConsecutiveTableGenBreakingDAGArgColons:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: false
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignConsecutiveTableGenCondOperatorColons:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: false
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignConsecutiveTableGenDefinitionColons:
-  Enabled: false
+  Enabled: true
   AcrossEmptyLines: false
-  AcrossComments: false
-  AlignCompound: false
+  AcrossComments: true
+  AlignCompound: true
   AlignFunctionDeclarations: false
   AlignFunctionPointers: false
-  PadOperators: false
+  PadOperators: true
 AlignEscapedNewlines: Right
 AlignOperands: DontAlign
 AlignTrailingComments:
@@ -91,7 +91,7 @@ BinPackArguments: true
 BinPackLongBracedList: true
 BinPackParameters: BinPack
 BitFieldColonSpacing: Both
-BracedInitializerIndentWidth: 8
+BracedInitializerIndentWidth: 4
 BraceWrapping:
   AfterCaseLabel: false
   AfterClass: false
@@ -128,16 +128,16 @@ BreakFunctionDefinitionParameters: false
 BreakInheritanceList: BeforeColon
 BreakStringLiterals: true
 BreakTemplateDeclarations: MultiLine
-ColumnLimit: 0
+ColumnLimit: 120
 CommentPragmas: "^ IWYU pragma:"
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
-ContinuationIndentWidth: 8
+ContinuationIndentWidth: 4
 Cpp11BracedListStyle: true
 DerivePointerAlignment: false
 DisableFormat: false
-EmptyLineAfterAccessModifier: Never
-EmptyLineBeforeAccessModifier: LogicalBlock
+EmptyLineAfterAccessModifier: Always
+EmptyLineBeforeAccessModifier: Always
 EnumTrailingComma: Leave
 ExperimentalAutoDetectBinPacking: false
 FixNamespaceComments: false
@@ -163,7 +163,7 @@ IncludeCategories:
     CaseSensitive: false
 IncludeIsMainRegex: "(Test)?$"
 IncludeIsMainSourceRegex: ""
-IndentAccessModifiers: false
+IndentAccessModifiers: true
 IndentCaseBlocks: false
 IndentCaseLabels: false
 IndentExportBlock: true
@@ -171,7 +171,7 @@ IndentExternBlock: AfterExternBlock
 IndentGotoLabels: true
 IndentPPDirectives: None
 IndentRequiresClause: true
-IndentWidth: 8
+IndentWidth: 4
 IndentWrappedFunctionNames: false
 InsertBraces: false
 InsertNewlineAtEOF: false
@@ -186,16 +186,16 @@ IntegerLiteralSeparator:
 JavaScriptQuotes: Leave
 JavaScriptWrapImports: true
 KeepEmptyLines:
-  AtEndOfFile: false
+  AtEndOfFile: true
   AtStartOfBlock: true
   AtStartOfFile: true
-KeepFormFeed: false
+KeepFormFeed: true
 LambdaBodyIndentation: Signature
 LineEnding: DeriveLF
 MacroBlockBegin: ""
 MacroBlockEnd: ""
 MainIncludeChar: Quote
-MaxEmptyLinesToKeep: 1
+MaxEmptyLinesToKeep: 4
 NamespaceIndentation: Inner
 ObjCBinPackProtocolList: Auto
 ObjCBlockIndentWidth: 4
@@ -211,7 +211,7 @@ PenaltyBreakComment: 300
 PenaltyBreakFirstLessLess: 120
 PenaltyBreakOpenParenthesis: 300
 PenaltyBreakScopeResolution: 500
-PenaltyBreakString: 1000
+PenaltyBreakString: 100
 PenaltyBreakTemplateDeclaration: 10
 PenaltyExcessCharacter: 100
 PenaltyIndentedWhitespace: 100

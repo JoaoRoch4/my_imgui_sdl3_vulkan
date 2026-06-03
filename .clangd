@@ -231,7 +231,7 @@ Hover:
   MacroContentsLimit: 2048
 
 InlayHints:
-  BlockEnd: false
+  BlockEnd: true
   Designators: true
   Enabled: true
   ParameterNames: true

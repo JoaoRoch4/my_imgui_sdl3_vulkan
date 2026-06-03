@@ -28,29 +28,35 @@
 #include "vulkan_emoji_atlas.hpp"
 
 AppContext::AppContext()
-    : m_viewer{std::make_unique<ImageViewerPanel>()},
-      m_open_image_dialogs{std::make_unique<OpenImageDialogs>()},
-      m_bulk_image_open{std::make_unique<BulkImageOpenQueue>()},
-      m_video_player{std::make_unique<VideoPlayer>()},
-      m_video_player_placebo{std::make_unique<VideoPlayerPlacebo>()},
-      m_video_downloader{std::make_unique<VideoDownloader>()},
-      m_config_runtime{std::make_unique<ConfigRuntime>()},
-      m_history_preview{std::make_unique<HistoryPreview>()},
-      m_opened_files_window{std::make_unique<OpenedFilesWindow>()},
-      m_video_context_menu{std::make_unique<VideoContextMenu>()},
-      m_fb_context_menu{std::make_unique<FileBrowserContextMenu>()},
-      m_thumb_cache{std::make_unique<FileThumbnailCache>()},
-      m_metadata_editor{std::make_unique<MetadataEditor>()},
-      m_history_mgr{std::make_unique<MediaHistoryManager>()},
-      m_load_handler{std::make_unique<MediaLoadHandler>()},
-      m_app_state{std::make_unique<AppStateCoordinator>()},
-      m_console{std::make_unique<ConsoleCommands>()} {}
+    : m_viewer {std::make_unique<ImageViewerPanel>()}
+    , m_open_image_dialogs {std::make_unique<OpenImageDialogs>()}
+    , m_bulk_image_open {std::make_unique<BulkImageOpenQueue>()}
+    , m_video_player {std::make_unique<VideoPlayer>()}
+    , m_video_player_placebo {std::make_unique<VideoPlayerPlacebo>()}
+    , m_video_downloader {std::make_unique<VideoDownloader>()}
+    , m_config_runtime {std::make_unique<ConfigRuntime>()}
+    , m_history_preview {std::make_unique<HistoryPreview>()}
+    , m_opened_files_window {std::make_unique<OpenedFilesWindow>()}
+    , m_video_context_menu {std::make_unique<VideoContextMenu>()}
+    , m_fb_context_menu {std::make_unique<FileBrowserContextMenu>()}
+    , m_thumb_cache {std::make_unique<FileThumbnailCache>()}
+    , m_metadata_editor {std::make_unique<MetadataEditor>()}
+    , m_history_mgr {std::make_unique<MediaHistoryManager>()}
+    , m_load_handler {std::make_unique<MediaLoadHandler>()}
+    , m_app_state {std::make_unique<AppStateCoordinator>()}
+    , m_console {std::make_unique<ConsoleCommands>()} { }
 
 // Out-of-line so the unique_ptr members see complete types here.
 AppContext::~AppContext() = default;
 
-void AppContext::CreateEmojiAtlas(vulkan_context &vk) {
-  m_emoji_atlas = std::make_unique<VulkanEmojiAtlas>(vk);
+AppContext* AppContext::GetInstance() noexcept {
+    static std::unique_ptr<AppContext> instance = std::make_unique<AppContext>();
+    return instance.get();
+}
+
+
+void AppContext::CreateEmojiAtlas(vulkan_context& vk) {
+    m_emoji_atlas = std::make_unique<VulkanEmojiAtlas>(vk);
 }
 
 void AppContext::DestroyEmojiAtlas() { m_emoji_atlas.reset(); }

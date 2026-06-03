@@ -3,6 +3,7 @@
 #include "pch.hpp" // NOLINT
 
 
+#include "config_runtime_ui_context.hpp"
 #include "main_menu_bar.hpp"
 
 struct SDL_Window;
@@ -116,6 +117,7 @@ private:
   VideoPlayerPlacebo *m_video_player_placebo = nullptr;
   VideoDownloader *m_video_downloader = nullptr;
   ConfigRuntime *m_config_runtime = nullptr;
+  ConfigRuntimeUiContext m_config_runtime_ui;
   HistoryPreview *m_history_preview = nullptr;
   OpenedFilesWindow *m_opened_files_window = nullptr;
   VideoContextMenu *m_video_context_menu = nullptr;

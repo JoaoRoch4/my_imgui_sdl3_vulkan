@@ -1,61 +1,57 @@
 #pragma once
 #include "pch.hpp"
 
-
-#ifdef IMGUI_IMPL_VULKAN_USE_VOLK
-#include <volk.h>
-#else
-#endif
-
 class vulkan_context {
-public:
-    vulkan_context();
 
-    VkAllocationCallbacks *allocator;
-    VkInstance instance;
-    VkPhysicalDevice physical_device;
-    VkDevice device;
-    uint32_t queue_family;
-    VkQueue queue;
-    VkPipelineCache pipeline_cache;
-    VkDescriptorPool descriptor_pool;
-    VkBuffer vram_reserve_buffer;
-    VkDeviceMemory vram_reserve_memory;
-    VkDeviceSize vram_reserve_bytes;
-    bool vram_reserve_active;
+    public:
+    
+	vulkan_context();
 
-    ImGui_ImplVulkanH_Window main_window_data;
-    uint32_t min_image_count;
-    bool swap_chain_rebuild;
+	VkAllocationCallbacks* allocator;
+	VkInstance instance;
+	VkPhysicalDevice physical_device;
+	VkDevice device;
+	uint32_t queue_family;
+	VkQueue queue;
+	VkPipelineCache pipeline_cache;
+	VkDescriptorPool descriptor_pool;
+	VkBuffer vram_reserve_buffer;
+	VkDeviceMemory vram_reserve_memory;
+	VkDeviceSize vram_reserve_bytes;
+	bool vram_reserve_active;
 
-    /// True when the device was created with the Vulkan 1.2 features libplacebo
-    /// requires for an imported device (hostQueryReset + timelineSemaphore).
-    /// The libplacebo zero-copy video path is only attempted when this is set.
-    bool placebo_features_enabled = false;
+	ImGui_ImplVulkanH_Window main_window_data;
+	uint32_t min_image_count;
+	bool swap_chain_rebuild;
 
-    void setup(std::vector<const char *> instance_extensions);
-    void setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const;
-    void set_vsync(ImGui_ImplVulkanH_Window *wd, bool vsync);
-    void resize_window(ImGui_ImplVulkanH_Window *wd, int width, int height);
-    void cleanup();
-    void cleanup_window(ImGui_ImplVulkanH_Window *wd) const;
-    void frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data, const ImVec4 &clear_color);
-    void frame_present(ImGui_ImplVulkanH_Window *wd);
-    VkResult queue_submit(uint32_t submit_count, const VkSubmitInfo *submits, VkFence fence);
-    VkResult queue_present(const VkPresentInfoKHR *present_info);
+	/// True when the device was created with the Vulkan 1.2 features libplacebo
+	/// requires for an imported device (hostQueryReset + timelineSemaphore).
+	/// The libplacebo zero-copy video path is only attempted when this is set.
+	bool placebo_features_enabled = false;
 
-    static void check_result(VkResult err);
+	void setup(std::vector<const char*> instance_extensions);
+	void setup_window(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int width, int height) const;
+	void set_vsync(ImGui_ImplVulkanH_Window* wd, bool vsync);
+	void resize_window(ImGui_ImplVulkanH_Window* wd, int width, int height);
+	void cleanup();
+	void cleanup_window(ImGui_ImplVulkanH_Window* wd) const;
+	void frame_render(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, const ImVec4& clear_color);
+	void frame_present(ImGui_ImplVulkanH_Window* wd);
+	VkResult queue_submit(uint32_t submit_count, const VkSubmitInfo* submits, VkFence fence);
+	VkResult queue_present(const VkPresentInfoKHR* present_info);
 
-private:
-    bool is_extension_available(const std::vector<VkExtensionProperties> &properties, const char *extension);
+	static void check_result(VkResult err);
+
+    private:
+	bool is_extension_available(const std::vector<VkExtensionProperties>& properties, const char* extension);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-    VkDebugReportCallbackEXT debug_report_cb;
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debug_report_fn(
-        VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType,
-        uint64_t object, size_t location, int32_t messageCode,
-        const char *pLayerPrefix, const char *pMessage, void *pUserData);
+	VkDebugReportCallbackEXT debug_report_cb;
+	static VKAPI_ATTR VkBool32 VKAPI_CALL debug_report_fn(
+		VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType,
+		uint64_t object, size_t location, int32_t messageCode,
+		const char* pLayerPrefix, const char* pMessage, void* pUserData);
 #endif
 
-    std::mutex queue_mutex;
+	std::mutex queue_mutex;
 };
