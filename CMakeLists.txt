@@ -183,6 +183,7 @@ add_executable(example_sdl3_vulkan
     code/ui/config/config_runtime.cpp
 
     code/ui/FileExplorer/file_browser_ui.cpp
+    code/ui/FileExplorer/file_browser_file_operations.cpp
     code/ui/FileExplorer/file_browser_thread.cpp
     code/ui/FileExplorer/file_browser_context_menu.cpp
     code/ui/FileExplorer/file_thumbnail_cache.cpp
