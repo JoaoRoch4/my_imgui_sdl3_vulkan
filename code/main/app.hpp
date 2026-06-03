@@ -2,6 +2,8 @@
 
 #include "pch.hpp"
 
+class AppContext;
+class sdl3_context;
 
 class App {
 public:
@@ -9,4 +11,14 @@ public:
 
     App();
     bool run();
+
+    protected:
+
+    void KickStart();
+
+    private:
+
+    AppContext* m_AppContext;
+    sdl3_context* m_Sdl;
+
 };

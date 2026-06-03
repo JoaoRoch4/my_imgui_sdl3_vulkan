@@ -9,7 +9,7 @@ AlignConsecutiveAssignments:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: false
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveBitFields:
   Enabled: true
@@ -17,7 +17,7 @@ AlignConsecutiveBitFields:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: false
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveDeclarations:
   Enabled: true
@@ -25,7 +25,7 @@ AlignConsecutiveDeclarations:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: true
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveMacros:
   Enabled: true
@@ -33,7 +33,7 @@ AlignConsecutiveMacros:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: true
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveShortCaseStatements:
   Enabled: true
@@ -47,7 +47,7 @@ AlignConsecutiveTableGenBreakingDAGArgColons:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: false
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveTableGenCondOperatorColons:
   Enabled: true
@@ -55,7 +55,7 @@ AlignConsecutiveTableGenCondOperatorColons:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: false
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignConsecutiveTableGenDefinitionColons:
   Enabled: true
@@ -63,7 +63,7 @@ AlignConsecutiveTableGenDefinitionColons:
   AcrossComments: true
   AlignCompound: true
   AlignFunctionDeclarations: false
-  AlignFunctionPointers: false
+  AlignFunctionPointers: true
   PadOperators: true
 AlignEscapedNewlines: Right
 AlignOperands: DontAlign
@@ -134,7 +134,7 @@ CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
 ContinuationIndentWidth: 4
 Cpp11BracedListStyle: true
-DerivePointerAlignment: false
+DerivePointerAlignment: true
 DisableFormat: false
 EmptyLineAfterAccessModifier: Always
 EmptyLineBeforeAccessModifier: Always
@@ -218,8 +218,8 @@ PenaltyIndentedWhitespace: 100
 PenaltyReturnTypeOnItsOwnLine: 60
 PointerAlignment: Left
 PPIndentWidth: -1
-QualifierAlignment: Leave
-ReferenceAlignment: Pointer
+QualifierAlignment: Right
+ReferenceAlignment: Right
 ReflowComments: Always
 RemoveBracesLLVM: false
 RemoveEmptyLinesInUnwrappedLines: false
@@ -236,7 +236,7 @@ SpaceAfterCStyleCast: false
 SpaceAfterLogicalNot: false
 SpaceAfterOperatorKeyword: false
 SpaceAfterTemplateKeyword: true
-SpaceAroundPointerQualifiers: Default
+SpaceAroundPointerQualifiers: Before
 SpaceBeforeAssignmentOperators: true
 SpaceBeforeCaseColon: false
 SpaceBeforeCpp11BracedList: true
@@ -279,8 +279,8 @@ StatementMacros:
   - Q_UNUSED
   - QT_REQUIRE_VERSION
 TableGenBreakInsideDAGArg: DontBreak
-TabWidth: 8
-UseTab: Always
+TabWidth: 4
+UseTab: AlignWithSpaces
 VerilogBreakBetweenInstancePorts: true
 WhitespaceSensitiveMacros:
   - BOOST_PP_STRINGIZE
