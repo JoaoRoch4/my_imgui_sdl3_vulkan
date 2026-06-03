@@ -18,8 +18,8 @@ project(example_sdl3_vulkan CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Append _d to the executable name for Debug builds so debug and release
-# binaries can coexist without overwriting each other.
+# Append _d to library names for Debug builds so debug and release artifacts can
+# coexist (CMAKE_<CONFIG>_POSTFIX applies to libraries only, e.g. libimgui_d.a).
 set(CMAKE_DEBUG_POSTFIX "_d")
 
 # ── External library paths ────────────────────────────────────────────────────
@@ -51,6 +51,72 @@ set(MPV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/mpv/include)
 # Use vendored libplacebo headers for early integration scaffolding.
 set(LIBPLACEBO_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include)
 find_library(MPV_LIBRARIES NAMES mpv REQUIRED)
+
+# ── Precompiled external GUI libraries (ImGui + ImPlot) ───────────────────────
+# ImGui and ImPlot change very rarely, so they are compiled once into standalone
+# static libraries instead of being rebuilt as part of the main executable.
+# Because imconfig.h no longer pulls in pch.hpp, these libraries don't receive
+# the project PCH and don't depend on the project's headers — so editing project
+# code (or pch.hpp itself) never rebuilds them. Warnings are silenced per target
+# with -w. Release optimisation (-O3 -DNDEBUG) comes from the default
+# CMAKE_CXX_FLAGS_RELEASE; the executable-only LTO / -march=native flags are
+# intentionally NOT applied here, keeping these objects quick to build and
+# cleanly linkable into the ThinLTO executable.
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+    ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
+)
+
+# Public headers that consumers (the executable + ImPlot) include. Marked SYSTEM
+# so their warnings stay suppressed in the consuming targets.
+target_include_directories(imgui SYSTEM PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${IMGUI_DIR}/misc/freetype
+)
+
+# Private: only needed to compile the SDL3 / Vulkan backends and the
+# FreeType + PlutoSVG font rasteriser.
+target_include_directories(imgui SYSTEM PRIVATE
+    ${SDL3_INCLUDE_DIRS}
+    ${VULKAN_INCLUDE_DIRS}
+    ${FREETYPE_INCLUDE_DIRS}
+    ${PLUTOSVG_INCLUDE_DIRS}
+)
+
+target_compile_definitions(imgui PRIVATE
+    # OT-SVG emoji rendering via PlutoSVG (also set in imconfig.h; kept explicit
+    # to mirror the original build and document the link-time dependency).
+    IMGUI_ENABLE_FREETYPE_PLUTOSVG
+)
+
+# Suppress warnings from vendored sources; pass through pkg-config extra flags.
+target_compile_options(imgui PRIVATE
+    ${SDL3_CFLAGS_OTHER}
+    ${VULKAN_CFLAGS_OTHER}
+    ${FREETYPE_CFLAGS_OTHER}
+    ${PLUTOSVG_CFLAGS_OTHER}
+    -w
+)
+
+add_library(implot STATIC
+    ${IMPLOT_DIR}/implot.cpp
+    ${IMPLOT_DIR}/implot_items.cpp
+)
+
+# implot.h includes <imgui.h>, so anything linking ImPlot also needs ImGui:
+# propagate the dependency PUBLIC-ly.
+target_include_directories(implot SYSTEM PUBLIC
+    ${IMPLOT_DIR}
+)
+target_link_libraries(implot PUBLIC imgui)
+target_compile_options(implot PRIVATE -w)
 
 # ── Sources ───────────────────────────────────────────────────────────────────
 add_executable(example_sdl3_vulkan
@@ -129,36 +195,50 @@ add_executable(example_sdl3_vulkan
     code/ui/console/vulkan_emoji_atlas.cpp
     code/ui/console/imgui_console.cpp
 
-    # ImGui core + Freetype font rasterizer
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-    ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
-
-    # ImPlot (v0.17 with ImGui 1.92.x fixes)
-    ${IMPLOT_DIR}/implot.cpp
-    ${IMPLOT_DIR}/implot_items.cpp
+    # ImGui + ImPlot are compiled separately as the `imgui` / `implot` static
+    # libraries (see the precompiled-libraries section above) and linked in below.
 
     # FPS overlay
     code/ui/window/widgets/fps_plot.cpp
 )
 
+# ── Multi-config output layout + "build everything" target ────────────────────
+# The `all` preset uses Ninja Multi-Config: a single configure dir (build/all)
+# builds every configuration. Send each config's *executable* to its own result
+# folder under build/<name>/ — outside build/all, matching the historical layout
+# and replacing the old single-config build dirs. Because those folders sit two
+# levels below the repo root, the app's shared-cache lookup
+# (SDL_GetBasePath()/../../cache) resolves to <repo>/cache for all three, so they
+# share one window_state.toml / thumbnail / video cache.
+#
+# `all_configs` builds all three configs in one invocation. This is what you run
+# to "build everything": VS Code CMake Tools (and `cmake --build`) only build the
+# active config, so select this target — or run `cmake --workflow --preset all`.
+# Guarded by CMAKE_CONFIGURATION_TYPES (set only for multi-config generators).
+if(CMAKE_CONFIGURATION_TYPES)
+    set_target_properties(example_sdl3_vulkan PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG          ${CMAKE_SOURCE_DIR}/build/debug
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE        ${CMAKE_SOURCE_DIR}/build/release
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/build/release-log
+        # Per-config executable names so each build is identifiable on sight.
+        OUTPUT_NAME_DEBUG          example_sdl3_vulkan_debug
+        OUTPUT_NAME_RELEASE        example_sdl3_vulkan_release
+        OUTPUT_NAME_RELWITHDEBINFO example_sdl3_vulkan_release-log
+    )
+
+    add_custom_target(all_configs
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Debug
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Release
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config RelWithDebInfo
+        COMMENT "Building all configs -> build/debug, build/release, build/release-log"
+        VERBATIM
+    )
+endif()
+
 # ── Suppress warnings in vendored / external source files ───────────────────
+# (ImGui + ImPlot now build as separate static libraries with -w applied at the
+#  target level — see the precompiled-libraries section above.)
 set_source_files_properties(
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-    ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
-    ${IMPLOT_DIR}/implot.cpp
-    ${IMPLOT_DIR}/implot_items.cpp
     code/ui/Editor/TextEditor.cpp
     PROPERTIES COMPILE_OPTIONS "-w"
 )
@@ -205,10 +285,8 @@ target_include_directories(example_sdl3_vulkan PRIVATE
 # External / vendored / system headers — marked SYSTEM so the compiler
 # treats them as system headers and suppresses all warnings from them.
 target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${IMGUI_DIR}/misc/freetype
-    ${IMPLOT_DIR}
+    # ImGui / ImPlot headers arrive transitively from the linked `imgui` /
+    # `implot` targets (their PUBLIC SYSTEM include dirs).
     ${SDL3_INCLUDE_DIRS}
     ${VULKAN_INCLUDE_DIRS}
     ${FREETYPE_INCLUDE_DIRS}
@@ -256,16 +334,40 @@ target_link_options(example_sdl3_vulkan PRIVATE
 
 # ── Preprocessor definitions ──────────────────────────────────────────────────
 target_compile_definitions(example_sdl3_vulkan PRIVATE
+    # Enable debug-specific code paths
+  $<$<CONFIG:Debug>:_DEBUG>
+$<$<CONFIG:RelWithDebInfo>:__APP_FORCE_LOGS>    
+
+
     # Enable Vulkan validation layer callbacks in Debug builds only
-    $<$<CONFIG:Debug>:APP_USE_VULKAN_DEBUG_REPORT>
+    $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:APP_USE_VULKAN_DEBUG_REPORT>
+    
     # Path to bundled ImGui fonts, baked in at compile time
     IMGUI_FONTS_DIR="${IMGUI_DIR}/misc/fonts"
-    # Enable OT-SVG emoji rendering via PlutoSVG in both EmojiAtlas and ImGui FreeType
+    
+    # Enable OT-SVG emoji rendering via PlutoSVG
     IMGUI_ENABLE_FREETYPE_PLUTOSVG
+)
+
+# ── Linker search paths ───────────────────────────────────────────────────────
+# pkg-config reports these libraries by bare name (e.g. -lSDL3); their containing
+# directories must be searched explicitly. SDL3 lives in /usr/local/lib64, which
+# GNU ld searches by default but LLD does not — without these the LLD link fails
+# to find SDL3 / plutosvg / plutovg.
+target_link_directories(example_sdl3_vulkan PRIVATE
+    ${SDL3_LIBRARY_DIRS}
+    ${VULKAN_LIBRARY_DIRS}
+    ${FREETYPE_LIBRARY_DIRS}
+    ${PLUTOSVG_LIBRARY_DIRS}
+    ${LIBPLACEBO_LIBRARY_DIRS}
+    ${EGL_LIBRARY_DIRS}
+    ${GL_LIBRARY_DIRS}
 )
 
 # ── Link libraries ────────────────────────────────────────────────────────────
 target_link_libraries(example_sdl3_vulkan PRIVATE
+    imgui              # precompiled Dear ImGui (core + SDL3/Vulkan backends + freetype)
+    implot             # precompiled ImPlot (transitively brings in imgui)
     ${SDL3_LIBRARIES}
     ${VULKAN_LIBRARIES}
     ${FREETYPE_LIBRARIES}

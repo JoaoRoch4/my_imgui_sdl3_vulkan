@@ -7,10 +7,6 @@
 #else
 #endif
 
-#ifdef _DEBUG
-#define APP_USE_VULKAN_DEBUG_REPORT
-#endif
-
 class vulkan_context {
 public:
     vulkan_context();

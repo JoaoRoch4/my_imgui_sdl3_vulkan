@@ -121,10 +121,15 @@ public:
   // default value is 0 (the first type filter)
   void SetCurrentTypeFilterIndex(int index);
 
-  // set/get current file sort mode by index:
-  // 0=NameAsc, 1=NameDesc, 2=Type, 3=SizeDesc, 4=DateDesc
+  // set/get current file sort field by index:
+  // 0=Name, 1=Type, 2=Size, 3=Modified
   void SetSortModeIndex(int index);
   [[nodiscard]] int GetSortModeIndex() const noexcept;
+
+  // set/get the sort direction applied to the active field.
+  // true = ascending (A-Z, smallest/oldest first), false = descending.
+  void SetSortAscending(bool ascending);
+  [[nodiscard]] bool GetSortAscending() const noexcept;
 
   // set/get recent directories shown by the explorer combo.
   void
@@ -198,7 +203,9 @@ private:
     Functor func;
   };
 
-  enum class SortMode { NameAsc, NameDesc, Type, SizeDesc, DateDesc };
+  // The column/attribute rows are ordered by. Direction (ascending vs
+  // descending) is tracked separately in sortAscending_.
+  enum class SortField { Name, Type, Size, Modified };
 
   struct FileRecord {
     bool isDir = false;
@@ -217,6 +224,13 @@ private:
   void ToolTip(const std::string_view &s);
 
   void UpdateFileRecords();
+
+  // Three-way comparison of two records by the active sort field, expressed in
+  // ASCENDING order: <0 if a precedes b, 0 if equal on this field, >0 if a
+  // follows b. The caller applies the direction and the directories-first
+  // grouping, so this only encodes each field's natural order.
+  [[nodiscard]] int CompareByField(const FileRecord &a,
+                                   const FileRecord &b) const;
 
   void SetCurrentDirectoryUncatched(const std::filesystem::path &pwd);
 
@@ -291,7 +305,8 @@ private:
   ImVec2 thumbnailSize_     = {64.0f,  36.0f};
   ImVec2 gridThumbnailSize_ = {160.0f, 90.0f};
   ViewMode viewMode_        = ViewMode::List;
-  SortMode sortMode_ = SortMode::NameAsc;
+  SortField sortField_      = SortField::Name;
+  bool sortAscending_       = true; // direction applied to sortField_
   MediaFilter mediaFilter_  = MediaFilter::All;
   std::string searchStr_;
   std::vector<std::filesystem::path> recentDirectories_;

@@ -68,7 +68,16 @@ int App::run()
         {"Roboto", imgui.font_roboto},
     });
 
-    static const std::string state_path = std::string(SDL_GetBasePath()) + "window_state.toml";
+    // Shared cache folder at the project root — deliberately OUTSIDE build/debug,
+    // build/release and build/release-log so all three builds read & write the
+    // SAME window_state.toml (plus thumbnails and video cache). SDL_GetBasePath()
+    // is the executable dir (e.g. <root>/build/debug/); two parents up is <root>.
+    const auto exe_dir = std::filesystem::path(SDL_GetBasePath());
+    const auto project_root = exe_dir.parent_path().parent_path();
+    const auto cache_dir = project_root / "cache";
+    std::filesystem::create_directories(cache_dir);
+
+    static const std::string state_path = (cache_dir / "window_state.toml").string();
     WindowStateToml state;
     LoadWindowStateToml(state_path, state);
     style_editor.ApplyLayout(state);
@@ -92,12 +101,7 @@ int App::run()
     menu_bar.SetStatePath(state_path);
     menu_bar.ApplyHistory(state);
     menu_bar.ApplyRuntimeConfig(state);
-    
-    // Use shared cache folder at project root (not inside build/debug, build/release, etc.)
-    auto exe_dir = std::filesystem::path(SDL_GetBasePath());
-    auto project_root = exe_dir.parent_path().parent_path();  // Go up from build/* to project root
-    auto cache_dir = project_root / "cache";
-    std::filesystem::create_directories(cache_dir);
+
     menu_bar.SetThumbDir(cache_dir / "thumbs");
     menu_bar.SetDownloadCacheDir(cache_dir / "video_cache");
     ImVec4 clear_color = state.clear_color

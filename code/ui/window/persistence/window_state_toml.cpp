@@ -1,14 +1,12 @@
-
 #include "pch.hpp"
 
 #include "window_state_toml.hpp"
 
+
 namespace {
 
-struct CommentRule {
-  const char *prefix;
-  const char *comment;
-};
+
+
 
 std::string LTrim(const std::string &text) {
   size_t index = 0;
@@ -82,8 +80,10 @@ std::string FieldCommentFor(const std::string &section_name,
   if (key == "file_explorer_last_directory")
     return "# Last folder opened in File Explorer.";
   if (key == "file_explorer_sort_mode")
-    return "# File Explorer sort mode index: 0=NameAsc, 1=NameDesc, 2=Type, "
-           "3=SizeDesc, 4=DateDesc.";
+    return "# File Explorer sort field index: 0=Name, 1=Type, 2=Size, "
+           "3=Modified.";
+  if (key == "file_explorer_sort_ascending")
+    return "# File Explorer sort direction: true=ascending, false=descending.";
   if (key == "file_explorer_recent_directories")
     return "# Recently accessed folders used by File Explorer combo "
            "(newest first).";

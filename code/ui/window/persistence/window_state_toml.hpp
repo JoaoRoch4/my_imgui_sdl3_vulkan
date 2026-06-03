@@ -2,6 +2,10 @@
 
 #include "pch.hpp"
 
+struct CommentRule {
+  const char *prefix;
+  const char *comment;
+};
 
 struct WindowStateToml {
   struct WindowRectToml {
@@ -140,6 +144,7 @@ struct WindowStateToml {
   bool hover_preview_sound = false;
   std::string file_explorer_last_directory;
   int file_explorer_sort_mode = 0;
+  bool file_explorer_sort_ascending = true; // true=ascending, false=descending
   std::vector<std::string> file_explorer_recent_directories;
   int  file_explorer_view_mode      = 0; // 0=List, 1=Grid
   int  file_explorer_media_filter   = 0; // 0=All, 1=Videos, 2=Images

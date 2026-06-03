@@ -19,6 +19,12 @@ void imgui_context::init(SDL_Window* window, vulkan_context& vk, ImGui_ImplVulka
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
+    // Only surface ImGui's debugger-break tools (the Metrics "**DebugBreak**"
+    // buttons) when a debugger is actually attached. The Item Picker itself is
+    // always available, but its IM_DEBUG_BREAK() is made inert when undebugged
+    // (see imconfig.h: ImAppIsDebuggerAttached), so it can't crash a normal run.
+    io.ConfigDebugIsDebuggerPresent = ImAppIsDebuggerAttached();
+
     ImGui::StyleColorsDark();
 
     ImGuiStyle& style = ImGui::GetStyle();

@@ -435,6 +435,7 @@ void AppCoordinator::ApplyRuntimeConfig(const WindowStateToml &state) {
     browser.SetRecentDirectories(dirs);
   }
   browser.SetSortModeIndex(state.file_explorer_sort_mode);
+  browser.SetSortAscending(state.file_explorer_sort_ascending);
   browser.SetViewMode(
       static_cast<ImGui::FileBrowser::ViewMode>(state.file_explorer_view_mode));
   browser.SetMediaFilter(static_cast<ImGui::FileBrowser::MediaFilter>(
@@ -482,6 +483,7 @@ void AppCoordinator::ExportRuntimeConfig(WindowStateToml *state) const {
   auto &browser = GetMainFileExplorer();
   state->file_explorer_last_directory = browser.GetDirectory().string();
   state->file_explorer_sort_mode = browser.GetSortModeIndex();
+  state->file_explorer_sort_ascending = browser.GetSortAscending();
   state->file_explorer_view_mode = static_cast<int>(browser.GetViewMode());
   state->file_explorer_media_filter =
       static_cast<int>(browser.GetMediaFilter());

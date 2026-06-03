@@ -1,42 +1,21 @@
 {
-  "version": 3,
+  "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 20,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
     {
-      "name": "debug",
-      "displayName": "Debug",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    },
-    {
-      "name": "release",
-      "displayName": "Release",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/release",
+      "name": "all",
+      "displayName": "All configs (Ninja Multi-Config: Debug, Release, RelWithDebInfo)",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build/all",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
-    },
-    {
-      "name": "release-log",
-      "displayName": "Release with Log",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/release-log",
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_LINKER_TYPE": "LLD",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_MESSAGE_LOG_LEVEL": "VERBOSE"
       }
@@ -44,19 +23,40 @@
   ],
   "buildPresets": [
     {
+      "name": "build-all",
+      "displayName": "Build ALL configs (-> build/debug, build/release, build/release-log)",
+      "configurePreset": "all",
+      "targets": ["all_configs"]
+    },
+    {
       "name": "build-debug",
-      "displayName": "Build Debug",
-      "configurePreset": "debug"
+      "displayName": "Build Debug only (-> build/debug)",
+      "configurePreset": "all",
+      "configuration": "Debug"
     },
     {
       "name": "build-release",
-      "displayName": "Build Release",
-      "configurePreset": "release"
+      "displayName": "Build Release only (-> build/release)",
+      "configurePreset": "all",
+      "configuration": "Release"
     },
     {
       "name": "build-release-log",
-      "displayName": "Build Release with Log",
-      "configurePreset": "release-log"
+      "displayName": "Build RelWithDebInfo only (-> build/release-log)",
+      "configurePreset": "all",
+      "configuration": "RelWithDebInfo"
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "all",
+      "displayName": "Configure + build all three configs (Debug, Release, RelWithDebInfo)",
+      "steps": [
+        { "type": "configure", "name": "all" },
+        { "type": "build", "name": "build-debug" },
+        { "type": "build", "name": "build-release" },
+        { "type": "build", "name": "build-release-log" }
+      ]
     }
   ]
 }
