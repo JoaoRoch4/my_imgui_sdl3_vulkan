@@ -99,6 +99,9 @@ void ImGui::FileBrowser::Display() {
     // Apply any finished background directory scan before rendering rows.
     PollScan();
 
+    // Reset the per-frame thumbnail upload budget + free retired textures.
+    m_thumbnails.new_frame();
+
     // ---- Open the appropriate container ----
 
     if (isWindowMode) {
@@ -341,7 +344,7 @@ void ImGui::FileBrowser::Display() {
 
 	    if (Button("ok") && newDirNameBuffer_[0] != '\0') {
 		ScopeGuard closeNewDirPopup([] { CloseCurrentPopup(); });
-		if (create_directory(currentDirectory_ / u8StrToPath(newDirNameBuffer_.data()))) {
+		if (m_file_ops.create_directory(currentDirectory_ / u8StrToPath(newDirNameBuffer_.data())).ok) {
 		    RequestReload();
 		} else {
 		    statusStr_ = "failed to create " + std::string(newDirNameBuffer_.data());
@@ -406,7 +409,7 @@ void ImGui::FileBrowser::Display() {
     Checkbox("Preview", &previewEnabled_);
     SameLine();
     Checkbox("Keep open", &keepOpen_);
-    if (thumbnailProvider_) {
+    if (m_thumbnails.is_setup()) {
 	SameLine();
 	Checkbox("Thumbnails", &showThumbnails_);
 	ToolTip("Show or hide file thumbnails");
@@ -435,7 +438,7 @@ void ImGui::FileBrowser::Display() {
 	ScopeGuard endChild([] { EndChild(); });
 
 	// Shift + mouse-wheel scales thumbnails when the file list is hovered.
-	if (thumbnailProvider_ && showThumbnails_ && IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && GetIO().KeyShift) {
+	if (m_thumbnails.is_setup() && showThumbnails_ && IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && GetIO().KeyShift) {
 	    const float wheel = GetIO().MouseWheel;
 	    if (wheel != 0.0f) {
 		const float factor = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
@@ -466,7 +469,7 @@ void ImGui::FileBrowser::Display() {
 		|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
 	};
 
-	const bool useGridView = (viewMode_ == ViewMode::Grid) && thumbnailProvider_ && showThumbnails_;
+	const bool useGridView = (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
 
 	// ── Grid view ──────────────────────────────────────────────────────────
 	if (useGridView) {
@@ -505,7 +508,7 @@ void ImGui::FileBrowser::Display() {
 		    if (rsc.isDir) {
 			Dummy({thumbW, thumbH});
 		    } else {
-			const ImTextureID thumb = thumbnailProvider_(currentDirectory_ / rsc.name);
+			const ImTextureID thumb = m_thumbnails.get(currentDirectory_ / rsc.name);
 			if (thumb)
 			    Image(thumb, {thumbW, thumbH});
 			else
@@ -622,8 +625,8 @@ void ImGui::FileBrowser::Display() {
 
 		// Inline thumbnail when thumbnailProvider_ is set.
 		float rowHeight = 0.0f;
-		if (thumbnailProvider_ && showThumbnails_ && !rsc.isDir) {
-		    const ImTextureID thumb = thumbnailProvider_(currentDirectory_ / rsc.name);
+		if (m_thumbnails.is_setup() && showThumbnails_ && !rsc.isDir) {
+		    const ImTextureID thumb = m_thumbnails.get(currentDirectory_ / rsc.name);
 		    const float	      th    = thumbnailSize_.y;
 		    const float	      ty    = GetCursorPosY();
 		    if (thumb) {
@@ -789,6 +792,24 @@ void ImGui::FileBrowser::Display() {
 	    && IsKeyPressed(ImGuiKey_Escape));
     if (doClose) {
 	closeContainer();
+    }
+
+    // Surface any in-flight async file operation in the status bar.
+    for (auto it = m_activeFileOps_.begin(); it != m_activeFileOps_.end();) {
+	FileBrowserFileOperations::Progress pr;
+	if (!m_file_ops.poll(*it, pr)) {
+	    it = m_activeFileOps_.erase(it);
+	    continue;
+	}
+	using St = FileBrowserFileOperations::Progress::State;
+	if (pr.state == St::Running) {
+	    statusStr_ = "Working " + std::to_string(pr.done) + "/" + std::to_string(pr.total);
+	    ++it;
+	} else {
+	    statusStr_ = (pr.state == St::Failed) ? ("error: " + pr.error) : std::string("Done");
+	    RequestReload(); // refresh the listing after the op finishes
+	    it = m_activeFileOps_.erase(it);
+	}
     }
 
     if (!statusStr_.empty() && !(flags_ & ImGuiFileBrowserFlags_NoStatusBar)) {
@@ -984,6 +1005,16 @@ bool ImGui::FileBrowser::IsPreviewEnabled() const noexcept { return previewEnabl
 void ImGui::FileBrowser::SetThumbnailProvider(std::function<ImTextureID(const std::filesystem::path&)> cb) {
     thumbnailProvider_ = std::move(cb);
 }
+
+void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir) {
+    m_thumbnails.setup(vk, std::move(thumb_dir));
+}
+
+void ImGui::FileBrowser::ShutdownThumbnails() { m_thumbnails.shutdown(); }
+
+void ImGui::FileBrowser::ClearThumbnailCache() { m_thumbnails.clear(); }
+
+void ImGui::FileBrowser::RebuildThumbnail(const std::filesystem::path& path) { m_thumbnails.evict(path); }
 
 void ImGui::FileBrowser::SetThumbnailSize(ImVec2 size) noexcept { thumbnailSize_ = size; }
 

@@ -3,6 +3,10 @@
 #include "pch.hpp"
 
 #include "file_browser_thread.hpp"
+#include "file_browser_file_operations.hpp"
+#include "file_browser_thumbnail_context.hpp"
+
+class vulkan_context;
 
 #ifndef IMGUI_VERSION
 #error "include imgui.h before this header"
@@ -68,6 +72,19 @@ class FileBrowser {
 
 	// display the browsing window if opened
 	void Display();
+
+	// Attach Vulkan + the on-disk thumbnail cache dir. Call once after construction.
+	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir);
+	// Release thumbnail GPU textures + join decode threads. Call before Vulkan teardown.
+	void ShutdownThumbnails();
+	// Drop all cached thumbnails (memory + on-disk PNGs); regenerated on next Display().
+	void ClearThumbnailCache();
+	// Drop one file's thumbnail so it regenerates on next Display().
+	void RebuildThumbnail(const std::filesystem::path& path);
+	// Access the file-operations service (used by the context menu for async delete).
+	[[nodiscard]] FileBrowserFileOperations& FileOps() noexcept { return m_file_ops; }
+	// Track an async file-op JobId so the status bar can show its progress.
+	void TrackFileOp(FileBrowserFileOperations::JobId id) { m_activeFileOps_.push_back(id); }
 
 	// returns true when there is a selected filename
 	[[nodiscard]] bool HasSelected() const noexcept;
@@ -268,6 +285,10 @@ class FileBrowser {
 	std::vector<FileRecord> fileRecords_;
 
 	FileBrowserScanner m_scanner; // background directory scanner (jthread)
+
+	FileBrowserFileOperations			      m_file_ops;
+	FileBrowserThumbnailContext			      m_thumbnails;
+	std::vector<FileBrowserFileOperations::JobId> m_activeFileOps_; // polled in the status bar
 
 	unsigned int			rangeSelectionStart_; // enable range selection when shift is pressed
 	std::set<std::filesystem::path> selectedFilenames_;
