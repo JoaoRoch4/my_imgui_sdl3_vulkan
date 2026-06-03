@@ -208,6 +208,9 @@ add_executable(example_sdl3_vulkan
     code/ui/window/widgets/thread_reflection_panel.cpp
     code/ui/config/config_runtime_ui_context.hpp
     code/ui/config/config_runtime_ui_context.cpp
+    code/Args/Args.hpp
+    code/Args/Args.cpp
+    code/main/main.hpp
 )
 
 # ── Multi-config output layout + "build everything" target ────────────────────

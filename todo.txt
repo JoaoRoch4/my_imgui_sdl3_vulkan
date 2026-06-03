@@ -20,10 +20,7 @@ togle preview thread
 gpu accleration for previews
 
 improve:
-image contexct menu
-sort acending/descending
 tags
-sort by modified
 
 create:
 text editor
@@ -37,3 +34,4 @@ deelegate class
 more fps info
 consele encoding
 create akill about video and pictures metadata read/write using ffmpeg for videos and exiftool for images. 
+in filebrowser class create 3 subclasses: file_browser_fileOperations_context, separe the file operations code from the others, file_browser_thumbnail_context and file_browser_thumbnail_context_thread, make sure the thumbnail operations run async and stop freezing or lagging the app. Don't forget to wire the new thread to thead overwatch
