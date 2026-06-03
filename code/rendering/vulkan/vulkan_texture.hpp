@@ -26,6 +26,10 @@ public:
     // Load image from disk and upload to GPU. Returns false on failure.
     bool load(const std::filesystem::path& path, vulkan_context& vk);
 
+    // Upload an already-decoded RGBA8 buffer (w*h*4 bytes) to the GPU.
+    // Returns false on failure. Use this to avoid a disk round-trip.
+    bool load_from_rgba(std::span<const std::uint8_t> rgba, int w, int h, vulkan_context& vk);
+
     // Free all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
     void unload(vulkan_context& vk);
 
