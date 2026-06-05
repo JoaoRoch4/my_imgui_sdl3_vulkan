@@ -41,6 +41,24 @@ const char *os_state_name(char s)
     }
 }
 
+// The executable's own name, truncated to the 15-char comm limit. Threads that
+// still carry this name never called pthread_setname_np — they belong to a third
+// party (SDL / GPU driver / audio) and are surfaced as "external".
+const std::string &process_comm()
+{
+    static const std::string name = [] {
+        std::ifstream f("/proc/self/cmdline", std::ios::binary);
+        std::string   arg0;
+        std::getline(f, arg0, '\0'); // argv[0], up to the first NUL
+        if (const auto pos = arg0.find_last_of('/'); pos != std::string::npos)
+            arg0 = arg0.substr(pos + 1);
+        if (arg0.size() > 15)
+            arg0.resize(15);
+        return arg0;
+    }();
+    return name;
+}
+
 std::string join_status(std::span<const std::pair<std::string, std::string>> kv)
 {
     std::string out;
@@ -198,12 +216,14 @@ void ThreadReflectionPanel::draw(bool *open)
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(120, 90, 20, 140));
 
             // Unmanaged rows are dimmed to keep managed threads visually primary.
-            const bool dim = (m == nullptr);
+            // Those still bearing the process name are third-party — show "external".
+            const bool dim      = (m == nullptr);
+            const bool external = dim && (r.name.empty() || r.name == process_comm());
             if (dim)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(r.name.c_str());
+            ImGui::TextUnformatted(external ? "external" : r.name.c_str());
             ImGui::TableNextColumn();
             ImGui::Text("%d", static_cast<int>(r.tid));
             ImGui::TableNextColumn();
@@ -237,7 +257,7 @@ void ThreadReflectionPanel::draw(bool *open)
                     ImGui::TextUnformatted("\xe2\x80\x94"); // em dash
                 }
                 ImGui::TableNextColumn();
-                ImGui::TextUnformatted("(unmanaged)");
+                ImGui::TextUnformatted(external ? "(external)" : "(unmanaged)");
             }
 
             if (dim)
