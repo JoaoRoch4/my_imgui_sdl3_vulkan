@@ -128,6 +128,8 @@ add_executable(example_sdl3_vulkan
     # Core utilities
     code/core/app_context.cpp
     code/core/thread/thread_overwatch.cpp
+    code/core/thread/thread_registry.cpp
+    code/core/thread/managed_thread.cpp
     # Rendering layer (SDL3 window + ImGui + Vulkan backend)
     code/rendering/sdl3_context.cpp
     code/rendering/imgui_context.cpp
@@ -201,6 +203,9 @@ add_executable(example_sdl3_vulkan
 
     # FPS overlay
     code/ui/window/widgets/fps_plot.cpp
+
+    # Thread reflection / introspection panel
+    code/ui/window/widgets/thread_reflection_panel.cpp
     code/ui/config/config_runtime_ui_context.hpp
     code/ui/config/config_runtime_ui_context.cpp
 )
@@ -388,4 +393,5 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     ${GL_LIBRARIES}
     ${LIBPLACEBO_LIBRARIES}
     ${CMAKE_DL_LIBS}   # dlopen/dlclose for Vulkan loader
+    stdc++exp          # std::stacktrace backend (libstdc++ >= 13); used by ManagedThread::escalate
 )

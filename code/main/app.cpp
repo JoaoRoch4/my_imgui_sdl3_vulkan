@@ -5,6 +5,7 @@
 
 #include "imgui_context.hpp"
 #include "fps_plot.hpp"
+#include "thread_reflection_panel.hpp"
 #include "sdl3_context.hpp"
 #include "vulkan_context.hpp"
 #include "app_coordinator.hpp"
@@ -56,6 +57,9 @@ bool App::run()
     ImPlot::CreateContext();
 
     FpsPlot fps_plot;
+
+    ThreadReflectionPanel thread_panel;
+    bool                  show_thread_panel = false;
 
     StyleEditor style_editor;
     style_editor.InitDefaults();
@@ -201,6 +205,7 @@ bool App::run()
 
         menu_bar.Build();
         fps_plot.draw(uptime_seconds);
+        thread_panel.draw(&show_thread_panel);
 
         {
             const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -245,6 +250,7 @@ bool App::run()
             ImGui::Checkbox("Demo Window", &show_demo_window);
             ImGui::Checkbox("Another Window", &show_another_window);
             ImGui::Checkbox("Style Editor", &style_editor.IsOpen);
+            ImGui::Checkbox("Threads", &show_thread_panel);
 
             if (ImGui::Checkbox("VSync", &vsync))
                 vk.set_vsync(wd, vsync);

@@ -4,6 +4,7 @@
 
 #include "imgui_console.hpp"
 #include "emoji_atlas.hpp"
+#include "managed_thread.hpp"
 
 namespace {
 
@@ -655,6 +656,38 @@ ConsoleCommands::ConsoleCommands()
         bind(&ConsoleCommands::CmdTerminal));
     RegisterCommand("QUIT",     "Exit the application",
         bind(&ConsoleCommands::CmdQuit));
+
+    // In-app smoke test for ManagedThread + the Threads reflection panel. Spawns a
+    // KillOnly demo thread that publishes its elapsed seconds and stops itself after
+    // ~10s. Owned by a session-lifetime static so it survives this lambda; KillOnly
+    // means it can never trigger the restart-storm abort.
+    RegisterCommand("THREADTEST",
+        "Spawn a ~10s demo ManagedThread visible in the Threads panel",
+        [](ImGuiConsole& c, const ConsoleCommandArgs& /*a*/) {
+            static std::vector<std::unique_ptr<ManagedThread>> s_demo_threads;
+
+            ManagedThread::Config cfg;
+            cfg.name   = "ThreadTestDemo";
+            cfg.policy = ThreadOverwatch::RecoveryPolicy::KillOnly;
+            cfg.watch  = true;
+
+            const auto start = std::chrono::steady_clock::now();
+            s_demo_threads.push_back(std::make_unique<ManagedThread>(cfg,
+                [start](const std::stop_token& /*st*/, ManagedThread& self) {
+                    const auto elapsed = std::chrono::steady_clock::now() - start;
+                    const auto secs =
+                        std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+                    self.set_status("elapsed_s", std::to_string(secs));
+                    if (elapsed >= std::chrono::seconds(10)) {
+                        self.request_stop();
+                        return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }));
+
+            c.AddLog("[THREADTEST] spawned 'ThreadTestDemo' — open the Threads panel "
+                     "from the debug menu\n");
+        });
 }
 
 // ── HELP ─────────────────────────────────────────────────────────────────────
