@@ -61,7 +61,7 @@ class FileBrowserScanner {
 		std::uint64_t	      generation  = 0;
 	};
 
-	void worker_loop(std::stop_token stoken);
+	void worker_loop(const std::stop_token& stoken);
 	std::vector<FileRecord>
 	scan(const Request& job, const std::stop_token& stoken, std::uint64_t watch_id, bool& ok, std::string& status);
 

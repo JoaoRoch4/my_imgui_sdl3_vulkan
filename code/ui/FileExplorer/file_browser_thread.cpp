@@ -91,7 +91,7 @@ void FileBrowserScanner::shutdown() {
 	m_worker.join();
 }
 
-void FileBrowserScanner::worker_loop(std::stop_token stoken) {
+void FileBrowserScanner::worker_loop(const std::stop_token& stoken) {
     while (!stoken.stop_requested()) {
 	Request job;
 	{
