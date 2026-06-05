@@ -2,7 +2,7 @@
 #include "pch.hpp" // NOLINT
 
 #include "video_hover_preview.hpp"
-#include "core/thread/thread_overwatch.hpp"
+#include "managed_thread.hpp"
 #include "vulkan_context.hpp"
 
 
@@ -152,90 +152,61 @@ void VideoHoverPreview::init_mpv() {
 void VideoHoverPreview::start_thread() {
     _Debug("start_thread");
 
-        if (m_thread.joinable())
-            return;
+    if (m_thread)
+        return;
 
-
-        m_thread = std::jthread([this](const std::stop_token& st) {
-
-            pthread_setname_np(pthread_self(), "VidHoverPrev"); 
-            _Debug("thread started");
-
-
-        while (!st.stop_requested()) {
-            const uint64_t watch_id = m_thread_watch_id.load(std::memory_order_acquire);
-            ThreadOverwatch::instance().heartbeat(watch_id);
-
+    // RestartOnTimeout: ManagedThread respawns the render loop if it hangs. The body
+    // is one short iteration (mpv_wait_event polls with a 10 ms timeout), so the
+    // once-per-iteration automatic heartbeat keeps the watchdog fed.
+    ManagedThread::Config cfg;
+    cfg.name    = "VidHoverPrev";
+    cfg.timeout = std::chrono::milliseconds(5000);
+    cfg.policy  = ThreadOverwatch::RecoveryPolicy::RestartOnTimeout;
+    m_thread    = std::make_unique<ManagedThread>(
+        cfg, [this](const std::stop_token & /*st*/, ManagedThread & /*self*/) {
             mpv_event *ev = mpv_wait_event(m_mpv, 0.01);
 
             if (ev && ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 m_waiting.store(false);
                 int64_t w = 0, h = 0;
-                if (mpv_get_property(m_mpv, "width",  MPV_FORMAT_INT64, &w) == 0 &&
-                    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h) == 0 &&
-                    w > 0 && h > 0) {
+                if (mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w) == 0 &&
+                    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h) == 0 && w > 0 && h > 0) {
                     last_source_size = ImVec2{static_cast<float>(w), static_cast<float>(h)};
                 }
             }
 
-            if (!m_frame_dirty.exchange(false)) {
-                continue;
-            }
+            if (!m_frame_dirty.exchange(false))
+                return;
 
-            if (m_waiting.load()) {
-                continue;
-            }
+            if (m_waiting.load())
+                return;
 
             std::lock_guard lock(m_buf_mutex);
 
-            int size[2]  = {m_w, m_h};
-            size_t stride = static_cast<size_t>(m_w) * 4;
+            int    size[2] = {m_w, m_h};
+            size_t stride  = static_cast<size_t>(m_w) * 4;
 
             mpv_render_param rp[] = {
-                {MPV_RENDER_PARAM_SW_SIZE,    size},
-                {MPV_RENDER_PARAM_SW_FORMAT,  static_cast<void *>(const_cast<char *>("rgba"))},
-                {MPV_RENDER_PARAM_SW_STRIDE,  &stride},
+                {MPV_RENDER_PARAM_SW_SIZE, size},
+                {MPV_RENDER_PARAM_SW_FORMAT, static_cast<void *>(const_cast<char *>("rgba"))},
+                {MPV_RENDER_PARAM_SW_STRIDE, &stride},
                 {MPV_RENDER_PARAM_SW_POINTER, m_buf.data()},
-                {MPV_RENDER_PARAM_INVALID,    nullptr}};
+                {MPV_RENDER_PARAM_INVALID, nullptr}};
 
             if (mpv_render_context_render(m_render, rp) >= 0) {
                 m_pending_source = m_current;
                 m_upload_pending.store(true, std::memory_order_release);
             }
-
-            ThreadOverwatch::instance().heartbeat(watch_id);
-        }
-
-        _Debug("thread stopped");
-    });
-
-
-
-    if (m_thread_watch_id.load(std::memory_order_acquire) == 0) {
-        const auto watch_id = ThreadOverwatch::instance().watch(
-            "VideoHoverPreview::thread",
-            std::chrono::milliseconds(5000),
-            [this]() { stop_thread(false); },
-            [this]() {
-                if (m_vk != nullptr && m_mpv != nullptr && m_render != nullptr)
-                    start_thread();
-            });
-        m_thread_watch_id.store(watch_id, std::memory_order_release);
-    }
-
-    ThreadOverwatch::instance().heartbeat(
-        m_thread_watch_id.load(std::memory_order_acquire));
+        });
 }
 
-void VideoHoverPreview::stop_thread(bool unregister_watch) {
+void VideoHoverPreview::stop_thread() {
     _Debug("stop_thread");
 
-    if (unregister_watch) {
-        const uint64_t watch_id = m_thread_watch_id.exchange(0, std::memory_order_acq_rel);
-        ThreadOverwatch::instance().unwatch(watch_id);
+    if (m_thread) {
+        m_thread->request_stop();
+        m_thread.reset(); // ManagedThread destructor joins (thread polls mpv every 10 ms)
     }
-
-    m_thread = std::jthread{};
 }
 
 // ============================================================
@@ -307,7 +278,7 @@ VkDescriptorSet VideoHoverPreview::thumbnail(const std::string &source) {
     if ((now - m_hover_start) < hover_delay)
         return VK_NULL_HANDLE;
 
-    if (!m_thread.joinable())
+    if (!m_thread)
         start_thread();
 
     flush_pending_upload();
@@ -351,7 +322,7 @@ bool VideoHoverPreview::consume_popup_reopen_request() {
 }
 
 void VideoHoverPreview::tick_idle() {
-    if (!m_thread.joinable())
+    if (!m_thread)
         return;
 
     const auto now = std::chrono::steady_clock::now();

@@ -6,6 +6,7 @@
 class vulkan_context;
 class VulkanUploadContext;
 class HistoryPreview;
+class ManagedThread;
 
 class VideoSeekPreview
 {
@@ -31,7 +32,7 @@ public:
     void ensure_active();
 
     void shutdown();
-    void stop_thread(bool unregister_watch = true);
+    void stop_thread();
 
     void update();
     void seek(double time_sec);
@@ -54,8 +55,7 @@ private:
     mpv_render_context* m_render_ctx = nullptr;
 
     // threading
-    std::jthread m_thread;
-    std::atomic<uint64_t> m_thread_watch_id{0};
+    std::unique_ptr<ManagedThread> m_thread;
     std::atomic<bool> m_frame_dirty{false};
     std::atomic<bool> m_buf_ready{false};
     std::atomic<double> m_seek_req{-1.0};

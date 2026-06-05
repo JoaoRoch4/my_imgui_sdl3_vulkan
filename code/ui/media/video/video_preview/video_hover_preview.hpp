@@ -3,6 +3,7 @@
 #include "pch.hpp"
 
 class vulkan_context;
+class ManagedThread;
 
 class VideoHoverPreview {
 public:
@@ -58,7 +59,7 @@ public:
     // core
     void init_mpv();
     void start_thread();
-    void stop_thread(bool unregister_watch = true);
+    void stop_thread();
 
     void load_source(const std::string &source);
     void start_playback(const std::string &source);
@@ -98,10 +99,9 @@ private:
     std::atomic<bool> m_frame_dirty{false};
     std::atomic<bool> m_waiting{false};
     std::atomic<bool> m_upload_pending{false};
-    std::atomic<uint64_t> m_thread_watch_id{0};
     std::atomic<bool> m_popup_reopen_requested{false};
 
-    std::jthread m_thread;
+    std::unique_ptr<ManagedThread> m_thread;
 
     std::vector<uint8_t> m_buf;
     std::mutex m_buf_mutex;

@@ -1,6 +1,7 @@
 #include "pch.hpp"
 #include "thread_reflection_panel.hpp"
 #include "thread_registry.hpp"
+#include "core/debug/debugger.hpp"
 
 namespace {
 
@@ -159,6 +160,17 @@ void ThreadReflectionPanel::draw(bool *open)
     ImGui::Checkbox("Show unmanaged", &m_show_unmanaged);
     ImGui::SameLine();
     ImGui::Text("| process threads: %zu   managed: %zu", m_os_cache.size(), managed_count);
+
+    // Break into the debugger (only when one is attached — otherwise SIGTRAP would
+    // terminate the process). Re-checked each frame so attaching lldb mid-run works.
+    const bool debugger = appdebug::is_debugger_present();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!debugger);
+    if (ImGui::Button("Break into debugger") && debugger)
+        appdebug::debug_break();
+    ImGui::EndDisabled();
+    if (!debugger && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Run under a debugger (lldb) to enable");
 
     constexpr ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                       ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY |

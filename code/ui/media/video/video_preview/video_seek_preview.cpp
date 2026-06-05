@@ -1,6 +1,6 @@
 #include "pch.hpp" // NOLINT
 
-#include "thread_overwatch.hpp"
+#include "managed_thread.hpp"
 #include "video_seek_preview.hpp"
 #include "vulkan_context.hpp"
 #include "vulkan_upload_context.hpp"
@@ -88,32 +88,19 @@ void VideoSeekPreview::ensure_active() {
   start_thread();
 }
 
-void VideoSeekPreview::stop_thread(bool unregister_watch) {
+void VideoSeekPreview::stop_thread() {
   std::lock_guard<std::mutex> lock(m_lifecycle_mutex);
 
-  const bool has_thread = m_thread.joinable();
-  const bool has_watch =
-      m_thread_watch_id.load(std::memory_order_acquire) != 0;
-
-  // Already stopped and no watch to unregister.
-  if (!has_thread && (!unregister_watch || !has_watch))
+  if (!m_thread)
     return;
 
   _SeekDebug("stop_thread");
-
-  if (unregister_watch) {
-    const uint64_t watch_id =
-        m_thread_watch_id.exchange(0, std::memory_order_acq_rel);
-    ThreadOverwatch::instance().unwatch(watch_id);
-  }
-
-  if (has_thread)
-    m_thread = std::jthread{};
+  m_thread->request_stop();
+  m_thread.reset(); // ManagedThread destructor joins (thread polls mpv every 10 ms)
 }
 
 void VideoSeekPreview::shutdown() {
-  const bool is_inactive = !m_thread.joinable() &&
-                           m_thread_watch_id.load(std::memory_order_acquire) == 0 &&
+  const bool is_inactive = !m_thread &&
                            m_mpv == nullptr && m_render_ctx == nullptr &&
                            m_image == VK_NULL_HANDLE &&
                            m_image_memory == VK_NULL_HANDLE &&
@@ -345,77 +332,61 @@ void VideoSeekPreview::start_thread() {
   if (!m_mpv || !m_render_ctx)
     return;
 
-  if (m_thread.joinable())
+  if (m_thread)
     return;
 
-  if (m_thread_watch_id.load(std::memory_order_acquire) == 0) {
-    const auto watch_id = ThreadOverwatch::instance().watch(
-        "VideoSeekPreview::thread", std::chrono::milliseconds(5000),
-        [this]() { stop_thread(false); },
-        [this]() {
-          if (m_vk != nullptr && m_uploader != nullptr && m_mpv != nullptr &&
-              m_render_ctx != nullptr)
-            start_thread();
-        });
-    m_thread_watch_id.store(watch_id, std::memory_order_release);
-  }
+  // RestartOnTimeout: ManagedThread respawns the seek loop if it hangs. Each
+  // iteration is bounded (a seek waits at most ~0.5 s for a frame), so the
+  // once-per-iteration automatic heartbeat keeps the watchdog fed.
+  ManagedThread::Config cfg;
+  cfg.name    = "VidSeekPrev";
+  cfg.timeout = std::chrono::milliseconds(5000);
+  cfg.policy  = ThreadOverwatch::RecoveryPolicy::RestartOnTimeout;
+  m_thread    = std::make_unique<ManagedThread>(
+      cfg, [this](const std::stop_token & /*stoken*/, ManagedThread & /*self*/) {
+        double req = m_seek_req.exchange(-1.0);
 
-  m_thread = std::jthread([this](const std::stop_token& stoken) {
-    pthread_setname_np(pthread_self(), "VideoSeekPreviewThread");
+        if (req >= 0.0 && m_mpv && m_render_ctx) {
 
-    while (!stoken.stop_requested()) {
-      const uint64_t watch_id =
-          m_thread_watch_id.load(std::memory_order_acquire);
-      ThreadOverwatch::instance().heartbeat(watch_id);
+          char t[64];
+          snprintf(t, sizeof(t), "%.4f", req);
 
-      double req = m_seek_req.exchange(-1.0);
+          const char *cmd[] = {"seek", t, "absolute+exact", nullptr};
+          mpv_command_async(m_mpv, 0, cmd);
 
-      if (req >= 0.0 && m_mpv && m_render_ctx) {
+          m_frame_dirty = false;
 
-        char t[64];
-        snprintf(t, sizeof(t), "%.4f", req);
+          for (int i = 0; i < 50; ++i) {
+            mpv_wait_event(m_mpv, 0.01);
+            if (m_frame_dirty)
+              break;
+          }
 
-        const char *cmd[] = {"seek", t, "absolute+exact", nullptr};
-        mpv_command_async(m_mpv, 0, cmd);
+          if (m_frame_dirty) {
 
-        m_frame_dirty = false;
+            int size[2] = {m_w, m_h};
+            size_t stride = m_w * 4;
+            std::any sw_format_value{const_cast<char *>("rgba")};
+            void *sw_format_payload =
+                static_cast<void *>(std::any_cast<char *>(sw_format_value));
 
-        for (int i = 0; i < 50; ++i) {
-          mpv_wait_event(m_mpv, 0.01);
-          if (m_frame_dirty)
-            break;
+            std::lock_guard lock(m_buf_mutex);
+
+            mpv_render_param params[] = {
+                {MPV_RENDER_PARAM_SW_SIZE, size},
+                {MPV_RENDER_PARAM_SW_FORMAT, sw_format_payload},
+                {MPV_RENDER_PARAM_SW_STRIDE, &stride},
+                {MPV_RENDER_PARAM_SW_POINTER, m_buf.data()},
+                {MPV_RENDER_PARAM_INVALID, nullptr},
+            };
+
+            if (mpv_render_context_render(m_render_ctx, params) >= 0)
+              m_buf_ready = true;
+          }
         }
 
-        if (m_frame_dirty) {
-
-          int size[2] = {m_w, m_h};
-          size_t stride = m_w * 4;
-          std::any sw_format_value{const_cast<char *>("rgba")};
-          void *sw_format_payload =
-              static_cast<void *>(std::any_cast<char *>(sw_format_value));
-
-          std::lock_guard lock(m_buf_mutex);
-
-          mpv_render_param params[] = {
-              {MPV_RENDER_PARAM_SW_SIZE, size},
-              {MPV_RENDER_PARAM_SW_FORMAT, sw_format_payload},
-              {MPV_RENDER_PARAM_SW_STRIDE, &stride},
-              {MPV_RENDER_PARAM_SW_POINTER, m_buf.data()},
-              {MPV_RENDER_PARAM_INVALID, nullptr},
-          };
-
-          if (mpv_render_context_render(m_render_ctx, params) >= 0)
-            m_buf_ready = true;
-        }
-      }
-
-      mpv_wait_event(m_mpv, 0.01);
-      ThreadOverwatch::instance().heartbeat(watch_id);
-    }
-  });
-
-  ThreadOverwatch::instance().heartbeat(
-      m_thread_watch_id.load(std::memory_order_acquire));
+        mpv_wait_event(m_mpv, 0.01);
+      });
 }
 
 // ============================================================================
