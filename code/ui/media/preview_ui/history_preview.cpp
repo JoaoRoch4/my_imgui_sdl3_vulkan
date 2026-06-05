@@ -221,8 +221,10 @@ void HistoryPreview::start_worker_thread()
     if (m_worker.joinable())
         return; // already running — nothing to do
 
-    m_worker = std::jthread{[this](std::stop_token st) { worker_loop(std::move(st)); }};
-
+    m_worker = std::jthread{[this](std::stop_token st) { 
+        pthread_setname_np(pthread_self(), "HistoryPreviewThread");
+        worker_loop(std::move(st)); }};
+    
     // Register with the watchdog only on the very first start (id == 0).
     const uint64_t current_watch = m_worker_watch_id.load(std::memory_order_acquire);
     if (current_watch == 0) {

@@ -94,6 +94,7 @@
 #include <latch>
 #include <barrier>
 #include <stop_token>
+#include <pthread.h>
 
 // Input / Output
 #include <iostream>

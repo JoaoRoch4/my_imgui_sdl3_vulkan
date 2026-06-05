@@ -361,6 +361,8 @@ void VideoSeekPreview::start_thread() {
   }
 
   m_thread = std::jthread([this](const std::stop_token& stoken) {
+    pthread_setname_np(pthread_self(), "VideoSeekPreviewThread");
+
     while (!stoken.stop_requested()) {
       const uint64_t watch_id =
           m_thread_watch_id.load(std::memory_order_acquire);

@@ -152,11 +152,15 @@ void VideoHoverPreview::init_mpv() {
 void VideoHoverPreview::start_thread() {
     _Debug("start_thread");
 
-    if (m_thread.joinable())
-        return;
+        if (m_thread.joinable())
+            return;
 
-    m_thread = std::jthread([this](const std::stop_token& st) { 
-        _Debug("thread started");
+
+        m_thread = std::jthread([this](const std::stop_token& st) {
+
+            pthread_setname_np(pthread_self(), "VidHoverPrev"); 
+            _Debug("thread started");
+
 
         while (!st.stop_requested()) {
             const uint64_t watch_id = m_thread_watch_id.load(std::memory_order_acquire);
@@ -204,6 +208,8 @@ void VideoHoverPreview::start_thread() {
 
         _Debug("thread stopped");
     });
+
+
 
     if (m_thread_watch_id.load(std::memory_order_acquire) == 0) {
         const auto watch_id = ThreadOverwatch::instance().watch(

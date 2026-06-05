@@ -37,6 +37,7 @@ ThreadOverwatch::ThreadOverwatch()
 {
     overwatch_debug("[ThreadOverwatch] monitor thread starting");
     m_monitor = std::jthread{[this](const std::stop_token &st) { monitor_loop(st); }};
+    pthread_setname_np(m_monitor.native_handle(), "ThreadOverwatch");
 }
 
 ThreadOverwatch::~ThreadOverwatch()

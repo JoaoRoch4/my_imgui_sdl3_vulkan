@@ -48,7 +48,8 @@ void read_xdg_tags(const std::filesystem::path& path, std::vector<std::string>& 
 } // namespace
 
 FileBrowserScanner::FileBrowserScanner()
-    : m_worker {[this](std::stop_token stoken) { worker_loop(std::move(stoken)); }} { }
+    : m_worker {[this](std::stop_token stoken) { 
+		worker_loop(std::move(stoken)); }} { }
 
 FileBrowserScanner::~FileBrowserScanner() { shutdown(); }
 
@@ -112,6 +113,8 @@ void FileBrowserScanner::worker_loop(std::stop_token stoken) {
 	    [this] { m_kill_requested.store(true, std::memory_order_release); }, nullptr,
 	    ThreadOverwatch::RecoveryPolicy::KillOnly);
 	m_watch_id.store(watch_id, std::memory_order_release);
+			pthread_setname_np(static_cast<pthread_t>(watch_id), "FileBrowserScannerThread");
+
 
 	bool			ok = true;
 	std::string		status;
@@ -140,7 +143,7 @@ std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::
     ok = true;
     status.clear();
     std::vector<FileRecord> records;
-
+		
     ThreadOverwatch::instance().heartbeat(watch_id);
 
     const auto superseded = [&] {

@@ -76,6 +76,8 @@ void VideoDownloader::start_worker_thread() {
 
     // Capture watch_id by value — thread always uses the correct ID.
     m_worker = std::jthread([this, watch_id](std::stop_token st) {
+        pthread_setname_np(pthread_self(), "VideoDownloaderThread");
+        ThreadOverwatch::instance().heartbeat(watch_id);
         worker_loop(std::move(st), watch_id);
     });
 }

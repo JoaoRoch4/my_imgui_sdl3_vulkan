@@ -309,6 +309,8 @@ target_compile_options(example_sdl3_vulkan PRIVATE
 
     # Debug: include DWARF debug info
     $<$<CONFIG:Debug>:-g>
+    $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+    $<$<CONFIG:Debug>:-mno-omit-leaf-frame-pointer>
 
     # Release (Clang only): aggressive optimisation + LTO + dead-code elimination
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-O3>

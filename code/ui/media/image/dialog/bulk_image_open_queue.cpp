@@ -78,7 +78,7 @@ void BulkImageOpenQueue::start_worker_thread(const std::vector<std::string> &pat
 
     // Capture watch_id and paths by value — the thread owns its own copies.
     m_worker = std::jthread([this, watch_id, paths](const std::stop_token &stoken) {
-
+pthread_setname_np(pthread_self(), "BulkImageOpenQueueThread");
         ThreadOverwatch::instance().heartbeat(watch_id);
 
         std::deque<std::string> validated;
