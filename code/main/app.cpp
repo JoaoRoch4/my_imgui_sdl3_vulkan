@@ -33,6 +33,10 @@ void App::KickStart() {
 
 
 bool App::run() {
+    // Name the main OS thread so it shows as "MainThread" instead of the process
+    // name ("example_sdl3_vu") in the thread reflection panel and debuggers.
+    pthread_setname_np(pthread_self(), "MainThread");
+
     const auto app_start_time = std::chrono::steady_clock::now();
 
     sdl3_context sdl;
