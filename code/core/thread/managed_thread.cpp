@@ -69,12 +69,19 @@ void ManagedThread::set_status(std::string key, std::string value)
     ThreadRegistry::instance().set_status(m_registry_id, std::move(key), std::move(value));
 }
 
-void ManagedThread::start_thread_only()
+void ManagedThread::heartbeat()
 {
-    m_thread = std::jthread{[this](std::stop_token st) { run(std::move(st)); }};
+    if (m_cfg.watch)
+        ThreadOverwatch::instance().heartbeat(m_watch_id);
+    ThreadRegistry::instance().note_heartbeat(m_registry_id);
 }
 
-void ManagedThread::run(std::stop_token st)
+void ManagedThread::start_thread_only()
+{
+    m_thread = std::jthread{[this](std::stop_token st) { run(st); }};
+}
+
+void ManagedThread::run(const std::stop_token& st)
 {
     pthread_setname_np(pthread_self(), m_name.c_str());
     ThreadRegistry::instance().set_tid(m_registry_id, ::gettid());
@@ -137,4 +144,25 @@ void ManagedThread::escalate()
     std::println(stderr, "[ManagedThread] stacktrace:\n{}", std::to_string(std::stacktrace::current()));
     std::fflush(stderr);
     std::abort();
+}
+
+std::unique_ptr<ManagedThread> spawn_demo_thread(std::chrono::seconds lifetime, std::string name)
+{
+    ManagedThread::Config cfg;
+    cfg.name   = std::move(name);
+    cfg.policy = ThreadOverwatch::RecoveryPolicy::KillOnly;
+    cfg.watch  = true;
+
+    const auto start = std::chrono::steady_clock::now();
+    return std::make_unique<ManagedThread>(cfg,
+        [start, lifetime](const std::stop_token & /*st*/, ManagedThread &self) {
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            self.set_status("elapsed_s",
+                            std::to_string(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()));
+            if (lifetime > std::chrono::seconds{0} && elapsed >= lifetime) {
+                self.request_stop();
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        });
 }

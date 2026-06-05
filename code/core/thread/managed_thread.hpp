@@ -37,11 +37,16 @@ public:
 
     void               request_stop();
     [[nodiscard]] bool joinable() const;
-    void set_status(std::string key, std::string value);
+    void               set_status(std::string key, std::string value);
+
+    // Mid-iteration keep-alive: call from inside the body during a long unit of work
+    // (e.g. a big directory scan or download) so the watchdog sees progress between
+    // the once-per-iteration automatic heartbeats. No-op when watch == false.
+    void heartbeat();
 
 private:
     void start_thread_only();      // spawn a fresh jthread running run()
-    void run(std::stop_token st);  // the owned loop
+    void run(const std::stop_token& st);  // the owned loop
     void respawn();                // Overwatch restart callback (monitor thread)
     [[noreturn]] void escalate();  // restart storm → log + abort
 
@@ -59,3 +64,11 @@ private:
     uint32_t                              m_consecutive_restarts = 0;
     std::chrono::steady_clock::time_point m_last_restart{};
 };
+
+// Diagnostic helper: spawn a KillOnly ManagedThread that publishes its elapsed
+// running time ("elapsed_s") to the registry, so it is visible in the Threads
+// panel. Stops itself after `lifetime`, or runs until destroyed when `lifetime`
+// is zero. KillOnly means it can never trigger the restart-storm abort. Used by
+// the THREADTEST console command and the Debug-build auto-start.
+[[nodiscard]] std::unique_ptr<ManagedThread>
+spawn_demo_thread(std::chrono::seconds lifetime, std::string name = "ThreadTestDemo");

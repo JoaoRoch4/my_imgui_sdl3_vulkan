@@ -2,6 +2,7 @@
 #include "pch.hpp"
 
 struct mpv_handle;
+class ManagedThread;
 
 /// Downloads online video/audio URLs to a local disk cache using the libmpv
 /// stream layer (yt-dlp is used internally for YouTube, Vimeo, Twitch, etc.).
@@ -58,13 +59,11 @@ private:
         std::filesystem::path target;
     };
 
-    void worker(std::stop_token st);
-
-    // Worker entry point — runs on m_worker jthread
-    void worker_loop(std::stop_token st, uint64_t watch_id);
+    // One iteration of the worker loop — runs on the ManagedThread.
+    void worker_iteration(const std::stop_token &st, ManagedThread &self);
 
     void start_worker_thread();
-    void stop_worker_thread(bool unregister_watch);
+    void stop_worker_thread();
 
     [[nodiscard]] std::filesystem::path cache_path_for(const std::string &url) const;
 
@@ -72,17 +71,16 @@ private:
     [[nodiscard]] bool download(const std::string &url,
                                const std::filesystem::path &target,
                                const std::stop_token &st,
-                               uint64_t watch_id);
+                               ManagedThread &self);
 
     static uint64_t fnv1a(const std::string &s);
 
-    std::filesystem::path     m_cache_dir;
-    std::jthread              m_worker;
-    mutable std::mutex        m_mutex;
-    std::condition_variable   m_cv;
-    std::vector<Job>          m_queue;
-    std::vector<Result>       m_completed;
-    std::vector<std::string>  m_inflight; ///< URLs queued or currently downloading.
-    std::atomic<mpv_handle *> m_current_mpv;
-    std::atomic<uint64_t>     m_worker_watch_id;
+    std::filesystem::path           m_cache_dir;
+    mutable std::mutex              m_mutex;
+    std::condition_variable         m_cv;
+    std::vector<Job>                m_queue;
+    std::vector<Result>             m_completed;
+    std::vector<std::string>        m_inflight; ///< URLs queued or currently downloading.
+    std::atomic<mpv_handle *>       m_current_mpv;
+    std::unique_ptr<ManagedThread>  m_worker;
 };

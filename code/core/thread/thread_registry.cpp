@@ -46,6 +46,13 @@ void ThreadRegistry::note_iteration(uint64_t id)
     }
 }
 
+void ThreadRegistry::note_heartbeat(uint64_t id)
+{
+    std::unique_lock lock(m_mutex);
+    if (const auto it = m_threads.find(id); it != m_threads.end())
+        it->second.last_heartbeat = std::chrono::steady_clock::now();
+}
+
 void ThreadRegistry::note_restart(uint64_t id)
 {
     std::unique_lock lock(m_mutex);

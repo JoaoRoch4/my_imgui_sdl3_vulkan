@@ -10,6 +10,7 @@
 class VideoPlayer;
 class VideoPlayerPlacebo;
 class ImageViewerPanel;
+class ManagedThread;
 
 class HistoryPreview {
 public:
@@ -74,8 +75,8 @@ private:
     void clear_active_preview();
     void apply_ready_result(const WindowStateToml::ImageHistoryEntry &hentry);
     void start_worker_thread();
-    void stop_worker_thread(bool unregister_watch);
-    void worker_loop(std::stop_token stoken);
+    void stop_worker_thread();
+    void worker_iteration(const std::stop_token &stoken, ManagedThread &self);
 
     // -------------------------------------------------------------------------
     // Members
@@ -87,8 +88,7 @@ private:
     ImageViewerPanel *m_viewer;       ///< Used for already-open image texture look-up.
     bool m_use_video_player_placebo;  ///< Use VPP instead of VP for thumbnail operations.
 
-    std::jthread              m_worker;           ///< Background download / path-check thread.
-    std::atomic<uint64_t>     m_worker_watch_id;  ///< ThreadOverwatch registration id.
+    std::unique_ptr<ManagedThread> m_worker; ///< Background download / path-check thread.
     std::mutex                m_mutex;
     std::condition_variable   m_cv;
 

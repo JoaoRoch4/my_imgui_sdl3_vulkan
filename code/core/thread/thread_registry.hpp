@@ -39,6 +39,7 @@ public:
 
     void set_tid(uint64_t id, pid_t tid);
     void note_iteration(uint64_t id); // ++iterations, stamp heartbeat
+    void note_heartbeat(uint64_t id); // stamp heartbeat only (mid-iteration keep-alive)
     void note_restart(uint64_t id);   // ++restart_count, state = Restarting
     void set_state(uint64_t id, ThreadState state);
     void set_failed(uint64_t id, std::string reason);

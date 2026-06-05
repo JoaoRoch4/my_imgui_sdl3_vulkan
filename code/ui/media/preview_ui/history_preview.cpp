@@ -14,7 +14,7 @@
 #include "history_preview.hpp"
 #include "Image_viewer_panel.hpp"
 #include "core/log/debug_log.hpp"
-#include "core/thread/thread_overwatch.hpp"
+#include "managed_thread.hpp"
 #include "video_hover_preview.hpp"
 #include "video_player.hpp"
 #include "video_player_placebo.hpp"
@@ -123,7 +123,6 @@ HistoryPreview::HistoryPreview()
     , m_viewer{nullptr}
     , m_use_video_player_placebo{false}
     , m_worker{}
-    , m_worker_watch_id{0}
     , m_mutex{}
     , m_cv{}
     , m_has_pending_job{false}
@@ -190,7 +189,7 @@ void HistoryPreview::shutdown()
         std::lock_guard<std::mutex> lock(m_mutex);
         m_has_pending_job = false; // discard any queued job before joining
     }
-    stop_worker_thread(true); // joins the thread
+    stop_worker_thread(); // joins the thread
 
     clear_active_preview(); // frees GPU texture and removes the temp file
 
@@ -218,51 +217,28 @@ void HistoryPreview::shutdown()
  */
 void HistoryPreview::start_worker_thread()
 {
-    if (m_worker.joinable())
+    if (m_worker)
         return; // already running — nothing to do
 
-    m_worker = std::jthread{[this](std::stop_token st) { 
-        pthread_setname_np(pthread_self(), "HistoryPreviewThread");
-        worker_loop(std::move(st)); }};
-    
-    // Register with the watchdog only on the very first start (id == 0).
-    const uint64_t current_watch = m_worker_watch_id.load(std::memory_order_acquire);
-    if (current_watch == 0) {
-        const auto watch_id = ThreadOverwatch::instance().watch(
-            "HistoryPreview::worker",
-            std::chrono::milliseconds(5000),
-            [this]() { stop_worker_thread(false); },   // on timeout: stop without unregistering
-            [this]() {                                  // on recovery: restart
-                if (m_vk != nullptr)
-                    start_worker_thread();
-            });
-        m_worker_watch_id.store(watch_id, std::memory_order_release);
-    }
-
-    // Kick the watchdog immediately so it doesn't fire before the first real heartbeat.
-    ThreadOverwatch::instance().heartbeat(
-        m_worker_watch_id.load(std::memory_order_acquire));
+    // RestartOnTimeout: ManagedThread re-spawns the worker if it hangs. The body
+    // tolerates a missing m_vk (it simply produces no GPU upload), so a respawn is
+    // always safe.
+    ManagedThread::Config cfg;
+    cfg.name    = "HistoryPreview";
+    cfg.timeout = std::chrono::milliseconds(5000);
+    cfg.policy  = ThreadOverwatch::RecoveryPolicy::RestartOnTimeout;
+    m_worker    = std::make_unique<ManagedThread>(
+        cfg, [this](const std::stop_token &st, ManagedThread &self) { worker_iteration(st, self); });
 }
 
-/**
- * @brief Request the worker to stop and optionally unregister it from ThreadOverwatch.
- *
- * @param unregister_watch  True during normal shutdown; false when called from
- *                          the watchdog's own timeout handler.
- */
-void HistoryPreview::stop_worker_thread(bool unregister_watch)
+void HistoryPreview::stop_worker_thread()
 {
-    if (unregister_watch) {
-        // Exchange to 0 — the returned id is the one we registered.
-        const uint64_t watch_id = m_worker_watch_id.exchange(0, std::memory_order_acq_rel);
-        ThreadOverwatch::instance().unwatch(watch_id);
-    }
+    if (!m_worker)
+        return;
 
-    if (m_worker.joinable()) {
-        m_worker.request_stop(); // cooperative cancellation via stop_token
-        m_cv.notify_all();       // wake the worker if it is blocked on wait_for
-        m_worker.join();         // block until the thread exits
-    }
+    m_worker->request_stop(); // cooperative cancellation via stop_token
+    m_cv.notify_all();        // wake the worker if it is blocked on wait_for
+    m_worker.reset();         // ManagedThread destructor joins
 }
 
 // ============================================================================
@@ -710,81 +686,68 @@ void HistoryPreview::set_use_video_player_placebo(bool enabled)
  *
  * @param stoken  Cooperative stop token; the loop exits when stop is requested.
  */
-void HistoryPreview::worker_loop(std::stop_token stoken)
+void HistoryPreview::worker_iteration(const std::stop_token &stoken, ManagedThread &self)
 {
-    for (;;) {
-        const uint64_t watch_id = m_worker_watch_id.load(std::memory_order_acquire);
-        ThreadOverwatch::instance().heartbeat(watch_id); // keep the watchdog happy
+    Job job;
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
 
-        Job job;
-        {
-            std::unique_lock<std::mutex> lock(m_mutex);
+        // Bounded wait so the lifetime watchdog still sees heartbeats while idle.
+        m_cv.wait_for(lock, std::chrono::milliseconds(500), [this, &stoken] {
+            return stoken.stop_requested() || m_has_pending_job;
+        });
 
-            // Block until a job arrives or the thread is asked to stop.
-            m_cv.wait_for(lock, std::chrono::milliseconds(500), [this, &stoken] {
-                return stoken.stop_requested() || m_has_pending_job;
-            });
+        self.heartbeat(); // wait_for can hold up to 500 ms
 
-            ThreadOverwatch::instance().heartbeat(watch_id); // heartbeat after wake
+        if (stoken.stop_requested() || !m_has_pending_job)
+            return; // shutdown or spurious wake
 
-            if (stoken.stop_requested())
-                break; // cooperative exit
-
-            if (!m_has_pending_job)
-                continue; // spurious wake — go back to waiting
-
-            // Take ownership of the pending job so we can release the lock.
-            job                = std::move(m_pending_job);
-            m_pending_job      = Job{};
-            m_has_pending_job  = false;
-        }
-
-        // -- Resolve the job (outside the lock so the main thread is not blocked) --
-
-        JobResult result;
-        result.source       = job.source;
-        result.is_temp_file = false;
-        result.ok           = false;
-
-        if (job.kind == "file") {
-            // Local file: just verify it still exists — no data read needed.
-            const std::filesystem::path path(job.source);
-            if (std::filesystem::exists(path)) {
-                result.path = path;
-                result.ok   = true;
-            }
-        } else if (job.kind == "url") {
-            // URL: blocking download to a temp file.
-            result.path        = download_to_temp(job.source);
-            result.is_temp_file = !result.path.empty(); // temp file must be deleted by consumer
-            result.ok          = result.is_temp_file;
-        }
-
-        // -- Post the result under the lock --
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-
-        if (stoken.stop_requested()) {
-            // Main thread is shutting down — clean up the temp file ourselves.
-            if (result.is_temp_file && !result.path.empty()) {
-                std::error_code ec;
-                std::filesystem::remove(result.path, ec);
-            }
-            break;
-        }
-
-        // Discard any previous unconsumed result that is about to be replaced.
-        if (m_has_ready_result &&
-            m_ready_result.is_temp_file &&
-            !m_ready_result.path.empty())
-        {
-            std::error_code ec;
-            std::filesystem::remove(m_ready_result.path, ec); // avoid temp-file leak
-        }
-
-        m_ready_result     = std::move(result);
-        m_has_ready_result = true; // signal to draw_for_hover() that data is ready
-
-        ThreadOverwatch::instance().heartbeat(watch_id);
+        // Take ownership of the pending job so we can release the lock.
+        job               = std::move(m_pending_job);
+        m_pending_job     = Job{};
+        m_has_pending_job = false;
     }
+
+    // -- Resolve the job (outside the lock so the main thread is not blocked) --
+
+    JobResult result;
+    result.source       = job.source;
+    result.is_temp_file = false;
+    result.ok           = false;
+
+    if (job.kind == "file") {
+        // Local file: just verify it still exists — no data read needed.
+        const std::filesystem::path path(job.source);
+        if (std::filesystem::exists(path)) {
+            result.path = path;
+            result.ok   = true;
+        }
+    } else if (job.kind == "url") {
+        // URL: blocking download to a temp file.
+        result.path         = download_to_temp(job.source);
+        result.is_temp_file = !result.path.empty(); // temp file must be deleted by consumer
+        result.ok           = result.is_temp_file;
+    }
+
+    // -- Post the result under the lock --
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (stoken.stop_requested()) {
+        // Main thread is shutting down — clean up the temp file ourselves.
+        if (result.is_temp_file && !result.path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(result.path, ec);
+        }
+        return;
+    }
+
+    // Discard any previous unconsumed result that is about to be replaced.
+    if (m_has_ready_result && m_ready_result.is_temp_file && !m_ready_result.path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(m_ready_result.path, ec); // avoid temp-file leak
+    }
+
+    m_ready_result     = std::move(result);
+    m_has_ready_result = true; // signal to draw_for_hover() that data is ready
 }

@@ -2,7 +2,7 @@
 
 #include "file_browser_thread.hpp"
 
-#include "core/thread/thread_overwatch.hpp"
+#include "managed_thread.hpp"
 
 #include <sys/xattr.h>
 
@@ -47,9 +47,14 @@ void read_xdg_tags(const std::filesystem::path& path, std::vector<std::string>& 
 
 } // namespace
 
-FileBrowserScanner::FileBrowserScanner()
-    : m_worker {[this](std::stop_token stoken) { 
-		worker_loop(std::move(stoken)); }} { }
+FileBrowserScanner::FileBrowserScanner() {
+    ManagedThread::Config cfg;
+    cfg.name    = "FileBrowserScan";
+    cfg.timeout = std::chrono::milliseconds(5000);
+    cfg.policy  = ThreadOverwatch::RecoveryPolicy::KillOnly;
+    m_worker    = std::make_unique<ManagedThread>(
+	cfg, [this](const std::stop_token& st, ManagedThread& self) { worker_iteration(st, self); });
+}
 
 FileBrowserScanner::~FileBrowserScanner() { shutdown(); }
 
@@ -85,69 +90,58 @@ void FileBrowserScanner::shutdown() {
 	std::lock_guard<std::mutex> lock(m_mutex);
 	m_pending.reset();
     }
-    m_worker.request_stop();
-    m_cv.notify_all();
-    if (m_worker.joinable())
-	m_worker.join();
+    if (m_worker) {
+	m_worker->request_stop();
+	m_cv.notify_all();   // wake the bounded wait so the join returns promptly
+	m_worker.reset();    // ManagedThread destructor joins
+    }
 }
 
-void FileBrowserScanner::worker_loop(const std::stop_token& stoken) {
-    while (!stoken.stop_requested()) {
-	Request job;
-	{
-	    std::unique_lock<std::mutex> lock(m_mutex);
-	    m_cv.wait(lock, stoken, [this] { return m_pending.has_value(); });
-	    if (stoken.stop_requested())
-		break;
-	    job = std::move(*m_pending);
-	    m_pending.reset();
-	}
+// One iteration of the scanner loop. ManagedThread owns the loop, names the thread
+// ("FileBrowserScan"), and watches it for the whole lifetime (KillOnly). The bounded
+// wait keeps the watchdog fed while idle; scan() heartbeats per entry so a legitimately
+// long scan is not mistaken for a hang. On a true hang the watchdog calls request_stop,
+// which superseded() observes via the stop_token.
+void FileBrowserScanner::worker_iteration(const std::stop_token& stoken, ManagedThread& self) {
+    Request job;
+    {
+	std::unique_lock<std::mutex> lock(m_mutex);
+	m_cv.wait_for(lock, std::chrono::milliseconds(2000),
+		      [this, &stoken] { return stoken.stop_requested() || m_pending.has_value(); });
+	if (stoken.stop_requested() || !m_pending.has_value())
+	    return; // idle timeout or shutdown — heartbeat happens next iteration
+	job = std::move(*m_pending);
+	m_pending.reset();
+    }
 
-	m_kill_requested.store(false, std::memory_order_release);
+    bool			ok = true;
+    std::string			status;
+    std::vector<FileRecord> records = scan(job, stoken, self, ok, status);
 
-	// Register the watch only for the duration of this scan so idle waiting
-	// never trips the watchdog. KillOnly: on hang, set the abort flag and
-	// drop the watch — the worker stays alive to serve the next request.
-	const std::uint64_t watch_id = ThreadOverwatch::instance().watch(
-	    "FileBrowserScanner::scan", std::chrono::milliseconds(5000),
-	    [this] { m_kill_requested.store(true, std::memory_order_release); }, nullptr,
-	    ThreadOverwatch::RecoveryPolicy::KillOnly);
-	m_watch_id.store(watch_id, std::memory_order_release);
-			pthread_setname_np(static_cast<pthread_t>(watch_id), "FileBrowserScannerThread");
+    if (stoken.stop_requested())
+	return;
 
-
-	bool			ok = true;
-	std::string		status;
-	std::vector<FileRecord> records = scan(job, stoken, watch_id, ok, status);
-
-	ThreadOverwatch::instance().unwatch(watch_id);
-	m_watch_id.store(0, std::memory_order_release);
-
-	if (stoken.stop_requested())
-	    break;
-
-	// Publish only if this is still the newest request.
-	std::lock_guard<std::mutex> lock(m_mutex);
-	if (m_latest_gen.load(std::memory_order_acquire) == job.generation) {
-	    m_result.generation = job.generation;
-	    m_result.records	= std::move(records);
-	    m_result.ok		= ok;
-	    m_result.status	= std::move(status);
-	    m_has_result	= true;
-	}
+    // Publish only if this is still the newest request.
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_latest_gen.load(std::memory_order_acquire) == job.generation) {
+	m_result.generation = job.generation;
+	m_result.records	= std::move(records);
+	m_result.ok		= ok;
+	m_result.status		= std::move(status);
+	m_has_result		= true;
     }
 }
 
 std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::stop_token& stoken,
-    std::uint64_t watch_id, bool& ok, std::string& status) {
+    ManagedThread& self, bool& ok, std::string& status) {
     ok = true;
     status.clear();
     std::vector<FileRecord> records;
-		
-    ThreadOverwatch::instance().heartbeat(watch_id);
+
+    self.heartbeat();
 
     const auto superseded = [&] {
-	return stoken.stop_requested() || m_kill_requested.load(std::memory_order_acquire)
+	return stoken.stop_requested()
 	    || m_latest_gen.load(std::memory_order_acquire) != job.generation;
     };
 
@@ -157,7 +151,7 @@ std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::
 		ok = false; // result will be discarded by the caller
 		return records;
 	    }
-	    ThreadOverwatch::instance().heartbeat(watch_id);
+	    self.heartbeat();
 
 	    FileRecord rcd;
 	    try {

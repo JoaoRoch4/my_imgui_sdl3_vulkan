@@ -2,7 +2,7 @@
 
 #include "video_downloader.hpp"
 #include "core/log/debug_log.hpp"
-#include "core/thread/thread_overwatch.hpp"
+#include "managed_thread.hpp"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,14 +30,13 @@ std::filesystem::path VideoDownloader::cache_path_for(const std::string &url) co
 
 VideoDownloader::VideoDownloader()
     : m_cache_dir{}
-    , m_worker{}
     , m_mutex{}
     , m_cv{}
     , m_queue{}
     , m_completed{}
     , m_inflight{}
     , m_current_mpv{nullptr}
-    , m_worker_watch_id{0} {}
+    , m_worker{} {}
 
 VideoDownloader::~VideoDownloader() {
     shutdown();
@@ -56,51 +55,36 @@ void VideoDownloader::set_cache_dir(const std::filesystem::path &dir) {
 }
 
 void VideoDownloader::shutdown() {
-    stop_worker_thread(true);
+    stop_worker_thread();
 }
 
 void VideoDownloader::start_worker_thread() {
-    if (m_worker.joinable())
+    if (m_worker)
         return;
 
-    // Register watch FIRST so the thread captures a valid, non-zero ID on its
-    // very first heartbeat call. KillOnly: no automatic restart loop.
-    const uint64_t watch_id = ThreadOverwatch::instance().watch(
-        "VideoDownloader::worker",
-        std::chrono::milliseconds(5000),
-        [this]() { stop_worker_thread(false); },
-        nullptr,
-        ThreadOverwatch::RecoveryPolicy::KillOnly);
-
-    m_worker_watch_id.store(watch_id, std::memory_order_release);
-
-    // Capture watch_id by value — thread always uses the correct ID.
-    m_worker = std::jthread([this, watch_id](std::stop_token st) {
-        pthread_setname_np(pthread_self(), "VideoDownloaderThread");
-        ThreadOverwatch::instance().heartbeat(watch_id);
-        worker_loop(std::move(st), watch_id);
-    });
+    // KillOnly: a hung download is killed via request_stop (the download loop polls
+    // the stop_token and quits mpv), and the worker stays unwatched until restarted.
+    ManagedThread::Config cfg;
+    cfg.name    = "VideoDownloader";
+    cfg.timeout = std::chrono::milliseconds(5000);
+    cfg.policy  = ThreadOverwatch::RecoveryPolicy::KillOnly;
+    m_worker    = std::make_unique<ManagedThread>(
+        cfg, [this](const std::stop_token &st, ManagedThread &self) { worker_iteration(st, self); });
 }
 
-void VideoDownloader::stop_worker_thread(bool unregister_watch) {
-    // Unregister BEFORE joining so overwatch doesn't fire on an intentional stop.
-    if (unregister_watch) {
-        const uint64_t watch_id = m_worker_watch_id.exchange(0, std::memory_order_acq_rel);
-        ThreadOverwatch::instance().unwatch(watch_id);
-    }
-
-    if (!m_worker.joinable())
+void VideoDownloader::stop_worker_thread() {
+    if (!m_worker)
         return;
 
-    m_worker.request_stop();
+    m_worker->request_stop();
     m_cv.notify_all();
 
-    // Interrupt any mpv instance currently blocking in mpv_wait_event.
-    mpv_handle *mpv = m_current_mpv.load(std::memory_order_acquire);
-    if (mpv)
+    // Interrupt any mpv instance currently blocking in mpv_wait_event so the join
+    // returns promptly instead of waiting out the 0.5 s event poll.
+    if (mpv_handle *mpv = m_current_mpv.load(std::memory_order_acquire))
         mpv_command_string(mpv, "quit");
 
-    m_worker.join();
+    m_worker.reset(); // ManagedThread destructor joins
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +170,7 @@ void VideoDownloader::clear_cache() {
 bool VideoDownloader::download(const std::string &url,
                                const std::filesystem::path &target,
                                const std::stop_token &st,
-                               uint64_t watch_id) {
+                               ManagedThread &self) {
     mpv_handle *mpv = mpv_create();
     if (!mpv)
         return false;
@@ -230,7 +214,7 @@ bool VideoDownloader::download(const std::string &url,
             mpv_command_string(mpv, "quit");
 
         mpv_event *ev = mpv_wait_event(mpv, 0.5);
-        ThreadOverwatch::instance().heartbeat(watch_id);
+        self.heartbeat();
 
         if (!ev || ev->event_id == MPV_EVENT_SHUTDOWN)
             break;
@@ -260,51 +244,29 @@ bool VideoDownloader::download(const std::string &url,
 // Worker loop
 // ---------------------------------------------------------------------------
 
-void VideoDownloader::worker_loop(std::stop_token st, uint64_t watch_id) {
-    APP_DEBUG_LOG("[VideoDownloader] worker started (watch_id={})", watch_id);
+void VideoDownloader::worker_iteration(const std::stop_token &st, ManagedThread &self) {
+    Job job;
+    {
+        std::unique_lock lock{m_mutex};
+        m_cv.wait_for(lock, std::chrono::milliseconds(500), [this, &st] {
+            return st.stop_requested() || !m_queue.empty();
+        });
 
-    for (;;) {
-        ThreadOverwatch::instance().heartbeat(watch_id);
+        // Heartbeat after waking — wait_for can hold for up to 500 ms.
+        self.heartbeat();
 
-        Job job;
-        {
-            std::unique_lock lock{m_mutex};
-            m_cv.wait_for(lock, std::chrono::milliseconds(500), [this, &st] {
-                return st.stop_requested() || !m_queue.empty();
-            });
+        if (st.stop_requested() || m_queue.empty())
+            return;
 
-            // Heartbeat after waking — wait_for can hold for up to 500 ms.
-            ThreadOverwatch::instance().heartbeat(watch_id);
-
-            if (st.stop_requested())
-                break;
-
-            if (m_queue.empty())
-                continue;
-
-            job = std::move(m_queue.front());
-            m_queue.erase(m_queue.begin());
-        }
-
-        APP_DEBUG_LOG("[VideoDownloader] worker: picked up job: {}", job.url);
-        const bool ok = download(job.url, job.target, st, watch_id);
-
-        {
-            std::lock_guard lock{m_mutex};
-            m_inflight.erase(
-                std::remove(m_inflight.begin(), m_inflight.end(), job.url),
-                m_inflight.end());
-            m_completed.push_back({job.url, ok ? job.target : std::filesystem::path{}, ok});
-            APP_DEBUG_LOG("[VideoDownloader] worker: completed (ok={}) {}", ok, job.url);
-        }
-
-        ThreadOverwatch::instance().heartbeat(watch_id);
+        job = std::move(m_queue.front());
+        m_queue.erase(m_queue.begin());
     }
 
-    // Clear watch ID if it still belongs to this thread.
-    const uint64_t current = m_worker_watch_id.load(std::memory_order_acquire);
-    if (current == watch_id)
-        m_worker_watch_id.store(0, std::memory_order_release);
+    APP_DEBUG_LOG("[VideoDownloader] worker: picked up job: {}", job.url);
+    const bool ok = download(job.url, job.target, st, self);
 
-    APP_DEBUG_LOG("[VideoDownloader] worker stopped (watch_id={})", watch_id);
+    std::lock_guard lock{m_mutex};
+    m_inflight.erase(std::remove(m_inflight.begin(), m_inflight.end(), job.url), m_inflight.end());
+    m_completed.push_back({job.url, ok ? job.target : std::filesystem::path{}, ok});
+    APP_DEBUG_LOG("[VideoDownloader] worker: completed (ok={}) {}", ok, job.url);
 }

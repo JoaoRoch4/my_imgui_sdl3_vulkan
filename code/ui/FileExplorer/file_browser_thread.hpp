@@ -6,6 +6,8 @@
 #include <optional>
 #include <stop_token>
 
+class ManagedThread;
+
 /// One directory entry produced by a scan. Pure data, no ImGui dependency, so
 /// it can be filled on the scanner thread and consumed by the UI thread.
 struct FileRecord {
@@ -61,9 +63,9 @@ class FileBrowserScanner {
 		std::uint64_t	      generation  = 0;
 	};
 
-	void worker_loop(const std::stop_token& stoken);
+	void worker_iteration(const std::stop_token& stoken, ManagedThread& self);
 	std::vector<FileRecord>
-	scan(const Request& job, const std::stop_token& stoken, std::uint64_t watch_id, bool& ok, std::string& status);
+	scan(const Request& job, const std::stop_token& stoken, ManagedThread& self, bool& ok, std::string& status);
 
 	std::mutex		    m_mutex;
 	std::condition_variable_any m_cv;
@@ -71,7 +73,5 @@ class FileBrowserScanner {
 	Result			    m_result;
 	bool			    m_has_result = false;
 	std::atomic<std::uint64_t>  m_latest_gen {0};
-	std::atomic<std::uint64_t>  m_watch_id {0};
-	std::atomic<bool>	    m_kill_requested {false};
-	std::jthread		    m_worker;
+	std::unique_ptr<ManagedThread> m_worker;
 };

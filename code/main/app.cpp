@@ -6,6 +6,7 @@
 #include "imgui_context.hpp"
 #include "fps_plot.hpp"
 #include "thread_reflection_panel.hpp"
+#include "managed_thread.hpp"
 #include "sdl3_context.hpp"
 #include "vulkan_context.hpp"
 #include "app_coordinator.hpp"
@@ -20,6 +21,10 @@ App::App()
 
 bool App::run()
 {
+    // Name the main OS thread so it shows as "MainThread" instead of the process
+    // name ("example_sdl3_vu") in the thread reflection panel and debuggers.
+    pthread_setname_np(pthread_self(), "MainThread");
+
     const auto app_start_time = std::chrono::steady_clock::now();
 
     sdl3_context sdl;
@@ -59,7 +64,15 @@ bool App::run()
     FpsPlot fps_plot;
 
     ThreadReflectionPanel thread_panel;
-    bool                  show_thread_panel = false;
+#ifdef _DEBUG
+    // Debug builds: auto-open the Threads panel and spawn a session-lifetime demo
+    // thread, so the reflection system is visible on every launch without having to
+    // run THREADTEST. The thread stops + joins when this unique_ptr leaves run().
+    bool                           show_thread_panel = true;
+    std::unique_ptr<ManagedThread> debug_demo_thread = spawn_demo_thread(std::chrono::seconds{0});
+#else
+    bool                           show_thread_panel = false;
+#endif
 
     StyleEditor style_editor;
     style_editor.InitDefaults();
