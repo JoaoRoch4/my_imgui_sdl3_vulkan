@@ -487,11 +487,14 @@ add_executable(image_tests
     tests/test_main.cpp
     tests/image_ops_test.cpp
     tests/job_queue_test.cpp
+    tests/file_operations_test.cpp
     code/core/image/image_ops.cpp
     code/core/image/job_queue.cpp
+    code/ui/FileExplorer/file_browser_file_operations_core.cpp
 )
 target_include_directories(image_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/code/core/image
+    ${CMAKE_SOURCE_DIR}/code/ui/FileExplorer
 )
 # doctest + libwebp headers marked SYSTEM so their warnings (e.g. doctest's
 # <ciso646> include) stay out of our build; our own test warnings remain visible.
