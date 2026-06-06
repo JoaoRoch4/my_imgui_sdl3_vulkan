@@ -468,3 +468,36 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     ${CMAKE_DL_LIBS}   # dlopen/dlclose for Vulkan loader
     stdc++exp          # std::stacktrace backend (libstdc++ >= 13); used by ManagedThread::escalate
 )
+
+# ── Tests (doctest) ─────────────────────────────────────────────────────────────
+# Standalone test runner for the parallel image module (code/core/image). Built as
+# its own `image_tests` target — NOT linked into the application. Run with:
+#   cmake --build build/all --config Debug --target image_tests
+#   ./build/all/Debug/image_tests          (or via `ctest` in the config dir)
+# The JobQueue + image_ops are intentionally PCH-free and Vulkan-free, so the test
+# target only needs the stb library and libwebp.
+enable_testing()
+add_executable(image_tests
+    tests/test_main.cpp
+    tests/image_ops_test.cpp
+    tests/job_queue_test.cpp
+    code/core/image/image_ops.cpp
+    code/core/image/job_queue.cpp
+)
+target_include_directories(image_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/code/core/image
+)
+# doctest + libwebp headers marked SYSTEM so their warnings (e.g. doctest's
+# <ciso646> include) stay out of our build; our own test warnings remain visible.
+target_include_directories(image_tests SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/external/doctest
+    ${WEBP_INCLUDE_DIR}
+)
+target_link_libraries(image_tests PRIVATE
+    stb                # decode/resize/encode implementations (image / image_resize2 / image_write)
+    WebP::webp         # .webp decode
+)
+# doctest unconditionally includes <ciso646> (removed in C++20); silence just that
+# preprocessor #warning so test build output stays pristine.
+target_compile_options(image_tests PRIVATE "-Wno-#warnings")
+add_test(NAME image_tests COMMAND image_tests)
