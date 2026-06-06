@@ -506,3 +506,41 @@ target_link_libraries(image_tests PRIVATE
 # preprocessor #warning so test build output stays pristine.
 target_compile_options(image_tests PRIVATE "-Wno-#warnings")
 add_test(NAME image_tests COMMAND image_tests)
+
+# ── Functional engine tests (image_job_tests) ───────────────────────────────────
+# Exercises ImageJobSystem end-to-end with the REAL ManagedThread pool, so it must
+# compile the thread infrastructure — which #includes the project PCH. It therefore
+# inherits the application's include dirs (genexp) and links the GUI libs purely for
+# their header paths (no objects are pulled in, since this target references none of
+# their symbols). A PCH keeps the otherwise-heavy compile fast.
+add_executable(image_job_tests
+    tests/test_main.cpp
+    tests/image_job_system_test.cpp
+    code/core/image/image_ops.cpp
+    code/core/image/job_queue.cpp
+    code/core/image/image_job_system.cpp
+    code/core/thread/managed_thread.cpp
+    code/core/thread/thread_overwatch.cpp
+    code/core/thread/thread_registry.cpp
+)
+target_include_directories(image_job_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/code
+    ${CMAKE_SOURCE_DIR}/code/core/image
+)
+target_include_directories(image_job_tests SYSTEM PRIVATE
+    $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
+    ${CMAKE_SOURCE_DIR}/external/doctest
+)
+target_precompile_headers(image_job_tests PRIVATE code/pch/pch.hpp)
+target_compile_options(image_job_tests PRIVATE "-Wno-#warnings")
+target_link_libraries(image_job_tests PRIVATE
+    stb
+    WebP::webp
+    imgui                       # header paths only (imgui.h, pulled by pch)
+    implot                      # header paths only (implot.h)
+    reflectcpp::reflectcpp      # header paths only (rfl.hpp)
+    CURL::libcurl               # header paths only (curl/curl.h)
+    TagLib::tag                 # header paths only (taglib/*)
+    stdc++exp                   # std::stacktrace (ManagedThread::escalate)
+)
+add_test(NAME image_job_tests COMMAND image_job_tests)
