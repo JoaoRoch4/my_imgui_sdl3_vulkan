@@ -46,7 +46,8 @@ Result rename(const fs::path &from, const fs::path &to) {
     return Result::success();
 }
 
-Result remove_recursive(const fs::path &target, Progress &progress, const AbortFn &abort) {
+Result remove_recursive(const fs::path &target, Progress &progress, const AbortFn &abort,
+                        const ProgressFn &on_progress) {
     std::error_code ec;
     if (!fs::exists(fs::symlink_status(target, ec)) || ec)
         return Result::failure("path does not exist");
@@ -61,6 +62,8 @@ Result remove_recursive(const fs::path &target, Progress &progress, const AbortF
 
     progress.total = entries.size();
     progress.done  = 0;
+    if (on_progress)
+        on_progress(progress);
 
     for (const auto &e : entries) {
         if (aborted(abort))
@@ -71,12 +74,14 @@ Result remove_recursive(const fs::path &target, Progress &progress, const AbortF
         if (rec)
             return Result::failure(rec.message());
         ++progress.done;
+        if (on_progress)
+            on_progress(progress);
     }
     return Result::success();
 }
 
 Result copy_tree(const fs::path &from, const fs::path &to, Progress &progress,
-                 const AbortFn &abort) {
+                 const AbortFn &abort, const ProgressFn &on_progress) {
     std::error_code ec;
     if (!fs::exists(fs::symlink_status(from, ec)) || ec)
         return Result::failure("source does not exist");
@@ -90,6 +95,8 @@ Result copy_tree(const fs::path &from, const fs::path &to, Progress &progress,
 
     progress.total = entries.size();
     progress.done  = 0;
+    if (on_progress)
+        on_progress(progress);
 
     for (const auto &src : entries) {
         if (aborted(abort))
@@ -111,28 +118,32 @@ Result copy_tree(const fs::path &from, const fs::path &to, Progress &progress,
         if (cec)
             return Result::failure(cec.message());
         ++progress.done;
+        if (on_progress)
+            on_progress(progress);
     }
     return Result::success();
 }
 
 Result move_path(const fs::path &from, const fs::path &to, Progress &progress,
-                 const AbortFn &abort) {
+                 const AbortFn &abort, const ProgressFn &on_progress) {
     // Fast path: a plain rename works within the same filesystem.
     std::error_code ec;
     fs::rename(from, to, ec);
     if (!ec) {
         progress.total = 1;
         progress.done  = 1;
+        if (on_progress)
+            on_progress(progress);
         return Result::success();
     }
 
     // Cross-device (or other) failure: copy then remove the source.
-    const Result copied = copy_tree(from, to, progress, abort);
+    const Result copied = copy_tree(from, to, progress, abort, on_progress);
     if (!copied.ok)
         return copied;
 
     Progress     rm_progress;
-    const Result removed = remove_recursive(from, rm_progress, abort);
+    const Result removed = remove_recursive(from, rm_progress, abort, on_progress);
     if (!removed.ok)
         return removed;
     return Result::success();

@@ -258,6 +258,8 @@ add_executable(example_sdl3_vulkan
     code/ui/FileExplorer/file_browser_thread.cpp
     code/ui/FileExplorer/file_browser_context_menu.cpp
     code/ui/FileExplorer/file_thumbnail_cache.cpp
+    code/ui/FileExplorer/file_browser_file_operations_core.cpp
+    code/ui/FileExplorer/file_browser_file_operations.cpp
 
     code/ui/media/metadata_editor/metadata_editor.cpp
 
@@ -520,9 +522,12 @@ add_test(NAME image_tests COMMAND image_tests)
 add_executable(image_job_tests
     tests/test_main.cpp
     tests/image_job_system_test.cpp
+    tests/file_browser_file_operations_test.cpp
     code/core/image/image_ops.cpp
     code/core/image/job_queue.cpp
     code/core/image/image_job_system.cpp
+    code/ui/FileExplorer/file_browser_file_operations_core.cpp
+    code/ui/FileExplorer/file_browser_file_operations.cpp
     code/core/thread/managed_thread.cpp
     code/core/thread/thread_overwatch.cpp
     code/core/thread/thread_registry.cpp
@@ -530,6 +535,7 @@ add_executable(image_job_tests
 target_include_directories(image_job_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/code
     ${CMAKE_SOURCE_DIR}/code/core/image
+    ${CMAKE_SOURCE_DIR}/code/ui/FileExplorer
 )
 target_include_directories(image_job_tests SYSTEM PRIVATE
     $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
