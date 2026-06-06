@@ -195,6 +195,11 @@ add_executable(example_sdl3_vulkan
     code/core/thread/thread_overwatch.cpp
     code/core/thread/thread_registry.cpp
     code/core/thread/managed_thread.cpp
+
+    # Parallel image engine (JobQueue + ImageJobSystem over stb/libwebp)
+    code/core/image/image_ops.cpp
+    code/core/image/job_queue.cpp
+    code/core/image/image_job_system.cpp
     # Rendering layer (SDL3 window + ImGui + Vulkan backend)
     code/rendering/sdl3_context.cpp
     code/rendering/imgui_context.cpp
