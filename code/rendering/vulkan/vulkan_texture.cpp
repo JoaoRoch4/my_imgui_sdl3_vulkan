@@ -1,8 +1,8 @@
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "pch.hpp" // NOLINT
 #include "vulkan_texture.hpp"
 
+// stb implementations are compiled in the standalone `stb` library (see
+// CMakeLists.txt); include the headers here declaration-only.
 #include <stb_image.h>
 #include <stb_image_write.h>
 

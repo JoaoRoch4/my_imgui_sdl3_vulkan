@@ -13,8 +13,8 @@
 #endif
 
 
-// STB_IMAGE_IMPLEMENTATION and STB_IMAGE_WRITE_IMPLEMENTATION are already
-// defined in vulkan_texture.cpp; include the headers as declaration-only here.
+// stb implementations live in the standalone `stb` library (see CMakeLists.txt);
+// include the headers as declaration-only here.
 #include <stb_image.h>
 #include <stb_image_write.h>
 

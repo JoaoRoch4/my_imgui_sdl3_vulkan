@@ -3,8 +3,9 @@
 #include "file_thumbnail_cache.hpp"
 #include "rendering/vulkan/vulkan_texture.hpp"
 #include "rendering/vulkan/vulkan_context.hpp"
+// stb implementations are compiled in the standalone `stb` library (see
+// CMakeLists.txt); include the headers here declaration-only.
 #include <stb_image.h>
-#define STB_IMAGE_RESIZE2_IMPLEMENTATION
 #include <stb_image_resize2.h>
 #include <stb_image_write.h>
 
