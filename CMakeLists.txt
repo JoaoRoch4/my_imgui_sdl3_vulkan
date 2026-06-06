@@ -339,6 +339,7 @@ target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code/pch
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/thread
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/core/image
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/log
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering
     ${CMAKE_CURRENT_SOURCE_DIR}/code/rendering/vulkan

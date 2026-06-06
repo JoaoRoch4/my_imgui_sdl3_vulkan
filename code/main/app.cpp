@@ -10,6 +10,7 @@
 #include "fps_plot.hpp"
 #include "thread_reflection_panel.hpp"
 #include "managed_thread.hpp"
+#include "image_job_system.hpp"
 #include "sdl3_context.hpp"
 #include "style_editor.hpp"
 #include "vulkan_context.hpp"
@@ -38,6 +39,10 @@ bool App::run() {
     pthread_setname_np(pthread_self(), "MainThread");
 
     const auto app_start_time = std::chrono::steady_clock::now();
+
+    // Start the parallel image engine (decode/resize/encode worker pool wired to
+    // ThreadOverwatch) for the whole session; shut it down before teardown below.
+    img::ImageJobSystem::instance().start();
 
     sdl3_context sdl;
     if (!sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
@@ -296,6 +301,9 @@ bool App::run() {
     }
 
     const bool reopen_requested = menu_bar.request_reopen;
+
+    // Stop image workers before the rest of teardown so no job is mid-flight.
+    img::ImageJobSystem::instance().shutdown();
 
     vkDeviceWaitIdle(vk.device);
     menu_bar.Shutdown();
