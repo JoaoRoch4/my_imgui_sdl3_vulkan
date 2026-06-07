@@ -15,6 +15,10 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-linux")
 # ── Project ───────────────────────────────────────────────────────────────────
 project(example_sdl3_vulkan CXX)
 
+# Per-library build glue lives under thirdparty/<lib>/; shared helper below.
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+include(ProfilableTreatment)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
