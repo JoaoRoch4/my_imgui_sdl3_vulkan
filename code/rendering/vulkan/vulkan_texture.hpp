@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vulkan_context.hpp"
+#include "image_buffer.hpp" // img::ImageBuffer (CPU RGBA8 currency)
 
 
 // Owns a GPU-side RGBA texture loaded from disk via stb_image.
@@ -26,6 +27,10 @@ public:
     // Load image from disk and upload to GPU. Returns false on failure.
     bool load(const std::filesystem::path& path, vulkan_context& vk);
 
+    // Upload an already-decoded CPU RGBA8 buffer to the GPU (no file I/O, no decode).
+    // Lets the render thread consume buffers produced by ImageJobSystem. False on failure.
+    bool upload(const img::ImageBuffer& buf, vulkan_context& vk);
+
     // Free all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
     void unload(vulkan_context& vk);
 
@@ -41,6 +46,11 @@ private:
     static uint32_t find_memory_type(VkPhysicalDevice physical_device,
                                      uint32_t type_filter,
                                      VkMemoryPropertyFlags properties);
+
+    // Create the GPU image/view/sampler, register with ImGui, and stage-upload the
+    // given interleaved RGBA8 pixels (w*h*4 bytes). Caller owns `pixels`. Sets
+    // width/height. Shared by load() (from a decoded file) and upload() (from a buffer).
+    bool upload_pixels(const unsigned char* pixels, int w, int h, vulkan_context& vk);
 
     VkDescriptorSet m_descriptor_set;
     VkSampler       m_sampler;

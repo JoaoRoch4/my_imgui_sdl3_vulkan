@@ -94,42 +94,56 @@ uint32_t VulkanTexture::find_memory_type(VkPhysicalDevice physical_device,
     return UINT32_MAX;
 }
 bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) {
-    constexpr int k_channels = 4;
-    int ch = 0;
-    unsigned char *pixels = nullptr;
-    bool is_webp = false;
+    constexpr int  k_channels = 4;
+    int            ch         = 0;
+    int            w          = 0;
+    int            h          = 0;
+    unsigned char *pixels     = nullptr;
+    bool           is_webp    = false;
 
-    // 1. Decode Image Data (RAII-style cleanup)
+    // 1. Decode Image Data
     if (path.extension() == ".webp" || path.extension() == ".WEBP") {
         std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) { return false;
-}
+        if (!file.is_open())
+            return false;
         std::vector<uint8_t> buf(static_cast<size_t>(file.tellg()));
         file.seekg(0);
-        auto *res = std::bit_cast<char *>(buf.data());
-        if (res == nullptr)
-            return false;
-        auto buf_size = static_cast<std::streamsize>(buf.size());
-        file.read(res, buf_size);
-        pixels = WebPDecodeRGBA(buf.data(), buf.size(), &width, &height);
+        file.read(std::bit_cast<char *>(buf.data()), static_cast<std::streamsize>(buf.size()));
+        pixels  = WebPDecodeRGBA(buf.data(), buf.size(), &w, &h);
         is_webp = true;
     } else {
-        pixels = stbi_load(path.string().c_str(), &width, &height, &ch, k_channels);
+        pixels = stbi_load(path.string().c_str(), &w, &h, &ch, k_channels);
     }
 
     if (!pixels)
         return false;
 
-    // Lambda to ensure CPU memory is freed even on Vulkan failure
-    auto cleanup_pixels = [&]() {
-        if (is_webp)
-            WebPFree(pixels);
-        else
-            stbi_image_free(pixels);
-    };
+    // 2. Upload to the GPU, then free the decoded CPU pixels (we own them here).
+    const bool ok = upload_pixels(pixels, w, h, vk);
+    if (is_webp)
+        WebPFree(pixels);
+    else
+        stbi_image_free(pixels);
+    return ok;
+}
+
+bool VulkanTexture::upload(const img::ImageBuffer &buf, vulkan_context &vk) {
+    // Only RGBA8 is supported by the fixed VK_FORMAT_R8G8B8A8_UNORM path below.
+    if (!buf.valid() || buf.channels != 4)
+        return false;
+    return upload_pixels(buf.data.data(), buf.width, buf.height, vk);
+}
+
+bool VulkanTexture::upload_pixels(const unsigned char *pixels, int w, int h, vulkan_context &vk) {
+    constexpr int k_channels = 4;
+    if (pixels == nullptr || w <= 0 || h <= 0)
+        return false;
+
+    width  = w;
+    height = h;
 
     const VkDeviceSize image_size = static_cast<VkDeviceSize>(width) * height * k_channels;
-    VkResult err;
+    VkResult           err;
 
     // 2. Create GPU Image
     {
@@ -147,7 +161,6 @@ bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) 
 
         err = vkCreateImage(vk.device, &info, vk.allocator, &m_image);
         if (err != VK_SUCCESS) {
-            cleanup_pixels();
             return false;
         }
 
@@ -159,7 +172,6 @@ bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) 
         alloc.memoryTypeIndex = find_memory_type(vk.physical_device, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         if (alloc.memoryTypeIndex == 0xFFFFFFFFu) {
-            cleanup_pixels();
             return false;
         }
 
@@ -265,10 +277,9 @@ bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) 
         vkFreeCommandBuffers(vk.device, c_info.commandPool, 1, &cmd);
     }
 
-    // 7. Cleanup Temporary Resources
+    // 7. Cleanup Temporary Resources (the caller owns `pixels`, not us).
     vkDestroyBuffer(vk.device, staging_buf, vk.allocator);
     vkFreeMemory(vk.device, staging_mem, vk.allocator);
-    cleanup_pixels();
 
     return true;
 }
