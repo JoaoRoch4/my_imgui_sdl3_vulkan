@@ -27,165 +27,42 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_DEBUG_POSTFIX "_d")
 
 # ── External library paths ────────────────────────────────────────────────────
-# ImGui docking/viewports fork lives outside this repo.
+# ImGui fork lives outside this repo. Kept here only for the IMGUI_FONTS_DIR
+# compile definition below; the imgui build itself now lives in thirdparty/imgui/
+# (IMPLOT_DIR / STB_DIR likewise moved into their thirdparty/<lib> folders).
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
-# ImPlot is vendored under external/ inside this repo.
-set(IMPLOT_DIR ${CMAKE_SOURCE_DIR}/external/implot)
-# stb single-file headers vendored under external/stb. Compiled into a standalone
-# `stb` library below (replaces the vcpkg `stb` port) so it is profilable.
-set(STB_DIR ${CMAKE_SOURCE_DIR}/external/stb)
 
 # ── Dependency discovery ──────────────────────────────────────────────────────
-# System libraries resolved via pkg-config (SDL3, Vulkan, Freetype2, PlutoSVG, mpv).
-# vcpkg-managed libraries use CMake find_package (reflectcpp, Stb, WebP, CURL).
+# Only the deps with NO vendored source are resolved here: FreeType2 / PlutoSVG /
+# EGL / GL via pkg-config, and reflectcpp / WebP / CURL via CMake find_package.
+# Everything else is compiled from source under thirdparty/<lib>/ (added below).
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SDL3 REQUIRED sdl3)
-pkg_check_modules(VULKAN REQUIRED vulkan)
+# Still resolved from the system (no vendored source): FreeType, PlutoSVG, EGL, GL.
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 pkg_check_modules(PLUTOSVG REQUIRED plutosvg)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GL REQUIRED gl)
-pkg_check_modules(LIBPLACEBO REQUIRED libplacebo)
+# vcpkg / system CMake packages with no vendored source.
 find_package(reflectcpp CONFIG REQUIRED)
-# NOTE: stb is no longer resolved from vcpkg — it is compiled from external/stb
-# into the standalone `stb` library (see the precompiled-libraries section).
 find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
-find_package(taglib REQUIRED)
+# NOTE: SDL3, Vulkan (loader), mpv, libplacebo, taglib — and stb/imgui/implot —
+# are now compiled from source; see the thirdparty/<lib> subdirectories below.
 
-# Use bundled mpv headers from external/mpv/include instead of system headers.
-# The shared library is still resolved from the system at link time.
-set(MPV_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/mpv/include)
-# Use vendored libplacebo headers for early integration scaffolding.
-set(LIBPLACEBO_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include)
-find_library(MPV_LIBRARIES NAMES mpv REQUIRED)
-
-# ── Precompiled external GUI libraries (ImGui + ImPlot) ───────────────────────
-# ImGui and ImPlot change very rarely, so they are compiled once into standalone
-# static libraries instead of being rebuilt as part of the main executable.
-# Because imconfig.h no longer pulls in pch.hpp, these libraries don't receive
-# the project PCH and don't depend on the project's headers — so editing project
-# code (or pch.hpp itself) never rebuilds them. Warnings are silenced per target
-# with -w. Release optimisation (-O3 -DNDEBUG) comes from the default
-# CMAKE_CXX_FLAGS_RELEASE; the executable-only LTO / -march=native flags are
-# intentionally NOT applied here, keeping these objects quick to build and
-# cleanly linkable into the ThinLTO executable.
-add_library(imgui STATIC
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-    ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
-)
-
-# Public headers that consumers (the executable + ImPlot) include. Marked SYSTEM
-# so their warnings stay suppressed in the consuming targets.
-target_include_directories(imgui SYSTEM PUBLIC
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    ${IMGUI_DIR}/misc/freetype
-)
-
-# Private: only needed to compile the SDL3 / Vulkan backends and the
-# FreeType + PlutoSVG font rasteriser.
-target_include_directories(imgui SYSTEM PRIVATE
-    ${SDL3_INCLUDE_DIRS}
-    ${VULKAN_INCLUDE_DIRS}
-    ${FREETYPE_INCLUDE_DIRS}
-    ${PLUTOSVG_INCLUDE_DIRS}
-)
-
-target_compile_definitions(imgui PRIVATE
-    # OT-SVG emoji rendering via PlutoSVG (also set in imconfig.h; kept explicit
-    # to mirror the original build and document the link-time dependency).
-    IMGUI_ENABLE_FREETYPE_PLUTOSVG
-)
-
-# Suppress warnings from vendored sources; pass through pkg-config extra flags.
-target_compile_options(imgui PRIVATE
-    ${SDL3_CFLAGS_OTHER}
-    ${VULKAN_CFLAGS_OTHER}
-    ${FREETYPE_CFLAGS_OTHER}
-    ${PLUTOSVG_CFLAGS_OTHER}
-    -w
-)
-
-add_library(implot STATIC
-    ${IMPLOT_DIR}/implot.cpp
-    ${IMPLOT_DIR}/implot_items.cpp
-)
-
-# implot.h includes <imgui.h>, so anything linking ImPlot also needs ImGui:
-# propagate the dependency PUBLIC-ly.
-target_include_directories(implot SYSTEM PUBLIC
-    ${IMPLOT_DIR}
-)
-target_link_libraries(implot PUBLIC imgui)
-target_compile_options(implot PRIVATE -w)
-
-# ── Precompiled stb single-file libraries ─────────────────────────────────────
-# stb is header-only: the function bodies (stbi_load, stbi_write_png,
-# stbir_resize_*) only exist in a TU that #defines the *_IMPLEMENTATION macros.
-# Previously those macros lived inside application TUs (vulkan_texture.cpp /
-# file_thumbnail_cache.cpp), which welded stb's code into our own objects and let
-# the optimiser inline it away — invisible to a profiler. Here every stb
-# implementation we use is compiled into ONE standalone library so the profiler
-# attributes samples to distinct, named stb_* frames.
-#
-# The single TU is *generated* into the build tree (file(GENERATE) only rewrites
-# when the content changes, so it doesn't force a rebuild every configure) and
-# compiled as C++ — every consumer includes these headers from C++ TUs, so the
-# definitions must use C++ linkage to match the (mangled) names referenced
-# elsewhere. Compiling stb as C here would emit unmangled symbols and fail to
-# link against the C++ consumers.
-set(STB_IMPL_TU ${CMAKE_BINARY_DIR}/stb/stb_impl.cpp)
-file(GENERATE OUTPUT ${STB_IMPL_TU} CONTENT [[// Auto-generated by CMakeLists.txt — do not edit.
-// Compiles the stb header-only implementations used across the project into the
-// standalone `stb` library. Keep these in sync with the headers consumers use.
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_RESIZE2_IMPLEMENTATION
-#include <stb_image.h>
-#include <stb_image_write.h>
-#include <stb_image_resize2.h>
-]])
-set_source_files_properties(${STB_IMPL_TU} PROPERTIES GENERATED TRUE)
-
-add_library(stb STATIC ${STB_IMPL_TU})
-
-# external/stb headers — PUBLIC so consumers get them transitively by linking
-# `stb`; SYSTEM keeps stb's own warnings out of the consuming targets.
-target_include_directories(stb SYSTEM PUBLIC ${STB_DIR})
-target_compile_options(stb PRIVATE -w)
-
-# ── Profiling / symbol-export treatment (stb + ImGui + ImPlot) ────────────────
-# These three libraries are built to be profilable in EVERY configuration:
-#   • default symbol visibility (not hidden) so stb_*/ImGui_*/ImPlot_* names
-#     survive into the executable's symbol table;
-#   • DWARF debug info (-g) in all configs, including Release, so a sampling
-#     profiler can map sampled addresses back to source lines;
-#   • frame pointers kept (-fno-omit-frame-pointer) so stack unwinding is exact.
-# The executable additionally links with -rdynamic (see target_link_options) to
-# publish these symbols in the dynamic symbol table for tools that resolve frames
-# at runtime (perf, backtrace_symbols, sampling profilers).
-# NOTE: like the existing imgui/implot objects, these are intentionally NOT given
-# -march=native; they stay quick to build and cleanly linkable into the ThinLTO
-# executable. stb_image_resize2's AVX2 kernels therefore stay disabled here.
-foreach(_prof_lib stb imgui implot)
-    set_target_properties(${_prof_lib} PROPERTIES
-        C_VISIBILITY_PRESET       default
-        CXX_VISIBILITY_PRESET     default
-        VISIBILITY_INLINES_HIDDEN OFF
-    )
-    target_compile_options(${_prof_lib} PRIVATE
-        -g
-        -fno-omit-frame-pointer
-        -mno-omit-leaf-frame-pointer
-    )
-endforeach()
+# ── Compiled external libraries (each in its own thirdparty/<lib> folder) ─────
+# The root file is now a thin orchestrator: each dependency owns its build under
+# thirdparty/<lib>/. Order matters — SDL3 / Vulkan-Loader / taglib define targets
+# that imgui links; FFmpeg is built before mpv (mpv consumes it). Foreign
+# (autotools/meson) builds are wrapped as ExternalProjects inside their folder.
+add_subdirectory(thirdparty/sdl3)
+add_subdirectory(thirdparty/vulkan-loader)
+add_subdirectory(thirdparty/taglib)
+add_subdirectory(thirdparty/imgui)
+add_subdirectory(thirdparty/implot)
+add_subdirectory(thirdparty/stb)
+add_subdirectory(thirdparty/ffmpeg)
+add_subdirectory(thirdparty/libplacebo)
+add_subdirectory(thirdparty/mpv)
 
 # ── Sources ───────────────────────────────────────────────────────────────────
 add_executable(example_sdl3_vulkan
@@ -373,15 +250,13 @@ target_include_directories(example_sdl3_vulkan PRIVATE
 # External / vendored / system headers — marked SYSTEM so the compiler
 # treats them as system headers and suppresses all warnings from them.
 target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
-    # ImGui / ImPlot / stb headers arrive transitively from the linked `imgui` /
-    # `implot` / `stb` targets (their PUBLIC SYSTEM include dirs).
-    ${SDL3_INCLUDE_DIRS}
-    ${VULKAN_INCLUDE_DIRS}
+    # ImGui / ImPlot / stb headers arrive transitively from the linked imgui /
+    # implot / stb targets; SDL3 / Vulkan / mpv / libplacebo headers arrive from
+    # their from-source targets (SDL3::SDL3, Vulkan::Headers, mpv::mpv,
+    # placebo::placebo) — see target_link_libraries below.
     ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
     ${WEBP_INCLUDE_DIR}
-    ${MPV_INCLUDE_DIRS}  # external/mpv/include (bundled headers)
-    ${LIBPLACEBO_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
     ${GL_INCLUDE_DIRS}
 )
@@ -405,9 +280,7 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-ffunction-sections>
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-fdata-sections>
 
-    # Pass through any extra flags reported by pkg-config
-    ${SDL3_CFLAGS_OTHER}
-    ${VULKAN_CFLAGS_OTHER}
+    # Pass through any extra flags reported by pkg-config (FreeType / PlutoSVG)
     ${FREETYPE_CFLAGS_OTHER}
     ${PLUTOSVG_CFLAGS_OTHER}
 )
@@ -451,11 +324,8 @@ $<$<CONFIG:RelWithDebInfo>:__APP_FORCE_LOGS>
 # GNU ld searches by default but LLD does not — without these the LLD link fails
 # to find SDL3 / plutosvg / plutovg.
 target_link_directories(example_sdl3_vulkan PRIVATE
-    ${SDL3_LIBRARY_DIRS}
-    ${VULKAN_LIBRARY_DIRS}
     ${FREETYPE_LIBRARY_DIRS}
     ${PLUTOSVG_LIBRARY_DIRS}
-    ${LIBPLACEBO_LIBRARY_DIRS}
     ${EGL_LIBRARY_DIRS}
     ${GL_LIBRARY_DIRS}
 )
@@ -465,21 +335,27 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     imgui              # precompiled Dear ImGui (core + SDL3/Vulkan backends + freetype)
     implot             # precompiled ImPlot (transitively brings in imgui)
     stb                # precompiled stb (image / image_write / image_resize2)
-    ${SDL3_LIBRARIES}
-    ${VULKAN_LIBRARIES}
+    SDL3::SDL3         # from-source SDL3            (thirdparty/sdl3)
+    vulkan             # from-source Vulkan loader   (thirdparty/vulkan-loader)
+    Vulkan::Headers    # Vulkan API headers (interface)
     ${FREETYPE_LIBRARIES}
     ${PLUTOSVG_LIBRARIES}
     reflectcpp::reflectcpp
     WebP::webp
     CURL::libcurl
-    TagLib::tag
-    ${MPV_LIBRARIES}
+    tag                # from-source TagLib         (thirdparty/taglib)
+    mpv::mpv           # from-source libmpv          (thirdparty/mpv)
     ${EGL_LIBRARIES}
     ${GL_LIBRARIES}
-    ${LIBPLACEBO_LIBRARIES}
+    placebo::placebo   # from-source libplacebo      (thirdparty/libplacebo)
     ${CMAKE_DL_LIBS}   # dlopen/dlclose for Vulkan loader
     stdc++exp          # std::stacktrace backend (libstdc++ >= 13); used by ManagedThread::escalate
 )
+
+# The foreign (autotools/meson) deps are built by ExternalProjects; make the
+# executable wait for their installed artifacts before it links. (mpv_ep itself
+# DEPENDS on ffmpeg_ep + libplacebo_ep.)
+add_dependencies(example_sdl3_vulkan ffmpeg_ep libplacebo_ep mpv_ep)
 
 # ── Tests (doctest) ─────────────────────────────────────────────────────────────
 # Standalone test runner for the parallel image module (code/core/image). Built as
@@ -544,6 +420,13 @@ target_include_directories(image_job_tests PRIVATE
 target_include_directories(image_job_tests SYSTEM PRIVATE
     $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
     ${CMAKE_SOURCE_DIR}/external/doctest
+    # pch.hpp pulls SDL3 / Vulkan / mpv / libplacebo headers. Use the vendored
+    # *source* header dirs so this lightweight test compiles without dragging in
+    # the heavy from-source mpv / FFmpeg / libplacebo ExternalProject builds.
+    ${CMAKE_SOURCE_DIR}/external/SDL3-3.4.10/include
+    ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
+    ${CMAKE_SOURCE_DIR}/external/mpv/include
+    ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
 )
 target_precompile_headers(image_job_tests PRIVATE code/pch/pch.hpp)
 target_compile_options(image_job_tests PRIVATE "-Wno-#warnings")
@@ -554,7 +437,7 @@ target_link_libraries(image_job_tests PRIVATE
     implot                      # header paths only (implot.h)
     reflectcpp::reflectcpp      # header paths only (rfl.hpp)
     CURL::libcurl               # header paths only (curl/curl.h)
-    TagLib::tag                 # header paths only (taglib/*)
+    tag                         # header paths only (taglib/*) — from-source TagLib
     stdc++exp                   # std::stacktrace (ManagedThread::escalate)
 )
 add_test(NAME image_job_tests COMMAND image_job_tests)

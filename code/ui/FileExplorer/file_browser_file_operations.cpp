@@ -61,9 +61,11 @@ FileBrowserFileOperations::enqueue(Op op, std::filesystem::path a, std::filesyst
         std::lock_guard lk(m_mutex);
         m_status[id] = JobStatus{}; // Running, 0/0
     }
-    m_queue.submit(
+    // Fire-and-forget: progress/result flow through m_status (poll), not the future.
+    std::future<void> fut = m_queue.submit(
         [this, id, op, a = std::move(a), b = std::move(b)] { run_job(id, op, a, b); },
         img::Priority::Normal);
+    (void)fut;
     return id;
 }
 
