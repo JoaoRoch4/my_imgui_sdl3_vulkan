@@ -8,6 +8,6 @@ set(SDL_EXAMPLES     OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL      OFF CACHE BOOL "" FORCE)
 add_subdirectory(
     ${CMAKE_SOURCE_DIR}/external/SDL3-3.4.10
-    ${CMAKE_BINARY_DIR}/thirdparty/sdl3
+    ${CMAKE_BINARY_DIR}/thirdparty/sdl3/build
     EXCLUDE_FROM_ALL)
 app_profilable_treatment(SDL3-shared)

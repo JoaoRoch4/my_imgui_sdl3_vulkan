@@ -357,6 +357,15 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
 # DEPENDS on ffmpeg_ep + libplacebo_ep.)
 add_dependencies(example_sdl3_vulkan ffmpeg_ep libplacebo_ep mpv_ep)
 
+# FFmpeg is linked only transitively (through mpv), so CMake doesn't add its install
+# lib dir to the exe rpath. And DT_RUNPATH is NOT transitive — the loader uses
+# libmpv's own (empty) RUNPATH to resolve libavcodec, not the exe's — so the app
+# builds but can't launch ("libavcodec.so.62 => not found"). Add FFmpeg's lib dir to
+# the build rpath and emit the old, transitive DT_RPATH so mpv's private FFmpeg libs
+# resolve at runtime from the from-source install.
+set_property(TARGET example_sdl3_vulkan APPEND PROPERTY BUILD_RPATH "${FFMPEG_INSTALL_DIR}/lib")
+target_link_options(example_sdl3_vulkan PRIVATE -Wl,--disable-new-dtags)
+
 # ── Tests (doctest) ─────────────────────────────────────────────────────────────
 # Standalone test runner for the parallel image module (code/core/image). Built as
 # its own `image_tests` target — NOT linked into the application. Run with:

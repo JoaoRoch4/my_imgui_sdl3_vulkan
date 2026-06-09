@@ -6,6 +6,6 @@ set(BUILD_EXAMPLES     OFF CACHE BOOL "" FORCE)
 set(BUILD_BINDINGS     OFF CACHE BOOL "" FORCE)
 add_subdirectory(
     ${CMAKE_SOURCE_DIR}/external/taglib
-    ${CMAKE_BINARY_DIR}/thirdparty/taglib
+    ${CMAKE_BINARY_DIR}/thirdparty/taglib/build
     EXCLUDE_FROM_ALL)
 app_profilable_treatment(tag)
