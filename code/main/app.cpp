@@ -4,325 +4,319 @@
 
 
 #include "app_context.hpp"
-#include "app_coordinator.hpp"
-#include "fps_plot.hpp"
-#include "imgui_context.hpp"
-#include "fps_plot.hpp"
-#include "thread_reflection_panel.hpp"
-#include "managed_thread.hpp"
 #include "image_job_system.hpp"
-#include "sdl3_context.hpp"
-#include "style_editor.hpp"
-#include "vulkan_context.hpp"
 #include "window_fullscreen_utils.hpp"
-#include "window_state_toml.hpp"
 
 
 
-App::App()
-    : m_AppContext(nullptr)
-    , m_Sdl(nullptr) {
-
-    m_AppContext = AppContext::GetInstance();
+App::App() {
+	m_AppContext = AppContext::GetInstance();
 }
 
-void App::KickStart() {
 
+bool App::KickStart() {
+	// Name the main OS thread so it shows as "MainThread" instead of the process
+	// name ("example_sdl3_vu") in the thread reflection panel and debuggers.
+	pthread_setname_np(pthread_self(), "MainThread");
 
+	m_AppStartTime = std::chrono::steady_clock::now();
 
- }
+	// Start the parallel image engine (decode/resize/encode worker pool wired to
+	// ThreadOverwatch) for the whole session; shut it down in destroy().
+	img::ImageJobSystem::instance().start();
 
+	if (!m_Sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
+		return false;
 
-bool App::run() {
-    // Name the main OS thread so it shows as "MainThread" instead of the process
-    // name ("example_sdl3_vu") in the thread reflection panel and debuggers.
-    pthread_setname_np(pthread_self(), "MainThread");
+	{
+		std::vector<char const*> extensions;
+		uint32_t                 count = 0;
+		char const* const*       exts  = SDL_Vulkan_GetInstanceExtensions(&count);
+		extensions.reserve(count);
+		for (uint32_t i = 0; i < count; i++)
+			extensions.push_back(exts[i]);
+		m_Vk.setup(extensions);
+	}
 
-    const auto app_start_time = std::chrono::steady_clock::now();
+	if (SDL_Vulkan_CreateSurface(m_Sdl.window, m_Vk.instance, m_Vk.allocator, &m_Surface) == 0) {
+		std::printf("Failed to create Vulkan surface.\n");
+		return false;
+	}
 
-    // Start the parallel image engine (decode/resize/encode worker pool wired to
-    // ThreadOverwatch) for the whole session; shut it down before teardown below.
-    img::ImageJobSystem::instance().start();
+	int w;
+	int h;
+	SDL_GetWindowSize(m_Sdl.window, &w, &h);
+	m_Wd = &m_Vk.main_window_data;
+	m_Vk.setup_window(m_Wd, m_Surface, w, h);
+	SDL_SetWindowPosition(m_Sdl.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+	SDL_ShowWindow(m_Sdl.window);
 
-    sdl3_context sdl;
-    if (!sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
-	return false;
+	m_Imgui.init(m_Sdl.window, m_Vk, m_Wd, m_Sdl.main_scale);
+	ImPlot::CreateContext();
 
-    vulkan_context vk;
-    {
-	std::vector<const char*> extensions;
-	uint32_t		 count = 0;
-	const char* const*	 exts  = SDL_Vulkan_GetInstanceExtensions(&count);
-	extensions.reserve(count);
-	for (uint32_t i = 0; i < count; i++)
-	    extensions.push_back(exts[i]);
-	vk.setup(extensions);
-    }
-
-    VkSurfaceKHR surface;
-    if (SDL_Vulkan_CreateSurface(sdl.window, vk.instance, vk.allocator, &surface) == 0) {
-	std::printf("Failed to create Vulkan surface.\n");
-	return 1;
-    }
-
-    int w;
-    int h;
-    SDL_GetWindowSize(sdl.window, &w, &h);
-    ImGui_ImplVulkanH_Window* wd = &vk.main_window_data;
-    vk.setup_window(wd, surface, w, h);
-    SDL_SetWindowPosition(sdl.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-    SDL_ShowWindow(sdl.window);
-
-    imgui_context imgui;
-    imgui.init(sdl.window, vk, wd, sdl.main_scale);
-    ImPlot::CreateContext();
-
-    FpsPlot fps_plot;
-
-    ThreadReflectionPanel thread_panel;
 #ifdef _DEBUG
-    // Debug builds: auto-open the Threads panel and spawn a session-lifetime demo
-    // thread, so the reflection system is visible on every launch without having to
-    // run THREADTEST. The thread stops + joins when this unique_ptr leaves run().
-    bool                           show_thread_panel = true;
-    std::unique_ptr<ManagedThread> debug_demo_thread = spawn_demo_thread(std::chrono::seconds{0});
-#else
-    bool                           show_thread_panel = false;
+	// Debug builds: auto-open the Threads panel and spawn a session-lifetime demo
+	// thread, so the reflection system is visible on every launch without having to
+	// run THREADTEST. The thread stops + joins when this unique_ptr is destroyed.
+	m_ShowThreadPanel = true;
+	m_DebugDemoThread = spawn_demo_thread(std::chrono::seconds {0});
 #endif
 
-    StyleEditor style_editor;
-    style_editor.InitDefaults();
-    style_editor.SetFonts({
-	{"Cousine", imgui.font_cousine},
-	{"DroidSans", imgui.font_droid_sans},
-	{"Karla", imgui.font_karla},
-	{"ProggyClean", imgui.font_proggy_clean},
-	{"ProggyTiny", imgui.font_proggy_tiny},
-	{"Roboto", imgui.font_roboto},
-    });
+	m_StyleEditor.InitDefaults();
+	m_StyleEditor.SetFonts({
+		{"Cousine", m_Imgui.font_cousine},
+		{"DroidSans", m_Imgui.font_droid_sans},
+		{"Karla", m_Imgui.font_karla},
+		{"ProggyClean", m_Imgui.font_proggy_clean},
+		{"ProggyTiny", m_Imgui.font_proggy_tiny},
+		{"Roboto", m_Imgui.font_roboto},
+	});
 
-    // Shared cache folder at the project root — deliberately OUTSIDE build/debug,
-    // build/release and build/release-log so all three builds read & write the
-    // SAME window_state.toml (plus thumbnails and video cache). SDL_GetBasePath()
-    // is the executable dir (e.g. <root>/build/debug/); two parents up is <root>.
-    const auto exe_dir	    = std::filesystem::path(SDL_GetBasePath());
-    const auto project_root = exe_dir.parent_path().parent_path();
-    const auto cache_dir    = project_root / "cache";
-    std::filesystem::create_directories(cache_dir);
+	// Shared cache folder at the project root — deliberately OUTSIDE build/debug,
+	// build/release and build/release-log so all three builds read & write the
+	// SAME window_state.toml (plus thumbnails and video cache). SDL_GetBasePath()
+	// is the executable dir (e.g. <root>/build/debug/); two parents up is <root>.
+	auto const exe_dir      = std::filesystem::path(SDL_GetBasePath());
+	auto const project_root = exe_dir.parent_path().parent_path();
+	auto const cache_dir    = project_root / "cache";
+	std::filesystem::create_directories(cache_dir);
 
-    static const std::string state_path = (cache_dir / "window_state.toml").string();
-    WindowStateToml	     state;
-    LoadWindowStateToml(state_path, state);
-    style_editor.ApplyLayout(state);
+	m_StatePath = (cache_dir / "window_state.toml").string();
+	LoadWindowStateToml(m_StatePath, m_State);
+	m_StyleEditor.ApplyLayout(m_State);
 
-    bool show_demo_window    = state.show_demo_window;
-    bool show_another_window = state.show_another_window;
-    bool vsync		     = state.vsync;
-    vk.set_vsync(wd, vsync);
+	m_ShowDemoWindow    = m_State.show_demo_window;
+	m_ShowAnotherWindow = m_State.show_another_window;
+	m_Vsync             = m_State.vsync;
+	m_Vk.set_vsync(m_Wd, m_Vsync);
 
-    AppCoordinator menu_bar;
-    menu_bar.Setup(&style_editor, sdl.window, &vk, &show_demo_window, &show_another_window, [&](bool enabled) {
-	vsync = enabled;
-	vk.set_vsync(wd, vsync);
-    });
-    menu_bar.LoadOpenedFilesHistoryFromToml(state_path);
-    menu_bar.SetStatePath(state_path);
-    menu_bar.ApplyHistory(state);
-    menu_bar.ApplyRuntimeConfig(state);
+	m_MenuBar.Setup(&m_StyleEditor, m_Sdl.window, &m_Vk, &m_ShowDemoWindow, &m_ShowAnotherWindow, [this](bool enabled) {
+		m_Vsync = enabled;
+		m_Vk.set_vsync(m_Wd, m_Vsync);
+	});
+	m_MenuBar.LoadOpenedFilesHistoryFromToml(m_StatePath);
+	m_MenuBar.SetStatePath(m_StatePath);
+	m_MenuBar.ApplyHistory(m_State);
+	m_MenuBar.ApplyRuntimeConfig(m_State);
+	m_MenuBar.SetThumbDir(cache_dir / "thumbs");
+	m_MenuBar.SetDownloadCacheDir(cache_dir / "video_cache");
 
-    menu_bar.SetThumbDir(cache_dir / "thumbs");
-    menu_bar.SetDownloadCacheDir(cache_dir / "video_cache");
-    ImVec4 clear_color = state.clear_color
-	? ImVec4(static_cast<float>(state.clear_color->r) / 255.0f, static_cast<float>(state.clear_color->g) / 255.0f,
-	      static_cast<float>(state.clear_color->b) / 255.0f, static_cast<float>(state.clear_color->a) / 255.0f)
-	: ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+	m_ClearColor = m_State.clear_color
+		? ImVec4(static_cast<float>(m_State.clear_color->r) / 255.0f, static_cast<float>(m_State.clear_color->g) / 255.0f,
+			  static_cast<float>(m_State.clear_color->b) / 255.0f, static_cast<float>(m_State.clear_color->a) / 255.0f)
+		: ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-    bool  done	      = false;
-    bool  is_dragging = false;
-    float drag_start_x;
-    float drag_start_y;
+	return true;
+}
 
-    while (!done) {
-	SDL_Event event;
-	while (SDL_PollEvent(&event)) {
-	    menu_bar.HandleSdlEvent(event);
-	    ImGui_ImplSDL3_ProcessEvent(&event);
-	    ImGuiIO& io = ImGui::GetIO();
-	    (void)io;
 
-	    if (event.type == SDL_EVENT_QUIT)
-		done = true;
-	    if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(sdl.window))
-		done = true;
+void App::tick() {
+	while (!m_Done) {
+		SDL_Event event;
+		while (SDL_PollEvent(&event)) {
+			m_MenuBar.HandleSdlEvent(event);
+			ImGui_ImplSDL3_ProcessEvent(&event);
+			ImGuiIO& io = ImGui::GetIO();
+			(void)io;
 
-	    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (event.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_SHIFT)) {
-		    is_dragging = true;
-		    SDL_GetGlobalMouseState(&drag_start_x, &drag_start_y);
+			if (event.type == SDL_EVENT_QUIT)
+				m_Done = true;
+			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_Sdl.window))
+				m_Done = true;
 
-		    // Force ImGui to release active widgets so window dragging can take over.
-		    ImGui::ClearActiveID();
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+				if (event.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_SHIFT)) {
+					m_IsDragging = true;
+					SDL_GetGlobalMouseState(&m_DragStartX, &m_DragStartY);
+
+					// Force ImGui to release active widgets so window dragging can take over.
+					ImGui::ClearActiveID();
+				}
+			}
+
+			if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+				if (event.button.button == SDL_BUTTON_LEFT)
+					m_IsDragging = false;
+			}
+
+			if (event.type == SDL_EVENT_MOUSE_MOTION && m_IsDragging) {
+				float current_x;
+				float current_y;
+				SDL_GetGlobalMouseState(&current_x, &current_y);
+
+				float delta_x = current_x - m_DragStartX;
+				float delta_y = current_y - m_DragStartY;
+
+				int win_x;
+				int win_y;
+				SDL_GetWindowPosition(m_Sdl.window, &win_x, &win_y);
+
+				SDL_SetWindowPosition(m_Sdl.window, win_x + static_cast<int>(delta_x), win_y + static_cast<int>(delta_y));
+
+				m_DragStartX = current_x;
+				m_DragStartY = current_y;
+			}
+
+			if (event.type == SDL_EVENT_KEY_DOWN) {
+				if (event.key.key == SDLK_F11) {
+					toggle_window_fullscreen(m_Sdl.window);
+				}
+			}
 		}
-	    }
 
-	    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
-		if (event.button.button == SDL_BUTTON_LEFT)
-		    is_dragging = false;
-	    }
+		m_Done |= m_MenuBar.request_quit;
 
-	    if (event.type == SDL_EVENT_MOUSE_MOTION && is_dragging) {
-		float current_x;
-		float current_y;
-		SDL_GetGlobalMouseState(&current_x, &current_y);
-
-		float delta_x = current_x - drag_start_x;
-		float delta_y = current_y - drag_start_y;
-
-		int win_x;
-		int win_y;
-		SDL_GetWindowPosition(sdl.window, &win_x, &win_y);
-
-		SDL_SetWindowPosition(sdl.window, win_x + static_cast<int>(delta_x), win_y + static_cast<int>(delta_y));
-
-		drag_start_x = current_x;
-		drag_start_y = current_y;
-	    }
-
-	    if (event.type == SDL_EVENT_KEY_DOWN) {
-		if (event.key.key == SDLK_F11) {
-		    toggle_window_fullscreen(sdl.window);
+		if (SDL_GetWindowFlags(m_Sdl.window) & SDL_WINDOW_MINIMIZED) {
+			SDL_Delay(10);
+			continue;
 		}
-	    }
+
+		int fb_width;
+		int fb_height;
+		SDL_GetWindowSize(m_Sdl.window, &fb_width, &fb_height);
+		if (fb_width > 0 && fb_height > 0
+			&& (m_Vk.swap_chain_rebuild || m_Wd->Width != fb_width || m_Wd->Height != fb_height))
+			m_Vk.resize_window(m_Wd, fb_width, fb_height);
+
+		m_Imgui.new_frame();
+
+		auto const   uptime_now           = std::chrono::steady_clock::now();
+		double const uptime_seconds       = std::chrono::duration<double>(uptime_now - m_AppStartTime).count();
+		auto const   uptime_total_seconds = static_cast<int>(uptime_seconds);
+		int const    uptime_hours         = uptime_total_seconds / 3600;
+		int const    uptime_minutes       = (uptime_total_seconds % 3600) / 60;
+		int const    uptime_secs          = uptime_total_seconds % 60;
+
+		m_FpsPlot.add_sample(ImGui::GetIO().Framerate);
+
+		m_MenuBar.Build();
+		m_FpsPlot.draw(uptime_seconds);
+		m_ThreadPanel.draw(&m_ShowThreadPanel);
+
+		{
+			ImGuiViewport const* vp = ImGui::GetMainViewport();
+			ImGui::SetNextWindowPos(vp->WorkPos);
+			ImGui::SetNextWindowSize(vp->WorkSize);
+			ImGui::SetNextWindowViewport(vp->ID);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+			constexpr ImGuiWindowFlags dock_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse
+				| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus
+				| ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
+			ImGui::Begin("UI", nullptr, dock_flags);
+			ImGui::PopStyleVar(3);
+			ImGui::DockSpace(ImGui::GetID("UI"), ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+			ImGui::End();
+		}
+
+		m_StyleEditor.Draw();
+
+		if (m_ShowDemoWindow)
+			ImGui::ShowDemoWindow(&m_ShowDemoWindow);
+
+		{
+			static float f       = 0.0f;
+			static int   counter = 0;
+
+			if (m_State.hello_world_window.valid) {
+				ImGui::SetNextWindowPos({m_State.hello_world_window.x, m_State.hello_world_window.y}, ImGuiCond_Once);
+				ImGui::SetNextWindowSize({m_State.hello_world_window.w, m_State.hello_world_window.h}, ImGuiCond_Once);
+			}
+			ImGui::Begin("Hello, world!");
+			{
+				ImVec2 pos                 = ImGui::GetWindowPos();
+				ImVec2 size                = ImGui::GetWindowSize();
+				m_State.hello_world_window = {true, pos.x, pos.y, size.x, size.y};
+			}
+			ImGui::Text("This is some useful text.");
+			ImGui::Checkbox("Demo Window", &m_ShowDemoWindow);
+			ImGui::Checkbox("Another Window", &m_ShowAnotherWindow);
+			ImGui::Checkbox("Style Editor", &m_StyleEditor.IsOpen);
+			ImGui::Checkbox("String Test", &m_StrTest);
+
+			if (ImGui::Checkbox("VSync", &m_Vsync))
+				m_Vk.set_vsync(m_Wd, m_Vsync);
+			ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
+			ImGui::ColorEdit3("clear color", &m_ClearColor.x);
+			if (ImGui::Button("Button"))
+				counter++;
+			ImGui::SameLine();
+			ImGui::Text("counter = %d", counter);
+			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
+				ImGui::GetIO().Framerate);
+			ImGui::Text("Uptime: %02d:%02d:%02d", uptime_hours, uptime_minutes, uptime_secs);
+			ImGui::End();
+		}
+
+		if (m_ShowAnotherWindow) {
+			if (m_State.another_window.valid) {
+				ImGui::SetNextWindowPos({m_State.another_window.x, m_State.another_window.y}, ImGuiCond_Once);
+				ImGui::SetNextWindowSize({m_State.another_window.w, m_State.another_window.h}, ImGuiCond_Once);
+			}
+			ImGui::Begin("Another Window", &m_ShowAnotherWindow);
+			{
+				ImVec2 pos             = ImGui::GetWindowPos();
+				ImVec2 size            = ImGui::GetWindowSize();
+				m_State.another_window = {true, pos.x, pos.y, size.x, size.y};
+			}
+			ImGui::Text("Hello from another window!");
+			if (ImGui::Button("Close Me"))
+				m_ShowAnotherWindow = false;
+			ImGui::End();
+		}
+
+		ImGui::Begin("Input Text", &m_StrTest);
+		{
+			static std::string dynamicString = "Hello World";
+			ImGui::InputText("Dynamic String Input", &dynamicString);
+			ImGui::Text("You entered: %s", dynamicString.c_str());
+		}
+		ImGui::End();
+		m_Imgui.render(m_Wd, m_Vk, m_ClearColor);
+	}
+}
+
+
+int App::destroy() {
+	bool const reopen_requested = m_MenuBar.request_reopen;
+
+	// Stop image workers before the rest of teardown so no job is mid-flight.
+	img::ImageJobSystem::instance().shutdown();
+
+	vkDeviceWaitIdle(m_Vk.device);
+	m_MenuBar.Shutdown();
+	m_State.show_demo_window    = m_ShowDemoWindow;
+	m_State.show_another_window = m_ShowAnotherWindow;
+	m_State.vsync               = m_Vsync;
+	m_State.clear_color = WindowStateToml::ColorToml {static_cast<int>(std::lround(m_ClearColor.x * 255.0f + 0.5f)),
+		static_cast<int>(std::lround(m_ClearColor.y * 255.0f + 0.5f)),
+		static_cast<int>(std::lround(m_ClearColor.z * 255.0f + 0.5f)),
+		static_cast<int>(std::lround(m_ClearColor.w * 255.0f + 0.5f))};
+	m_StyleEditor.ExportLayout(&m_State);
+	m_MenuBar.ExportHistory(&m_State);
+	m_MenuBar.ExportRuntimeConfig(&m_State);
+	SaveWindowStateToml(m_StatePath, m_State);
+	ImPlot::DestroyContext();
+	m_Imgui.shutdown();
+	m_Vk.cleanup_window(m_Wd);
+	m_Vk.cleanup();
+	m_Sdl.shutdown();
+
+	return reopen_requested ? App::k_reopen_exit_code : 0;
+}
+
+
+int App::run() {
+	if (!KickStart()) {
+		// TODO(you): startup-failure policy — your design decision (see chat).
+		// KickStart() can fail AFTER it has already started the image engine and
+		// brought up SDL/Vulkan (e.g. surface creation fails). Decide how much to
+		// unwind here before returning a non-zero code.
+		return 1;
 	}
 
-	done |= menu_bar.request_quit;
+	tick();
 
-	if (SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_MINIMIZED) {
-	    SDL_Delay(10);
-	    continue;
-	}
-
-	int fb_width;
-	int fb_height;
-	SDL_GetWindowSize(sdl.window, &fb_width, &fb_height);
-	if (fb_width > 0 && fb_height > 0 && (vk.swap_chain_rebuild || wd->Width != fb_width || wd->Height != fb_height))
-	    vk.resize_window(wd, fb_width, fb_height);
-
-	imgui.new_frame();
-
-	const auto   uptime_now		  = std::chrono::steady_clock::now();
-	const double uptime_seconds	  = std::chrono::duration<double>(uptime_now - app_start_time).count();
-	const auto   uptime_total_seconds = static_cast<int>(uptime_seconds);
-	const int    uptime_hours	  = uptime_total_seconds / 3600;
-	const int    uptime_minutes	  = (uptime_total_seconds % 3600) / 60;
-	const int    uptime_secs	  = uptime_total_seconds % 60;
-
-	fps_plot.add_sample(ImGui::GetIO().Framerate);
-
-        menu_bar.Build();
-        fps_plot.draw(uptime_seconds);
-        thread_panel.draw(&show_thread_panel);
-
-	{
-	    const ImGuiViewport* vp = ImGui::GetMainViewport();
-	    ImGui::SetNextWindowPos(vp->WorkPos);
-	    ImGui::SetNextWindowSize(vp->WorkSize);
-	    ImGui::SetNextWindowViewport(vp->ID);
-	    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-	    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-	    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-	    constexpr ImGuiWindowFlags dock_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse
-		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus
-		| ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
-	    ImGui::Begin("UI", nullptr, dock_flags);
-	    ImGui::PopStyleVar(3);
-	    ImGui::DockSpace(ImGui::GetID("UI"), ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
-	    ImGui::End();
-	}
-
-	style_editor.Draw();
-
-	if (show_demo_window)
-	    ImGui::ShowDemoWindow(&show_demo_window);
-
-	{
-	    static float f	 = 0.0f;
-	    static int	 counter = 0;
-
-            if (state.hello_world_window.valid)
-            {
-                ImGui::SetNextWindowPos({state.hello_world_window.x, state.hello_world_window.y}, ImGuiCond_Once);
-                ImGui::SetNextWindowSize({state.hello_world_window.w, state.hello_world_window.h}, ImGuiCond_Once);
-            }
-            ImGui::Begin("Hello, world!");
-            {
-                ImVec2 pos = ImGui::GetWindowPos();
-                ImVec2 size = ImGui::GetWindowSize();
-                state.hello_world_window = {true, pos.x, pos.y, size.x, size.y};
-            }
-            ImGui::Text("This is some useful text.");
-            ImGui::Checkbox("Demo Window", &show_demo_window);
-            ImGui::Checkbox("Another Window", &show_another_window);
-            ImGui::Checkbox("Style Editor", &style_editor.IsOpen);
-            ImGui::Checkbox("Threads", &show_thread_panel);
-
-	    if (ImGui::Checkbox("VSync", &vsync))
-		vk.set_vsync(wd, vsync);
-	    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
-	    ImGui::ColorEdit3("clear color", &clear_color.x);
-	    if (ImGui::Button("Button"))
-		counter++;
-	    ImGui::SameLine();
-	    ImGui::Text("counter = %d", counter);
-	    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
-		ImGui::GetIO().Framerate);
-	    ImGui::Text("Uptime: %02d:%02d:%02d", uptime_hours, uptime_minutes, uptime_secs);
-	    ImGui::End();
-	}
-
-	if (show_another_window) {
-	    if (state.another_window.valid) {
-		ImGui::SetNextWindowPos({state.another_window.x, state.another_window.y}, ImGuiCond_Once);
-		ImGui::SetNextWindowSize({state.another_window.w, state.another_window.h}, ImGuiCond_Once);
-	    }
-	    ImGui::Begin("Another Window", &show_another_window);
-	    {
-		ImVec2 pos	     = ImGui::GetWindowPos();
-		ImVec2 size	     = ImGui::GetWindowSize();
-		state.another_window = {true, pos.x, pos.y, size.x, size.y};
-	    }
-	    ImGui::Text("Hello from another window!");
-	    if (ImGui::Button("Close Me"))
-		show_another_window = false;
-	    ImGui::End();
-	}
-
-	imgui.render(wd, vk, clear_color);
-    }
-
-    const bool reopen_requested = menu_bar.request_reopen;
-
-    // Stop image workers before the rest of teardown so no job is mid-flight.
-    img::ImageJobSystem::instance().shutdown();
-
-    vkDeviceWaitIdle(vk.device);
-    menu_bar.Shutdown();
-    state.show_demo_window    = show_demo_window;
-    state.show_another_window = show_another_window;
-    state.vsync		      = vsync;
-    state.clear_color = WindowStateToml::ColorToml {static_cast<int>(std::lround(clear_color.x * 255.0f + 0.5f)),
-	static_cast<int>(std::lround(clear_color.y * 255.0f + 0.5f)),
-	static_cast<int>(std::lround(clear_color.z * 255.0f + 0.5f)),
-	static_cast<int>(std::lround(clear_color.w * 255.0f + 0.5f))};
-    style_editor.ExportLayout(&state);
-    menu_bar.ExportHistory(&state);
-    menu_bar.ExportRuntimeConfig(&state);
-    SaveWindowStateToml(state_path, state);
-    ImPlot::DestroyContext();
-    imgui.shutdown();
-    vk.cleanup_window(wd);
-    vk.cleanup();
-    sdl.shutdown();
-
-    return reopen_requested ? App::k_reopen_exit_code : 0;
+	return destroy();
 }

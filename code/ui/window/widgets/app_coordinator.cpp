@@ -113,7 +113,6 @@ AppCoordinator::AppCoordinator()
   m_opened_files_window = m_ctx->OpenedFiles();
   m_video_context_menu = m_ctx->VideoMenu();
   m_fb_context_menu = m_ctx->FileBrowserMenu();
-  m_thumb_cache = m_ctx->ThumbCache();
   m_metadata_editor = m_ctx->Metadata();
   m_history_mgr = m_ctx->History();
   m_load_handler = m_ctx->LoadHandler();
@@ -405,8 +404,7 @@ void AppCoordinator::Shutdown() {
   m_video_downloader->shutdown();
   m_history_preview->shutdown();
   m_viewer->shutdown(*m_vk);
-  if (m_thumb_cache)
-    m_thumb_cache->shutdown();
+  GetMainFileExplorer().ShutdownThumbnails(); // stop engine + free textures before ImGui/Vulkan teardown
   m_ctx->DestroyEmojiAtlas(); // frees GPU resources before ImGui Vulkan shutdown
   m_emoji_atlas = nullptr;
 
@@ -508,40 +506,22 @@ void AppCoordinator::ExportRuntimeConfig(WindowStateToml *state) const {
 void AppCoordinator::SetThumbDir(const std::filesystem::path &dir) {
   m_app_state->set_thumb_dir(dir);
 
-  // Set up the thumbnail cache now that both the Vulkan context (from Setup)
-  // and the thumb directory are known.
-  if (m_vk && m_thumb_cache) {
-    m_thumb_cache->setup(m_vk, dir);
-    static const auto is_thumb_path = [](const std::filesystem::path &p) {
-      if (VideoPlayer::is_video_path(p))
-        return true;
-      std::string ext = p.extension().string();
-      std::transform(ext.begin(), ext.end(), ext.begin(),
-                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-      return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp";
-    };
-    GetMainFileExplorer().SetThumbnailProvider(
-        [this](const std::filesystem::path &path) -> ImTextureID {
-          if (!is_thumb_path(path))
-            return ImTextureID(0);
-          return m_thumb_cache->get(path);
-        });
+  // Enable the file browser's own async thumbnail engine now that both the Vulkan
+  // context (from Setup) and the thumb directory are known. The browser owns the
+  // engine (FileThumbnailCache is retired); these are thin forwards into it.
+  if (m_vk) {
+    GetMainFileExplorer().Setup(m_vk, dir);
 
-    m_config_runtime->SetClearFileExplorerCacheCallback([this]() {
-      if (m_thumb_cache)
-        m_thumb_cache->clear();
-    });
+    m_config_runtime->SetClearFileExplorerCacheCallback(
+        []() { GetMainFileExplorer().ClearThumbnailCache(); });
 
     GetMainFileExplorer().SetRebuildThumbnailCallback(
-        [this](const std::filesystem::path &path) {
-          if (m_thumb_cache)
-            m_thumb_cache->evict(path);
-        });
+        [](const std::filesystem::path &path) { GetMainFileExplorer().RebuildThumbnail(path); });
 
     m_fb_context_menu->SetExtraItemsCallback(
         [this](const std::filesystem::path &path) {
-          if (m_thumb_cache && ImGui::MenuItem("Rebuild Thumbnail"))
-            m_thumb_cache->evict(path);
+          if (ImGui::MenuItem("Rebuild Thumbnail"))
+            GetMainFileExplorer().RebuildThumbnail(path);
           if (ImGui::MenuItem("Edit Tags\xe2\x80\xa6")) {
             auto selected = GetMainFileExplorer().GetMultiSelected();
             // Remove directories from the selection; only tag files.

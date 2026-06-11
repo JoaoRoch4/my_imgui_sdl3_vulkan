@@ -15,12 +15,18 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-linux")
 # ── Project ───────────────────────────────────────────────────────────────────
 project(example_sdl3_vulkan CXX)
 
-# Per-library build glue lives under thirdparty/<lib>/; shared helper below.
+# Per-library build glue lives under thirdparty/<lib>/; shared helpers below.
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(ProfilableTreatment)
+include(PerConfigExternal)   # per-config ExternalProject helpers (FFmpeg/mpv/libplacebo)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Emit compile_commands.json (clangd / tooling) for every configure, not just the
+# `all` preset. Harmless redundancy when the preset already sets it; the safety net
+# is for bare `cmake -S . -B <dir>` invocations that don't go through the preset.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Append _d to library names for Debug builds so debug and release artifacts can
 # coexist (CMAKE_<CONFIG>_POSTFIX applies to libraries only, e.g. libimgui_d.a).
@@ -40,8 +46,30 @@ find_package(PkgConfig REQUIRED)
 # Still resolved from the system (no vendored source): FreeType, PlutoSVG, EGL, GL.
 pkg_check_modules(FREETYPE REQUIRED freetype2)
 pkg_check_modules(PLUTOSVG REQUIRED plutosvg)
+# ── LOCAL OVERRIDE: FreeType-enabled plutosvg ─────────────────────────────────
+# The system plutosvg (/usr/local) was built with PLUTOSVG_ENABLE_FREETYPE=OFF, so
+# plutosvg_ft_svg_hooks() returns NULL and FreeType cannot rasterise the SVG/COLR
+# glyphs in NotoColorEmoji (FT_Err_Missing_SVG_Hooks, 158) — color emoji then render
+# as missing-glyph boxes. Link a locally-rebuilt FreeType-enabled static archive
+# instead (built from /home/joao/dev/plutosvg with -DPLUTOSVG_ENABLE_FREETYPE=ON).
+# Override the path with -DPLUTOSVG_FT_LIBRARY=<path>; falls back to system if absent.
+# NOTE: absolute path outside the repo — not portable; vendor into thirdparty/ later.
+set(PLUTOSVG_FT_LIBRARY "/home/joao/dev/plutosvg/build-ft/libplutosvg.a"
+    CACHE FILEPATH "FreeType-enabled libplutosvg.a (PLUTOSVG_ENABLE_FREETYPE=ON)")
+if(EXISTS "${PLUTOSVG_FT_LIBRARY}")
+    # Swap the bare 'plutosvg' entry for the absolute FT-enabled archive; 'plutovg'
+    # stays after it (plutosvg.a references plutovg/FT symbols → must precede them).
+    list(TRANSFORM PLUTOSVG_LIBRARIES REPLACE "^plutosvg$" "${PLUTOSVG_FT_LIBRARY}")
+    message(STATUS "plutosvg: FreeType-enabled override -> ${PLUTOSVG_FT_LIBRARY}")
+else()
+    message(WARNING "PLUTOSVG_FT_LIBRARY missing (${PLUTOSVG_FT_LIBRARY}); color emoji disabled")
+endif()
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GL REQUIRED gl)
+# fontconfig: portable, per-distro font discovery for the ImGui fallback chain
+# (symbols / math / emoji / CJK / Hebrew / Arabic / hieroglyphs). Transitive via
+# FreeType, but the app calls FcFontMatch directly, so resolve it explicitly.
+pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
 # vcpkg / system CMake packages with no vendored source.
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(WebP CONFIG REQUIRED)
@@ -141,6 +169,8 @@ add_executable(example_sdl3_vulkan
     code/ui/FileExplorer/file_thumbnail_cache.cpp
     code/ui/FileExplorer/file_browser_file_operations_core.cpp
     code/ui/FileExplorer/file_browser_file_operations.cpp
+    code/ui/FileExplorer/file_browser_thumbnail_context.cpp
+    code/ui/FileExplorer/file_browser_thumbnail_context_thread.cpp
 
     code/ui/media/metadata_editor/metadata_editor.cpp
 
@@ -164,6 +194,8 @@ add_executable(example_sdl3_vulkan
     code/Args/Args.hpp
     code/Args/Args.cpp
     code/main/main.hpp
+    code/core/Memory_management.hpp
+    code/core/Memory_management.cpp
 )
 
 # ── Multi-config output layout + "build everything" target ────────────────────
@@ -256,6 +288,7 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
     # placebo::placebo) — see target_link_libraries below.
     ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
+    ${FONTCONFIG_INCLUDE_DIRS}
     ${WEBP_INCLUDE_DIR}
     ${EGL_INCLUDE_DIRS}
     ${GL_INCLUDE_DIRS}
@@ -326,6 +359,7 @@ $<$<CONFIG:RelWithDebInfo>:__APP_FORCE_LOGS>
 target_link_directories(example_sdl3_vulkan PRIVATE
     ${FREETYPE_LIBRARY_DIRS}
     ${PLUTOSVG_LIBRARY_DIRS}
+    ${FONTCONFIG_LIBRARY_DIRS}
     ${EGL_LIBRARY_DIRS}
     ${GL_LIBRARY_DIRS}
 )
@@ -340,6 +374,7 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     Vulkan::Headers    # Vulkan API headers (interface)
     ${FREETYPE_LIBRARIES}
     ${PLUTOSVG_LIBRARIES}
+    ${FONTCONFIG_LIBRARIES}   # FcFontMatch / FcPatternCreate — see load_fonts() discovery
     reflectcpp::reflectcpp
     WebP::webp
     CURL::libcurl
@@ -352,19 +387,21 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     stdc++exp          # std::stacktrace backend (libstdc++ >= 13); used by ManagedThread::escalate
 )
 
-# The foreign (autotools/meson) deps are built by ExternalProjects; make the
-# executable wait for their installed artifacts before it links. (mpv_ep itself
-# DEPENDS on ffmpeg_ep + libplacebo_ep.)
-add_dependencies(example_sdl3_vulkan ffmpeg_ep libplacebo_ep mpv_ep)
-
-# FFmpeg is linked only transitively (through mpv), so CMake doesn't add its install
-# lib dir to the exe rpath. And DT_RUNPATH is NOT transitive — the loader uses
-# libmpv's own (empty) RUNPATH to resolve libavcodec, not the exe's — so the app
-# builds but can't launch ("libavcodec.so.62 => not found"). Add FFmpeg's lib dir to
-# the build rpath and emit the old, transitive DT_RPATH so mpv's private FFmpeg libs
-# resolve at runtime from the from-source install.
-set_property(TARGET example_sdl3_vulkan APPEND PROPERTY BUILD_RPATH "${FFMPEG_INSTALL_DIR}/lib")
-target_link_options(example_sdl3_vulkan PRIVATE -Wl,--disable-new-dtags)
+# ── Static media stack: per-config transitive link resolution ─────────────────
+# FFmpeg / libplacebo / mpv are built as STATIC archives (.a) per config (see
+# thirdparty/{ffmpeg,libplacebo,mpv}). A static archive carries only its own
+# objects, so the app must also link mpv's whole transitive closure: the sibling
+# archives + libass/zlib + system libs. That list is resolved by a per-config
+# `pkg-config --static --libs mpv` STEP of each mpv EP (thirdparty/mpv), which writes
+# thirdparty/mpv/<C>/media-link.rsp. The app reads it via `-Wl,@<file>` — which lands
+# in the LINK_LIBRARIES slot (AFTER the objects, as static archives require) — and
+# LINK_DEPENDS on the same $<CONFIG> file makes the link wait for it, pulling only
+# that config's mpv EP (and the ffmpeg/libplacebo EPs it DEPENDS on). The rsp is an EP
+# step, not a root add_custom_command: a root custom command is cross-config in Ninja
+# Multi-Config and would force every config to build. No rpath: nothing is a runtime .so.
+set(_media_rsp "${CMAKE_BINARY_DIR}/thirdparty/mpv/$<CONFIG>/media-link.rsp")
+target_link_libraries(example_sdl3_vulkan PRIVATE "-Wl,@${_media_rsp}")
+set_property(TARGET example_sdl3_vulkan APPEND PROPERTY LINK_DEPENDS "${_media_rsp}")
 
 # ── Tests (doctest) ─────────────────────────────────────────────────────────────
 # Standalone test runner for the parallel image module (code/core/image). Built as

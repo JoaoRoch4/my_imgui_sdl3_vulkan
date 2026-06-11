@@ -14,6 +14,8 @@ add_library(imgui STATIC
     ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
     ${IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
+    # std::string wrappers for InputText() — declared in misc/cpp/imgui_stdlib.h.
+    ${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
 )
 
 # Public headers consumers (the executable + ImPlot) include. SYSTEM keeps their
@@ -22,6 +24,7 @@ target_include_directories(imgui SYSTEM PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${IMGUI_DIR}/misc/freetype
+    ${IMGUI_DIR}/misc/cpp
 )
 # Private: FreeType + PlutoSVG rasteriser headers (still system pkg-config).
 target_include_directories(imgui SYSTEM PRIVATE

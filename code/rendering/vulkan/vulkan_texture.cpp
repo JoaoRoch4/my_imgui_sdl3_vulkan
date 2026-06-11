@@ -180,7 +180,11 @@ bool VulkanTexture::upload_pixels(const unsigned char *pixels, int w, int h, vul
         vkBindImageMemory(vk.device, m_image, m_image_memory, 0);
     }
 
-    // 3. Create View & Sampler
+    // 3. Create View only. ImGui 1.92's ImGui_ImplVulkan_AddTexture(view, layout) binds
+    // its own GLOBAL sampler (a separate VK_DESCRIPTOR_TYPE_SAMPLER descriptor) — a
+    // per-texture sampler is unused and, at thumbnail scale, exhausts the device's
+    // maxSamplerAllocationCount (4000) and aborts. So we no longer create one;
+    // m_sampler stays VK_NULL_HANDLE.
     {
         VkImageViewCreateInfo v_info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         v_info.image = m_image;
@@ -188,14 +192,6 @@ bool VulkanTexture::upload_pixels(const unsigned char *pixels, int w, int h, vul
         v_info.format = VK_FORMAT_R8G8B8A8_UNORM;
         v_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         vkCreateImageView(vk.device, &v_info, vk.allocator, &m_image_view);
-
-        VkSamplerCreateInfo s_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        s_info.magFilter = VK_FILTER_LINEAR;
-        s_info.minFilter = VK_FILTER_LINEAR;
-        s_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        s_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-        s_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-        vkCreateSampler(vk.device, &s_info, vk.allocator, &m_sampler);
     }
 
     // 4. ImGui Registration

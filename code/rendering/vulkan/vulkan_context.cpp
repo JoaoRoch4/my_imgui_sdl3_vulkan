@@ -304,13 +304,20 @@ void vulkan_context::setup(std::vector<const char *> instance_extensions) {
             APP_DEBUG_LOG("[vulkan_context] VRAM reserve skipped (2GB unavailable)");
         }
 
-        std::array<VkDescriptorPoolSize, 1> pool_sizes = {
+        // ImGui 1.92's Vulkan backend allocates a separate SAMPLER descriptor (its
+        // global sampler) plus a SAMPLED_IMAGE descriptor per texture via
+        // ImGui_ImplVulkan_AddTexture(view, layout). The pool MUST therefore carry
+        // those types — a COMBINED_IMAGE_SAMPLER-only pool yields OUT_OF_POOL_MEMORY on
+        // strict drivers. COMBINED_IMAGE_SAMPLER is kept for any legacy use.
+        std::array<VkDescriptorPoolSize, 3> pool_sizes = {
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8192},
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 1024},
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1024}};
         VkDescriptorPoolCreateInfo pool_info = {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        // Crucial: Allows freeing sets when windows close to recycle memory
+        // Crucial: Allows freeing sets (RemoveTexture) so evicted thumbnails recycle.
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-        pool_info.maxSets = 4096;
+        pool_info.maxSets = 8192;
         pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
         pool_info.pPoolSizes = pool_sizes.data();
 

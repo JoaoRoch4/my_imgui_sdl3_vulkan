@@ -19,4 +19,11 @@ public:
     ImFont *font_proggy_clean;
     ImFont *font_proggy_tiny;
     ImFont *font_roboto;
+
+private:
+    // Raw bytes of every merged fallback face (symbols / math / emoji / CJK / Hebrew /
+    // Arabic / hieroglyphs). Each file is read exactly once and shared across all base
+    // fonts via AddFontFromMemoryTTF(FontDataOwnedByAtlas=false), so a large face like
+    // Noto Sans CJK isn't duplicated per base font. Must outlive the ImGui font atlas.
+    std::vector<std::vector<std::byte>> fallback_font_blobs_;
 };

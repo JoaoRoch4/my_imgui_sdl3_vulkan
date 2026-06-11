@@ -4,7 +4,62 @@
 
 #include "debug_log.hpp"
 
+#include <fontconfig/fontconfig.h>
+
 namespace {
+
+// Case-insensitive substring test (ASCII). Used to confirm fontconfig actually
+// matched the family we asked for -- FcFontMatch always returns a *nearest* match,
+// so without this guard a request for an uninstalled family silently yields some
+// unrelated default font.
+[[nodiscard]] bool contains_ci(std::string_view haystack, std::string_view needle) noexcept {
+    const auto eq = [](char a, char b) noexcept {
+        return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+    };
+    return !std::ranges::search(haystack, needle, eq).empty();
+}
+
+// Resolve the absolute on-disk path of the best fontconfig match for `family`,
+// but only when the matched font's own family name contains `family` -- otherwise
+// return "" so the caller can fall through to the next candidate. This makes font
+// discovery portable across distros (Debian/Fedora/Arch lay fonts out differently)
+// instead of hard-coding /usr/share/fonts/... paths that break per-system.
+[[nodiscard]] std::string resolve_font_by_family(std::string_view family) {
+    if (FcInit() == FcFalse) {
+        return {};
+    }
+
+    const std::string family_z{family};
+    const std::unique_ptr<FcPattern, decltype(&FcPatternDestroy)> pattern{
+        FcPatternCreate(), &FcPatternDestroy};
+    if (!pattern) {
+        return {};
+    }
+    FcPatternAddString(pattern.get(), FC_FAMILY,
+                       reinterpret_cast<const FcChar8 *>(family_z.c_str()));
+    FcConfigSubstitute(nullptr, pattern.get(), FcMatchPattern);
+    FcDefaultSubstitute(pattern.get());
+
+    FcResult result{};
+    const std::unique_ptr<FcPattern, decltype(&FcPatternDestroy)> matched{
+        FcFontMatch(nullptr, pattern.get(), &result), &FcPatternDestroy};
+    if (!matched || result != FcResultMatch) {
+        return {};
+    }
+
+    FcChar8 *matched_family = nullptr;
+    if (FcPatternGetString(matched.get(), FC_FAMILY, 0, &matched_family) != FcResultMatch
+        || matched_family == nullptr
+        || !contains_ci(reinterpret_cast<const char *>(matched_family), family)) {
+        return {};
+    }
+
+    FcChar8 *file = nullptr;
+    if (FcPatternGetString(matched.get(), FC_FILE, 0, &file) != FcResultMatch || file == nullptr) {
+        return {};
+    }
+    return std::string{reinterpret_cast<const char *>(file)};
+}
 
 // True when this process is being traced (TracerPid != 0 in /proc/self/status) -- i.e. running
 // under a debugger. Re-read on every call (calls are rare) so attaching later is still picked up.
@@ -98,74 +153,115 @@ void imgui_context::init(SDL_Window* window, vulkan_context& vk, ImGui_ImplVulka
 void imgui_context::load_fonts(float main_scale)
 {
     const float base_size = 16.0f * main_scale;
-    ImFontConfig cfg;
-    cfg.SizePixels = base_size;
+    ImFontAtlas *atlas = ImGui::GetIO().Fonts;
 
-    static const ImWchar k_symbol_ranges[] = {
-        0x2000, 0x206F, // General Punctuation
-        0x20A0, 0x20CF, // Currency Symbols
-        0x2100, 0x214F, // Letterlike Symbols
-        0x2190, 0x21FF, // Arrows
-        0x2200, 0x22FF, // Mathematical Operators
-        0x2300, 0x23FF, // Misc Technical
-        0x2460, 0x24FF, // Enclosed Alphanumerics
-        0x2500, 0x257F, // Box Drawing
-        0x2580, 0x259F, // Block Elements
-        0x25A0, 0x25FF, // Geometric Shapes
-        0x2600, 0x26FF, // Misc Symbols
-        0x2700, 0x27BF, // Dingbats
-        0x27F0, 0x27FF, // Supplemental Arrows-A
-        0,
+    // ── Resolve the multilingual fallback chain ONCE ──────────────────────────
+    // For any codepoint a base font lacks, ImGui 1.92's dynamic loader walks the
+    // merged sources in order and uses the first that actually has the glyph
+    // (imgui_draw.cpp: ImFontBaked_BuildLoadGlyph). GlyphRanges are NOT consulted on
+    // that path -- ORDER is what matters: the base font is always source[0] so ASCII
+    // stays crisp, then each fallback supplies only what the earlier ones miss.
+    // Ordered most-specific → broadest so mono symbol fonts win over CJK's copies of
+    // the same arrows/shapes, while SMP emoji (absent from symbol fonts) reach the
+    // color emoji face.
+    struct fallback_spec {
+        std::initializer_list<std::string_view> families; // resolved via fontconfig, in order
+        std::initializer_list<std::string_view> literals;  // last-resort absolute paths
+        bool color;                                        // load color layers (emoji)
     };
 
-    static const ImWchar k_emoji_ranges[] = {
-        0x1F300, 0x1F5FF, // Misc Symbols and Pictographs
-        0x1F600, 0x1F64F, // Emoticons
-        0,
+    const std::array<fallback_spec, 8> specs{{
+        {{"Noto Sans Symbols 2"},
+         {"/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf",
+          "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"},
+         false},
+        {{"Noto Sans Symbols"}, {}, false},
+        {{"Noto Sans Math"}, {}, false},
+        {{"Noto Color Emoji"},
+         {"/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf",
+          "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"},
+         true},
+        {{"Noto Sans CJK JP", "Noto Sans CJK SC"}, {}, false},
+        {{"Noto Sans Hebrew"}, {}, false},
+        {{"Noto Naskh Arabic", "Noto Sans Arabic"}, {}, false},
+        {{"Noto Sans Egyptian Hieroglyphs"}, {}, false},
+    }};
+
+    struct loaded_fallback {
+        std::span<std::byte> bytes; // points into fallback_font_blobs_ (stable, owns data)
+        bool color;
     };
+    std::vector<loaded_fallback> chain;
+    chain.reserve(specs.size());
 
-    const std::array<const char *, 4> symbol_candidates = {
-        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansSymbols2-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-    };
+    fallback_font_blobs_.clear();
+    fallback_font_blobs_.reserve(specs.size()); // no realloc → spans below stay valid
 
-    const std::array<const char *, 4> emoji_candidates = {
-        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/opentype/noto/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-        "/usr/share/fonts/noto/NotoEmoji-Regular.ttf",
-    };
-
-    const char* fonts_dir = IMGUI_FONTS_DIR;
-
-    auto merge_fallback = [&](const std::array<const char *, 4> &candidates,
-                              const ImWchar *ranges,
-                              float size_px) {
-        for (const char *candidate : candidates) {
-            std::error_code ec;
-            if (!std::filesystem::exists(candidate, ec))
-                continue;
-
-            ImFontConfig merge_cfg;
-            merge_cfg.MergeMode = true;
-            merge_cfg.PixelSnapH = true;
-            merge_cfg.SizePixels = size_px;
-            if (ImGui::GetIO().Fonts->AddFontFromFileTTF(candidate, size_px, &merge_cfg, ranges))
-                return true;
+    for (const fallback_spec &spec : specs) {
+        std::string path;
+        for (std::string_view family : spec.families) {
+            path = resolve_font_by_family(family);
+            if (!path.empty()) {
+                break;
+            }
         }
-        return false;
+        if (path.empty()) {
+            for (std::string_view literal : spec.literals) {
+                std::error_code ec;
+                if (std::filesystem::exists(literal, ec)) {
+                    path.assign(literal);
+                    break;
+                }
+            }
+        }
+        if (path.empty()) {
+            const std::string_view first = spec.families.size() ? *spec.families.begin()
+                                                                : std::string_view{"?"};
+            std::println(stderr, "[imgui_context] no font found for fallback '{}'", first);
+            continue;
+        }
+
+        std::ifstream in{path, std::ios::binary | std::ios::ate};
+        if (!in) {
+            std::println(stderr, "[imgui_context] cannot open fallback font '{}'", path);
+            continue;
+        }
+        const std::streamsize size = in.tellg();
+        in.seekg(0);
+        std::vector<std::byte> blob(static_cast<std::size_t>(size));
+        if (!in.read(reinterpret_cast<char *>(blob.data()), size)) {
+            std::println(stderr, "[imgui_context] cannot read fallback font '{}'", path);
+            continue;
+        }
+        fallback_font_blobs_.push_back(std::move(blob));
+        chain.push_back({std::span<std::byte>{fallback_font_blobs_.back()}, spec.color});
+        std::println("[imgui_context] fallback font: {}{}", path, spec.color ? "  (color)" : "");
+    }
+
+    // Merge the whole resolved chain into one base font. The bytes are shared (not
+    // owned by the atlas), so the same large face is referenced -- never copied -- by
+    // every base font.
+    auto merge_chain = [&](float size_px) {
+        for (const loaded_fallback &fb : chain) {
+            ImFontConfig cfg;
+            cfg.MergeMode = true;
+            cfg.FontDataOwnedByAtlas = false; // bytes live in fallback_font_blobs_
+            cfg.SizePixels = size_px;
+            cfg.PixelSnapH = !fb.color;
+            if (fb.color) {
+                cfg.FontLoaderFlags |=
+                    ImGuiFreeTypeLoaderFlags_LoadColor | ImGuiFreeTypeLoaderFlags_Bitmap;
+            }
+            atlas->AddFontFromMemoryTTF(static_cast<void *>(fb.bytes.data()),
+                                        static_cast<int>(fb.bytes.size()), size_px, &cfg);
+        }
     };
 
-    auto load = [&](const char* filename) -> ImFont*
-    {
-        char path[512];
-        snprintf(path, sizeof(path), "%s/%s", fonts_dir, filename);
-        ImFont* f = ImGui::GetIO().Fonts->AddFontFromFileTTF(path, base_size);
+    auto load = [&](std::string_view filename) -> ImFont * {
+        const std::string path = std::format("{}/{}", IMGUI_FONTS_DIR, filename);
+        ImFont *f = atlas->AddFontFromFileTTF(path.c_str(), base_size);
         IM_ASSERT(f != nullptr);
-        merge_fallback(symbol_candidates, k_symbol_ranges, base_size);
-        merge_fallback(emoji_candidates, k_emoji_ranges, base_size);
+        merge_chain(base_size);
         return f;
     };
 

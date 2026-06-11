@@ -3,6 +3,9 @@
 #include "pch.hpp"
 
 #include "file_browser_thread.hpp"
+#include "file_browser_thumbnail_context.hpp"
+
+class vulkan_context;
 
 #ifndef IMGUI_VERSION
 #error "include imgui.h before this header"
@@ -140,9 +143,16 @@ class FileBrowser {
 	void		   SetPreviewEnabled(bool enabled) noexcept;
 	[[nodiscard]] bool IsPreviewEnabled() const noexcept;
 
-	// Set a callback that returns an ImTextureID for a given file path.
-	// Return nullptr to show no thumbnail (a placeholder is drawn instead).
-	void SetThumbnailProvider(std::function<ImTextureID(const std::filesystem::path&)> cb);
+	// Attach the Vulkan context + on-disk thumbnail cache dir, enabling the browser-
+	// owned async thumbnail engine. Call once (render thread) after construction.
+	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir);
+	// Flush all cached thumbnails (in-memory + on-disk PNGs); regenerated on demand.
+	void ClearThumbnailCache();
+	// Drop one file's cached thumbnail so it regenerates on the next get().
+	void RebuildThumbnail(const std::filesystem::path& path);
+	// Stop the thumbnail engine + free its GPU textures. MUST be called on the render
+	// thread before Vulkan/ImGui teardown (the static FileBrowser dtor runs too late).
+	void ShutdownThumbnails();
 
 	// Override the inline-list thumbnail size (default 64×36).
 	void		     SetThumbnailSize(ImVec2 size) noexcept;
@@ -283,7 +293,7 @@ class FileBrowser {
 	std::function<void(const std::filesystem::path&)>	 hoverFileCallback_;
 	std::function<void(const std::filesystem::path&)>	 contextMenuCallback_;
 	std::function<void(const std::filesystem::path&)>	 rebuildThumbnailCallback_;
-	std::function<ImTextureID(const std::filesystem::path&)> thumbnailProvider_;
+	FileBrowserThumbnailContext				 m_thumbnails; // browser-owned async thumbnail engine
 	ImVec2							 thumbnailSize_	    = {64.0f, 36.0f};
 	ImVec2							 gridThumbnailSize_ = {160.0f, 90.0f};
 	ViewMode						 viewMode_	    = ViewMode::List;
