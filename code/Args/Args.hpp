@@ -12,6 +12,9 @@ class Args {
            [[nodiscard]] bool hasArg(std::string_view target) const;
     void               printArgs() const;
 
+    /// True when no real arguments were passed (argv[0] is not counted).
+    [[nodiscard]] bool empty() const noexcept { return m_argv.empty(); }
+
 	private:
 
 		int                           m_argc;

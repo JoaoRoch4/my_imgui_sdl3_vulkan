@@ -132,6 +132,8 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
 
         for (const auto &path : paths) {
             if (is_video_path(path)) {
+                if (!m_allow_video) // CLI --no-video / --no-media
+                    continue;
                 // Route directly to the player; it queues internally.
                 add_from_path(path);
 
@@ -140,6 +142,8 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
                                 std::filesystem::path(path).filename().string(),
                                 *m_files_window);
             } else {
+                if (!m_allow_image) // CLI --no-media
+                    continue;
                 // Accumulate image paths for the off-thread bulk validator.
                 image_paths.push_back(path);
             }
@@ -156,10 +160,14 @@ void MediaLoadHandler::process_pending_paths(const std::vector<std::string>& pat
         const std::string title = std::filesystem::path(path).filename().string();
 
         if (is_video_path(path)) {
+            if (!m_allow_video) // CLI --no-video / --no-media
+                return;
             // Single video — open in the player and push to history on success.
             if (add_from_path(path))
                 m_history->push(path, "file", title, *m_files_window);
         } else {
+            if (!m_allow_image) // CLI --no-media
+                return;
             // Single image — upload to the viewer panel and push to history.
             if (m_viewer->add_from_path(path, *m_vk))
                 m_history->push(path, "file", title, *m_files_window);
@@ -203,6 +211,8 @@ void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls
     for (const auto &url : urls) {
         // ---- Video URL --------------------------------------------------
         if (is_video_url(url)) {
+            if (!m_allow_video) // CLI --no-video / --no-media
+                continue;
             // Derive a human-readable name from the URL's path/query components.
             const std::string title = ImageDownloader::title_from_url(url);
 
@@ -227,6 +237,9 @@ void MediaLoadHandler::process_pending_urls(const std::vector<std::string>& urls
         }
 
         // ---- Image URL --------------------------------------------------
+
+        if (!m_allow_image) // CLI --no-media
+            continue;
 
         // Blocking download: writes image bytes to a uniquely-named temp file
         // whose extension matches the image format (e.g. .jpg, .png, .webp).
@@ -279,14 +292,24 @@ void MediaLoadHandler::drain_bulk_queue()
     const std::string title = std::filesystem::path(next_path).filename().string();
 
     if (is_video_path(next_path)) {
+        if (!m_allow_video) // CLI --no-video / --no-media
+            return;
         // The background worker confirmed the file exists — open in the player.
         if (add_from_path(next_path))
             m_history->push(next_path, "file", title, *m_files_window);
     } else {
+        if (!m_allow_image) // CLI --no-media
+            return;
         // The background worker confirmed the file exists — upload to the viewer.
         if (m_viewer->add_from_path(next_path, *m_vk))
             m_history->push(next_path, "file", title, *m_files_window);
     }
+}
+
+void MediaLoadHandler::set_media_policy(bool allow_video, bool allow_image)
+{
+    m_allow_video = allow_video;
+    m_allow_image = allow_image;
 }
 
 /**
@@ -318,6 +341,11 @@ void MediaLoadHandler::restore_from_history()
 
     // Close any windows that may already be open from a previous call.
     close_all_windows();
+
+    // CLI --no-video / --no-media: history restore only ever reopens videos
+    // (images are opened on demand), so disabling video disables restore.
+    if (!m_allow_video)
+        return;
 
     // Track whether any cached_path fields were updated so we can persist once.
     bool history_changed = false;

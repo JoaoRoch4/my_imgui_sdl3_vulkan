@@ -8,6 +8,7 @@
 // Forward declaration so ConsoleCommandFn can reference the class.
 class ImGuiConsole;
 class EmojiAtlas;
+class ManagedThread; // app jthread wrapper; owns command-runner worker threads
 
 // ── ConsoleCommandArgs ────────────────────────────────────────────────────────
 // Parsed view of a single command line, passed to every command handler.
@@ -121,6 +122,24 @@ protected:
     // themselves are protected per-field (atomics + fd_mutex inside BashSession).
     std::mutex                   BashSessionMutex_;
     std::shared_ptr<BashSession> ActiveBashSession_;
+
+    // One-shot command-runner threads (BASH / COPILOT / TERMINAL). Owned through
+    // the app's ManagedThread wrapper instead of detached std::threads, so each
+    // appears in the Threads reflection panel and is joined on teardown.
+    // Unsupervised (watch=false): a PTY reader blocks for the command's whole
+    // lifetime, which a liveness watchdog would misread as a hang. Finished
+    // entries are reaped the next time a worker is spawned.
+    struct CommandWorker {
+        std::unique_ptr<ManagedThread>     thread;
+        std::shared_ptr<std::atomic<bool>> done; // set true once the body returns
+    };
+    std::mutex                 CommandWorkersMutex_;
+    std::vector<CommandWorker> CommandWorkers_;
+    uint64_t                   CommandWorkerSeq_ { 0 }; // names workers uniquely
+
+    // Run `body` on an owned, unsupervised ManagedThread (reaping finished ones).
+    // Replaces `std::thread worker(body); worker.detach();`.
+    void SpawnCommandWorker(std::function<void()> body);
 
     const EmojiAtlas* EmojiAtlasView_ { nullptr };
 };

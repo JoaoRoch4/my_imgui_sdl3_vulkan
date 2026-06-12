@@ -1,6 +1,6 @@
 now:
-git commit
-clangd errors
+MONITOR THREADS ARGUMENT
+MORE THREADS FOR HOT PATHS: PREVIEWS, THUMBNAILS, METADATA READ/WRITE
 ffmpeg tags for videos
 
 fix:
@@ -32,6 +32,5 @@ therad gui
 file browser refract
 deelegate class
 more fps info
-consele encoding
 create akill about video and pictures metadata read/write using ffmpeg for videos and exiftool for images. 
 in filebrowser class create 3 subclasses: file_browser_fileOperations_context, separe the file operations code from the others, file_browser_thumbnail_context and file_browser_thumbnail_context_thread, make sure the thumbnail operations run async and stop freezing or lagging the app. Don't forget to wire the new thread to thead overwatch

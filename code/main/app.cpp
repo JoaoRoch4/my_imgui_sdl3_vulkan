@@ -9,7 +9,8 @@
 
 
 
-App::App() {
+App::App(StartupOptions opts)
+	: m_Opts(std::move(opts)) {
 	m_AppContext = AppContext::GetInstance();
 }
 
@@ -55,22 +56,27 @@ bool App::KickStart() {
 	ImPlot::CreateContext();
 
 #ifdef _DEBUG
-	// Debug builds: auto-open the Threads panel and spawn a session-lifetime demo
-	// thread, so the reflection system is visible on every launch without having to
-	// run THREADTEST. The thread stops + joins when this unique_ptr is destroyed.
-	m_ShowThreadPanel = true;
+	// Debug builds: spawn a session-lifetime demo thread so the reflection panel
+	// has sample content when it is shown. The panel itself is no longer
+	// auto-opened — it appears only when --monitor-thread is passed (see below).
+	// The thread stops + joins when this unique_ptr is destroyed.
 	m_DebugDemoThread = spawn_demo_thread(std::chrono::seconds {0});
 #endif
 
 	m_StyleEditor.InitDefaults();
-	m_StyleEditor.SetFonts({
-		{"Cousine", m_Imgui.font_cousine},
-		{"DroidSans", m_Imgui.font_droid_sans},
-		{"Karla", m_Imgui.font_karla},
-		{"ProggyClean", m_Imgui.font_proggy_clean},
-		{"ProggyTiny", m_Imgui.font_proggy_tiny},
-		{"Roboto", m_Imgui.font_roboto},
-	});
+	// Google Noto bases first (the mains); add only the families that resolved at
+	// runtime, then Dear ImGui's bundled faces as alternatives.
+	std::vector<std::pair<std::string, ImFont *>> fonts;
+	if (m_Imgui.font_noto_sans)  fonts.emplace_back("Noto Sans", m_Imgui.font_noto_sans);
+	if (m_Imgui.font_noto_mono)  fonts.emplace_back("Noto Sans Mono", m_Imgui.font_noto_mono);
+	if (m_Imgui.font_noto_serif) fonts.emplace_back("Noto Serif", m_Imgui.font_noto_serif);
+	fonts.emplace_back("Cousine", m_Imgui.font_cousine);
+	fonts.emplace_back("DroidSans", m_Imgui.font_droid_sans);
+	fonts.emplace_back("Karla", m_Imgui.font_karla);
+	fonts.emplace_back("ProggyClean", m_Imgui.font_proggy_clean);
+	fonts.emplace_back("ProggyTiny", m_Imgui.font_proggy_tiny);
+	fonts.emplace_back("Roboto", m_Imgui.font_roboto);
+	m_StyleEditor.SetFonts(std::move(fonts));
 
 	// Shared cache folder at the project root — deliberately OUTSIDE build/debug,
 	// build/release and build/release-log so all three builds read & write the
@@ -83,6 +89,18 @@ bool App::KickStart() {
 
 	m_StatePath = (cache_dir / "window_state.toml").string();
 	LoadWindowStateToml(m_StatePath, m_State);
+
+	// ---- Apply command-line overrides on top of the loaded TOML -------------
+	// Snapshot the persisted file-explorer visibility BEFORE overriding it, so
+	// destroy() can restore it and keep the CLI override session-only.
+	m_OriginalShowFileExplorer = m_State.show_file_explorer_window;
+	if (m_Opts.file_browser)
+		m_State.show_file_explorer_window = *m_Opts.file_browser;
+
+	// --monitor-thread: force the Threads reflection panel open (release too).
+	if (m_Opts.monitor_thread)
+		m_ShowThreadPanel = true;
+
 	m_StyleEditor.ApplyLayout(m_State);
 
 	m_ShowDemoWindow    = m_State.show_demo_window;
@@ -98,6 +116,26 @@ bool App::KickStart() {
 	m_MenuBar.SetStatePath(m_StatePath);
 	m_MenuBar.ApplyHistory(m_State);
 	m_MenuBar.ApplyRuntimeConfig(m_State);
+
+	// --no-video / --no-media: gate the media-routing choke point. Video is
+	// disabled by either flag; images only by --no-media. Subsystems still boot;
+	// they just receive nothing to load.
+	m_MenuBar.SetMediaPolicy(/*allow_video=*/!(m_Opts.disable_video || m_Opts.disable_media),
+		/*allow_image=*/!m_Opts.disable_media);
+
+	// Echo what the flags did to BOTH stdout and the integrated console, then
+	// auto-open the console so the feedback is visible. With no flags the list is
+	// empty: nothing prints, the console stays as the TOML left it. This runs
+	// AFTER ApplyRuntimeConfig (which sets console visibility from TOML) so the
+	// auto-open is not clobbered.
+	if (auto const args_feedback = describe_startup_options(m_Opts); !args_feedback.empty()) {
+		for (auto const &line : args_feedback) {
+			std::println("[Args] {}", line);
+			m_MenuBar.ConsoleLog(std::format("[Args] {}", line));
+		}
+		m_MenuBar.ShowConsole();
+	}
+
 	m_MenuBar.SetThumbDir(cache_dir / "thumbs");
 	m_MenuBar.SetDownloadCacheDir(cache_dir / "video_cache");
 
@@ -296,6 +334,12 @@ int App::destroy() {
 	m_StyleEditor.ExportLayout(&m_State);
 	m_MenuBar.ExportHistory(&m_State);
 	m_MenuBar.ExportRuntimeConfig(&m_State);
+
+	// Session-only override: a --file-browser/--no-file-browser flag forced the
+	// visibility for this run only — restore the persisted value so it survives.
+	if (m_Opts.file_browser)
+		m_State.show_file_explorer_window = m_OriginalShowFileExplorer;
+
 	SaveWindowStateToml(m_StatePath, m_State);
 	ImPlot::DestroyContext();
 	m_Imgui.shutdown();

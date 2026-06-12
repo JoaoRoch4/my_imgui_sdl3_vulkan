@@ -503,6 +503,17 @@ void AppCoordinator::ExportRuntimeConfig(WindowStateToml *state) const {
   state->show_console_window = m_show_console;
 }
 
+void AppCoordinator::SetMediaPolicy(bool allow_video, bool allow_image) {
+  m_load_handler->set_media_policy(allow_video, allow_image);
+}
+
+void AppCoordinator::ConsoleLog(std::string line) {
+  if (m_console)
+    m_console->AddLogThreadSafe(std::move(line));
+}
+
+void AppCoordinator::ShowConsole() { m_show_console = true; }
+
 void AppCoordinator::SetThumbDir(const std::filesystem::path &dir) {
   m_app_state->set_thumb_dir(dir);
 

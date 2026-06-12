@@ -100,7 +100,10 @@ namespace {
 } // namespace
 
 imgui_context::imgui_context()
-    : font_cousine(nullptr)
+    : font_noto_sans(nullptr)
+    , font_noto_mono(nullptr)
+    , font_noto_serif(nullptr)
+    , font_cousine(nullptr)
     , font_droid_sans(nullptr)
     , font_karla(nullptr)
     , font_proggy_clean(nullptr)
@@ -170,7 +173,7 @@ void imgui_context::load_fonts(float main_scale)
         bool color;                                        // load color layers (emoji)
     };
 
-    const std::array<fallback_spec, 8> specs{{
+    const std::array<fallback_spec, 9> specs{{
         {{"Noto Sans Symbols 2"},
          {"/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf",
           "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"},
@@ -185,6 +188,15 @@ void imgui_context::load_fonts(float main_scale)
         {{"Noto Sans Hebrew"}, {}, false},
         {{"Noto Naskh Arabic", "Noto Sans Arabic"}, {}, false},
         {{"Noto Sans Egyptian Hieroglyphs"}, {}, false},
+        // Broad BMP catch-all, LAST so it only fills gaps the specialised fonts miss:
+        // Number Forms (⅓), combining marks (U+0336), infinity (U+267E), and — crucially —
+        // the default-ignorable format chars (ZWJ U+200D, VS16 U+FE0F, LRM/RLM) as BLANK
+        // glyphs, so they render invisibly instead of as missing-glyph boxes.
+        {{"DejaVu Sans"},
+         {"/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+          "/usr/share/fonts/TTF/DejaVuSans.ttf"},
+         false},
     }};
 
     struct loaded_fallback {
@@ -265,12 +277,43 @@ void imgui_context::load_fonts(float main_scale)
         return f;
     };
 
+    // Load a full Google (Noto) family, resolved via fontconfig, as a *base* face --
+    // the main UI font, not a fallback. Its broad Latin/Greek/Cyrillic/Vietnamese/etc.
+    // coverage keeps primary text in one consistent typeface instead of switching to
+    // the fallback chain mid-word. Returns nullptr if the family isn't installed.
+    auto load_family = [&](std::string_view family) -> ImFont * {
+        const std::string path = resolve_font_by_family(family);
+        if (path.empty()) {
+            std::println(stderr, "[imgui_context] base font '{}' not installed; skipping", family);
+            return nullptr;
+        }
+        ImFont *f = atlas->AddFontFromFileTTF(path.c_str(), base_size);
+        if (f == nullptr) {
+            return nullptr;
+        }
+        merge_chain(base_size);
+        std::println("[imgui_context] base font: {} -> {}", family, path);
+        return f;
+    };
+
+    // ── Google Noto as the main fonts (Noto Sans is the default) ──────────────
+    font_noto_sans  = load_family("Noto Sans");
+    font_noto_mono  = load_family("Noto Sans Mono");
+    font_noto_serif = load_family("Noto Serif");
+
+    // Dear ImGui's bundled faces, kept as selectable alternatives.
     font_cousine      = load("Cousine-Regular.ttf");
     font_droid_sans   = load("DroidSans.ttf");
     font_karla        = load("Karla-Regular.ttf");
     font_proggy_clean = load("ProggyClean.ttf");
     font_proggy_tiny  = load("ProggyTiny.ttf");
     font_roboto       = load("Roboto-Medium.ttf");
+
+    // Default the UI to Google Noto Sans (full coverage). A user's saved font choice,
+    // restored later by the style editor, still takes precedence over this.
+    if (font_noto_sans != nullptr) {
+        ImGui::GetIO().FontDefault = font_noto_sans;
+    }
 }
 
 void imgui_context::shutdown()

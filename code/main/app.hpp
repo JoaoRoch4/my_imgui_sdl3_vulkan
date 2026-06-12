@@ -7,6 +7,7 @@
 #include "imgui_context.hpp"
 #include "managed_thread.hpp"
 #include "sdl3_context.hpp"
+#include "startup_options.hpp"
 #include "style_editor.hpp"
 #include "thread_reflection_panel.hpp"
 #include "vulkan_context.hpp"
@@ -18,7 +19,9 @@ class App {
 public:
 	static constexpr int k_reopen_exit_code = 42;
 
-	App();
+	// Resolved command-line overrides. Passed in from start() so the same flags
+	// apply to every App instance across a reopen.
+	explicit App(StartupOptions opts = {});
 
 	// Full application lifecycle: KickStart() -> tick() loop -> destroy().
 	// Returns the process exit code (k_reopen_exit_code asks main() to relaunch).
@@ -37,6 +40,16 @@ protected:
 
 private:
 	AppContext* m_AppContext = nullptr;
+
+	// Resolved command-line overrides, applied in KickStart() after the TOML
+	// load. See StartupOptions.
+	StartupOptions m_Opts;
+
+	// Session-only override bookkeeping: the file-explorer visibility as it was
+	// loaded from TOML, snapshotted BEFORE m_Opts is applied. destroy() restores
+	// it before saving so a --file-browser/--no-file-browser flag never rewrites
+	// the persisted preference on disk.
+	bool m_OriginalShowFileExplorer = false;
 
 	// Platform + rendering backends. Default-constructed here (cheap), then
 	// actually initialised inside KickStart(); torn down in destroy().

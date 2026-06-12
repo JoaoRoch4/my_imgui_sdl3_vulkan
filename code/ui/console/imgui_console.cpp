@@ -134,7 +134,51 @@ ImGuiConsole::~ImGuiConsole()
 {
     // Signal any running background threads that the console is gone.
     *Alive_ = false;
+
+    // Join every in-flight command worker now, while the members their bodies
+    // touch (BashSessionMutex_, ActiveBashSession_, …) are still alive. Their
+    // bodies see !alive, kill their child, and return, so this cannot hang.
+    {
+        std::lock_guard<std::mutex> lk(CommandWorkersMutex_);
+        CommandWorkers_.clear();
+    }
+
     ClearLog();
+}
+
+// ─── SpawnCommandWorker ───────────────────────────────────────────────────────
+// Run `body` once on an owned ManagedThread (the app's std::jthread wrapper)
+// instead of a detached std::thread. watch=false because a PTY reader blocks for
+// the command's whole, unbounded lifetime — a liveness watchdog would misread
+// that as a hang — but registry registration is unconditional, so the worker
+// still shows up in the Threads panel. The thread is stored so its destructor
+// joins on teardown; previously finished workers are reaped here first.
+
+void ImGuiConsole::SpawnCommandWorker(std::function<void()> body)
+{
+    std::lock_guard<std::mutex> lk(CommandWorkersMutex_);
+
+    // Reap workers that already finished — destroying a done worker joins
+    // instantly because its body has returned.
+    std::erase_if(CommandWorkers_, [](const CommandWorker& w) {
+        return w.done && w.done->load(std::memory_order_acquire);
+    });
+
+    auto done = std::make_shared<std::atomic<bool>>(false);
+
+    ManagedThread::Config cfg;
+    cfg.name   = "CmdWorker" + std::to_string(CommandWorkerSeq_++);
+    cfg.watch  = false; // unsupervised: PTY reader runs for the command's lifetime
+    cfg.policy = ThreadOverwatch::RecoveryPolicy::KillOnly;
+
+    auto thread = std::make_unique<ManagedThread>(
+        cfg, [body = std::move(body), done](const std::stop_token& /*st*/, ManagedThread& self) {
+            body();
+            done->store(true, std::memory_order_release);
+            self.request_stop(); // one-shot: end the loop once the command is done
+        });
+
+    CommandWorkers_.push_back(CommandWorker { std::move(thread), std::move(done) });
 }
 
 // ─── ClearLog ────────────────────────────────────────────────────────────────
@@ -929,7 +973,7 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs& a)
     }
 
     // ── Worker thread: read PTY output and detect password prompts ─────────
-    std::thread worker([this, session, alive, pid]() {
+    SpawnCommandWorker([this, session, alive, pid]() {
         std::array<char, 512> buf {};
         std::string partial;
 
@@ -986,6 +1030,11 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs& a)
         if (!partial.empty() && alive->load())
             AddLogThreadSafe(partial + "\n");
 
+        // If the console is being torn down, terminate the child so the join in
+        // ~ImGuiConsole / the reaper cannot block on a long-running command.
+        if (!alive->load())
+            kill(pid, SIGTERM);
+
         int status = 0;
         waitpid(pid, &status, 0);
         if (alive->load()) {
@@ -1011,7 +1060,6 @@ void ConsoleCommands::CmdBash(const ConsoleCommandArgs& a)
 
         if (alive->load()) --BashJobCount_;
     });
-    worker.detach();
 }
 
 // ── COPILOT ───────────────────────────────────────────────────────────────────
@@ -1092,7 +1140,7 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
         _exit(127);
     }
 
-    std::thread worker([this, session, alive, pid]() {
+    SpawnCommandWorker([this, session, alive, pid]() {
         std::array<char, 512> buf {};
         std::string partial;
 
@@ -1122,6 +1170,11 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
         if (!partial.empty() && alive->load())
             AddLogThreadSafe(partial + "\n");
 
+        // If the console is being torn down, terminate the child so the join in
+        // ~ImGuiConsole / the reaper cannot block on a long-running command.
+        if (!alive->load())
+            kill(pid, SIGTERM);
+
         int status = 0;
         waitpid(pid, &status, 0);
         if (alive->load()) {
@@ -1146,7 +1199,6 @@ void ConsoleCommands::CmdCopilot(const ConsoleCommandArgs& a)
         }
         if (alive->load()) --BashJobCount_;
     });
-    worker.detach();
 }
 
 // ── TERMINAL / KONSOLE ────────────────────────────────────────────────────────
@@ -1272,7 +1324,7 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs& /*a*/)
     }
 
     std::shared_ptr<std::atomic<bool>> alive = Alive_;
-    std::thread worker([this, session, alive, pid]() {
+    SpawnCommandWorker([this, session, alive, pid]() {
         std::array<char, 512> buf {};
         std::string partial;
 
@@ -1317,6 +1369,11 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs& /*a*/)
         if (!partial.empty() && alive->load())
             AddLogThreadSafe(StripAnsi(partial) + "\n");
 
+        // If the console is being torn down, terminate the child so the join in
+        // ~ImGuiConsole / the reaper cannot block on a long-running command.
+        if (!alive->load())
+            kill(pid, SIGTERM);
+
         int status = 0;
         waitpid(pid, &status, 0);
         if (alive->load())
@@ -1336,5 +1393,4 @@ void ConsoleCommands::CmdTerminal(const ConsoleCommandArgs& /*a*/)
         }
         if (alive->load()) --BashJobCount_;
     });
-    worker.detach();
 }

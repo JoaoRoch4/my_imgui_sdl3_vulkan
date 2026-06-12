@@ -207,7 +207,7 @@ void FileBrowserThumbnailContext::begin_frame() {
     enforce_texture_cap(); // bound live textures (LRU) so huge folders can't exhaust the GPU
 }
 
-ImTextureID FileBrowserThumbnailContext::get(const std::filesystem::path &path) {
+ImTextureID FileBrowserThumbnailContext::get(const std::filesystem::path &path) { // super hot MUST BE IN ITS OWN THREAD
     if (!m_setup || !is_thumbnailable(path))
         return 0; // skip non-image/-video files (replaces app_coordinator's is_thumb_path)
 

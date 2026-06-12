@@ -79,7 +79,7 @@ void ImGui::FileBrowser::Close() {
 
 bool ImGui::FileBrowser::IsOpened() const noexcept { return isOpened_; }
 
-void ImGui::FileBrowser::Display() {
+void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD 
     PushID(this);
     ScopeGuard exitThis([this] {
 	shouldOpen_  = false;

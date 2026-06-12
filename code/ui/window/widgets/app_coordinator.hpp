@@ -78,6 +78,18 @@ public:
   /// Serialise runtime config into state for the main save routine.
   void ExportRuntimeConfig(WindowStateToml *state) const;
 
+  /// Gate which media types may be loaded this session (CLI --no-video/--no-media).
+  /// Forwarded to MediaLoadHandler, the single media-routing choke point.
+  void SetMediaPolicy(bool allow_video, bool allow_image);
+
+  /// Push one line into the integrated console (thread-safe; buffered until the
+  /// next Draw). Used for startup args feedback before the first frame renders.
+  void ConsoleLog(std::string line);
+
+  /// Force the integrated console window visible (e.g. to surface startup args
+  /// feedback). Call after ApplyRuntimeConfig so it is not overwritten by TOML.
+  void ShowConsole();
+
   /// Set the directory where hover-thumbnail PNGs are written and cached.
   void SetThumbDir(const std::filesystem::path &dir);
 

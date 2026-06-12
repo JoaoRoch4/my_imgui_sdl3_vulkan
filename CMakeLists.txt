@@ -193,9 +193,10 @@ add_executable(example_sdl3_vulkan
     code/ui/config/config_runtime_ui_context.cpp
     code/Args/Args.hpp
     code/Args/Args.cpp
+    code/Args/startup_options.hpp
+    code/Args/startup_options.cpp
     code/main/main.hpp
     code/core/Memory_management.hpp
-    code/core/Memory_management.cpp
 )
 
 # ── Multi-config output layout + "build everything" target ────────────────────
@@ -251,6 +252,7 @@ target_precompile_headers(example_sdl3_vulkan PRIVATE
 target_include_directories(example_sdl3_vulkan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/main
+    ${CMAKE_CURRENT_SOURCE_DIR}/code/Args
     ${CMAKE_CURRENT_SOURCE_DIR}/code/pch
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core
     ${CMAKE_CURRENT_SOURCE_DIR}/code/core/thread

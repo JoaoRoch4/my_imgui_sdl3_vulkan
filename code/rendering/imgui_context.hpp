@@ -13,6 +13,13 @@ public:
     void new_frame();
     void render(ImGui_ImplVulkanH_Window *wd, vulkan_context &vk, const ImVec4 &clear_color);
 
+    // Google Noto bases (full Unicode coverage), resolved at runtime via fontconfig.
+    // Noto Sans is the default UI font. Null if the family isn't installed.
+    ImFont *font_noto_sans;
+    ImFont *font_noto_mono;
+    ImFont *font_noto_serif;
+
+    // Dear ImGui's bundled faces (basic-Latin only); kept as selectable alternatives.
     ImFont *font_cousine;
     ImFont *font_droid_sans;
     ImFont *font_karla;

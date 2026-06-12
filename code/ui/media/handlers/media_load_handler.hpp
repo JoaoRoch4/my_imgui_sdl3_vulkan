@@ -43,6 +43,11 @@ public:
     void restore_from_history();
     void set_use_video_player_placebo(bool enabled);
 
+    /// Session media gate (CLI --no-video / --no-media). When a type is
+    /// disallowed, paths/urls of that type are dropped before any consumer is
+    /// touched. Both default to true (everything allowed).
+    void set_media_policy(bool allow_video, bool allow_image);
+
 private:
     ImageViewerPanel   *m_viewer;       ///< Renders decoded image frames.
     VideoPlayer        *m_video_player; ///< Renders video streams.
@@ -53,4 +58,6 @@ private:
     OpenedFilesWindow  *m_files_window; ///< Companion list panel for history sync.
     vulkan_context     *m_vk;           ///< Active Vulkan device for texture upload.
     bool                m_use_video_player_placebo; ///< Route calls through VPP.
+    bool                m_allow_video = true; ///< CLI --no-video / --no-media gate.
+    bool                m_allow_image = true; ///< CLI --no-media gate.
 };
