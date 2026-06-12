@@ -1,4 +1,8 @@
 #include "Memory_management.hpp"
+#include "pch.hpp"
+
+
+
 
 /**
  * @brief Returns the one application-wide registry instance.
@@ -10,10 +14,6 @@
  * stored object addresses, with thread-safe one-time initialization
  * guaranteed by the language and zero manual lifetime management.
  */
-MemoryManagement& MemoryManagement::Get() {
-    static MemoryManagement instance;
-    return instance;
-}
 
 /**
  * @brief Builds an empty registry and announces its creation.
@@ -25,49 +25,9 @@ MemoryManagement& MemoryManagement::Get() {
  * No heap work happens here; storage grows lazily as subobjects are
  * created later through CreateDefaultSubobject.
  */
-MemoryManagement::MemoryManagement() : m_entries{} {
-    std::println("[MemoryManagement] Global registry constructed at {}",
-                 static_cast<const void*>(this));
-}
 
-/**
- * @brief Tears the registry down, releasing every owned subobject.
- *
- * Defaulted here (out of line) because the Meyers singleton's static
- * instance is destroyed at program exit, which requires a definition.
- * Each shared_ptr<void> in m_entries was captured with the concrete
- * type's deleter, so the correct destructor still runs even though the
- * static type was erased.
- */
-MemoryManagement::~MemoryManagement() = default;
 
-/**
- * @brief Takes ownership of a built object and records its metadata.
- *
- * The concrete object arrives already constructed and hidden behind a
- * shared_ptr<void>, which preserves the correct destructor while
- * erasing the static type. Alongside it come the runtime type index,
- * the compile-time byte size, a human debug name and the compile-time
- * type name. A new entry is appended, the event is logged, and the raw
- * observer address is returned so the caller can static_cast it back.
- */
-void* MemoryManagement::registerErased(std::shared_ptr<void> instance,
-                                     std::type_index type,
-                                     std::size_t sizeBytes,
-                                     std::string_view debugName,
-                                     std::string_view typeName) {
-    void* address{instance.get()};
-    m_entries.push_back(ObjectEntry{
-        .instance = std::move(instance),
-        .type = type,
-        .sizeBytes = sizeBytes,
-        .debugName = std::string{debugName},
-        .typeName = std::string{typeName},
-    });
-    std::println("[MemoryManagement] Created subobject '{}' (type '{}', {} bytes) at {}",
-                 debugName, typeName, sizeBytes, address);
-    return address;
-}
+
 
 /**
  * @brief Finds the first stored object matching a requested type.
@@ -79,17 +39,6 @@ void* MemoryManagement::registerErased(std::shared_ptr<void> instance,
  * keeps lookups cheap and branch-friendly. Every hit and miss is
  * logged so it is obvious which call site shares which address.
  */
-void* MemoryManagement::findErased(std::type_index type) const {
-    for (const ObjectEntry& entry : m_entries) {
-        if (entry.type == type) {
-            std::println("[MemoryManagement] Lookup hit for type '{}' at {}",
-                         entry.typeName, static_cast<const void*>(entry.instance.get()));
-            return entry.instance.get();
-        }
-    }
-    std::println("[MemoryManagement] Lookup miss: no object of the requested type");
-    return nullptr;
-}
 
 /**
  * @brief Reflection: how many objects the registry currently owns.

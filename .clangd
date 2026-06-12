@@ -80,7 +80,7 @@ CompileFlags:
     # ── Preprocessor definitions ─────────────────────────────────────────────
     - -DAPP_USE_VULKAN_DEBUG_REPORT
     - -DIMGUI_FONTS_DIR="/home/joao/vscode/my_imgui/Project_sdl3_vulkan/external/imgui-1.92.8-docking/misc/fonts"
-  Compiler: clang++               # Change argv[0] of compile flags to `clang++`
+  Compiler: clang++ # Change argv[0] of compile flags to `clang++`
 
   # Use the CMake-generated database under build/all/ (Ninja Multi-Config emits a
   # single compile_commands.json there). clangd now resolves each .cpp to its exact
@@ -109,17 +109,13 @@ Completion:
 
 Hover:
   ShowAKA: true
-  MacroContentsLimit: 4096
-
-Documentation:
-  CommentFormat: Doxygen
 
 Index:
   Background: Build
   StandardLibrary: true
 
 InlayHints:
-  BlockEnd: false
+  BlockEnd: true
   Designators: true
   Enabled: true
   ParameterNames: true
@@ -130,6 +126,5 @@ InlayHints:
 SemanticTokens:
   DisabledKinds: []
   DisabledModifiers: []
- 
- 
+
 # Press Ctrl+Space to bring up completion suggestions

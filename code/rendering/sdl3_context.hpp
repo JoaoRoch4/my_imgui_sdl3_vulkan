@@ -7,6 +7,8 @@ class sdl3_context
 public:
     sdl3_context();
 
+    sdl3_context(sdl3_context&& other) = default;
+
     SDL_Window* window;
     float       main_scale;
 

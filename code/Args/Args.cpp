@@ -28,7 +28,7 @@ void Args::parseArgs(int argc, char* const argv[]) {
     for (std::string_view const arg : flags)
         m_argv.emplace_back(arg);
 }
-        
+
 /**
  * @brief Checks whether a specific argument was passed on the command line.
  * @details Performs a linear search over the stored argument views with
@@ -55,5 +55,6 @@ void Args::printArgs() const {
     std::println("[Args] {} argument(s) captured:", m_argc);
     for (auto const [i, arg] : std::views::enumerate(m_argv)) {
         std::println("  argv[{}] = \"{}\"", i + 1, arg);
-    }
+	}
+
 }

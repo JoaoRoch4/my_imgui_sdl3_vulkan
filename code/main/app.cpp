@@ -3,15 +3,33 @@
 #include "app.hpp"
 
 
+#include "Memory_management.hpp"
 #include "app_context.hpp"
 #include "image_job_system.hpp"
 #include "window_fullscreen_utils.hpp"
+#include <bit>
+#include <utility>
+
 
 
 
 App::App(StartupOptions opts)
-	: m_Opts(std::move(opts)) {
+	: m_Opts(std::move(opts))
+	, m_mem(nullptr) {
 	m_AppContext = AppContext::GetInstance();
+	if (!Alloc()) {
+		// Handle allocation failure
+		throw std::runtime_error("Failed to allocate resources for App.");
+	}
+}
+
+bool App::Alloc() {
+
+	m_mem = MemoryManagement::GetPtr();
+	m_Sdl = m_mem->MemoryManagement::PushGet<sdl3_context>("m_Sdl");
+	if (!m_Sdl)
+		return false;
+	return true;
 }
 
 
@@ -26,8 +44,10 @@ bool App::KickStart() {
 	// ThreadOverwatch) for the whole session; shut it down in destroy().
 	img::ImageJobSystem::instance().start();
 
-	if (!m_Sdl.init("Dear ImGui SDL3+Vulkan example", 1280, 800))
+
+	if (!m_Sdl->init("Dear ImGui SDL3+Vulkan example", 1280, 800))
 		return false;
+
 
 	{
 		std::vector<char const*> extensions;
@@ -39,20 +59,20 @@ bool App::KickStart() {
 		m_Vk.setup(extensions);
 	}
 
-	if (SDL_Vulkan_CreateSurface(m_Sdl.window, m_Vk.instance, m_Vk.allocator, &m_Surface) == 0) {
+	if (SDL_Vulkan_CreateSurface(m_Sdl->window, m_Vk.instance, m_Vk.allocator, &m_Surface) == 0) {
 		std::printf("Failed to create Vulkan surface.\n");
 		return false;
 	}
 
 	int w;
 	int h;
-	SDL_GetWindowSize(m_Sdl.window, &w, &h);
+	SDL_GetWindowSize(m_Sdl->window, &w, &h);
 	m_Wd = &m_Vk.main_window_data;
 	m_Vk.setup_window(m_Wd, m_Surface, w, h);
-	SDL_SetWindowPosition(m_Sdl.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-	SDL_ShowWindow(m_Sdl.window);
+	SDL_SetWindowPosition(m_Sdl->window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+	SDL_ShowWindow(m_Sdl->window);
 
-	m_Imgui.init(m_Sdl.window, m_Vk, m_Wd, m_Sdl.main_scale);
+	m_Imgui.init(m_Sdl->window, m_Vk, m_Wd, m_Sdl->main_scale);
 	ImPlot::CreateContext();
 
 #ifdef _DEBUG
@@ -66,10 +86,13 @@ bool App::KickStart() {
 	m_StyleEditor.InitDefaults();
 	// Google Noto bases first (the mains); add only the families that resolved at
 	// runtime, then Dear ImGui's bundled faces as alternatives.
-	std::vector<std::pair<std::string, ImFont *>> fonts;
-	if (m_Imgui.font_noto_sans)  fonts.emplace_back("Noto Sans", m_Imgui.font_noto_sans);
-	if (m_Imgui.font_noto_mono)  fonts.emplace_back("Noto Sans Mono", m_Imgui.font_noto_mono);
-	if (m_Imgui.font_noto_serif) fonts.emplace_back("Noto Serif", m_Imgui.font_noto_serif);
+	std::vector<std::pair<std::string, ImFont*>> fonts;
+	if (m_Imgui.font_noto_sans)
+		fonts.emplace_back("Noto Sans", m_Imgui.font_noto_sans);
+	if (m_Imgui.font_noto_mono)
+		fonts.emplace_back("Noto Sans Mono", m_Imgui.font_noto_mono);
+	if (m_Imgui.font_noto_serif)
+		fonts.emplace_back("Noto Serif", m_Imgui.font_noto_serif);
 	fonts.emplace_back("Cousine", m_Imgui.font_cousine);
 	fonts.emplace_back("DroidSans", m_Imgui.font_droid_sans);
 	fonts.emplace_back("Karla", m_Imgui.font_karla);
@@ -108,7 +131,7 @@ bool App::KickStart() {
 	m_Vsync             = m_State.vsync;
 	m_Vk.set_vsync(m_Wd, m_Vsync);
 
-	m_MenuBar.Setup(&m_StyleEditor, m_Sdl.window, &m_Vk, &m_ShowDemoWindow, &m_ShowAnotherWindow, [this](bool enabled) {
+	m_MenuBar.Setup(&m_StyleEditor, m_Sdl->window, &m_Vk, &m_ShowDemoWindow, &m_ShowAnotherWindow, [this](bool enabled) {
 		m_Vsync = enabled;
 		m_Vk.set_vsync(m_Wd, m_Vsync);
 	});
@@ -129,7 +152,7 @@ bool App::KickStart() {
 	// AFTER ApplyRuntimeConfig (which sets console visibility from TOML) so the
 	// auto-open is not clobbered.
 	if (auto const args_feedback = describe_startup_options(m_Opts); !args_feedback.empty()) {
-		for (auto const &line : args_feedback) {
+		for (auto const& line : args_feedback) {
 			std::println("[Args] {}", line);
 			m_MenuBar.ConsoleLog(std::format("[Args] {}", line));
 		}
@@ -159,7 +182,7 @@ void App::tick() {
 
 			if (event.type == SDL_EVENT_QUIT)
 				m_Done = true;
-			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_Sdl.window))
+			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_Sdl->window))
 				m_Done = true;
 
 			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -187,9 +210,10 @@ void App::tick() {
 
 				int win_x;
 				int win_y;
-				SDL_GetWindowPosition(m_Sdl.window, &win_x, &win_y);
+				SDL_GetWindowPosition(m_Sdl->window, &win_x, &win_y);
 
-				SDL_SetWindowPosition(m_Sdl.window, win_x + static_cast<int>(delta_x), win_y + static_cast<int>(delta_y));
+				SDL_SetWindowPosition(m_Sdl->window, win_x + static_cast<int>(delta_x),
+					win_y + static_cast<int>(delta_y));
 
 				m_DragStartX = current_x;
 				m_DragStartY = current_y;
@@ -197,21 +221,21 @@ void App::tick() {
 
 			if (event.type == SDL_EVENT_KEY_DOWN) {
 				if (event.key.key == SDLK_F11) {
-					toggle_window_fullscreen(m_Sdl.window);
+					toggle_window_fullscreen(m_Sdl->window);
 				}
 			}
 		}
 
 		m_Done |= m_MenuBar.request_quit;
 
-		if (SDL_GetWindowFlags(m_Sdl.window) & SDL_WINDOW_MINIMIZED) {
+		if (SDL_GetWindowFlags(m_Sdl->window) & SDL_WINDOW_MINIMIZED) {
 			SDL_Delay(10);
 			continue;
 		}
 
 		int fb_width;
 		int fb_height;
-		SDL_GetWindowSize(m_Sdl.window, &fb_width, &fb_height);
+		SDL_GetWindowSize(m_Sdl->window, &fb_width, &fb_height);
 		if (fb_width > 0 && fb_height > 0
 			&& (m_Vk.swap_chain_rebuild || m_Wd->Width != fb_width || m_Wd->Height != fb_height))
 			m_Vk.resize_window(m_Wd, fb_width, fb_height);
@@ -345,7 +369,7 @@ int App::destroy() {
 	m_Imgui.shutdown();
 	m_Vk.cleanup_window(m_Wd);
 	m_Vk.cleanup();
-	m_Sdl.shutdown();
+	m_Sdl->shutdown();
 
 	return reopen_requested ? App::k_reopen_exit_code : 0;
 }

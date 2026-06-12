@@ -1,0 +1,40 @@
+{
+  "languages": {
+    "C++": {
+      "language_servers": ["clangd"],
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "clang-format",
+          "arguments": ["-style=file", "-fallback-style=Google"],
+        },
+      },
+    },
+    "C": {
+      "language_servers": ["clangd"],
+      "format_on_save": "on",
+      "formatter": {
+        "external": {
+          "command": "clang-format",
+          "arguments": ["-style=file", "-fallback-style=Google"],
+        },
+      },
+    },
+  },
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "path": "/usr/bin/clangd",
+      },
+      "initialization_options": {
+        "fallbackFlags": [
+          "-std=c++23",
+          "-I/home/joao/vcpkg/installed/x64-linux/include", 
+        ],
+        
+      },
+      "enable_lsp_tasks": true
+      
+    },
+  },
+}

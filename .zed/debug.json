@@ -1,0 +1,39 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+    {
+        "label": "Debug native binary",
+        "build": {
+            "command": "make",
+            "args": ["-j8"],
+            "cwd": "$ZED_WORKTREE_ROOT",
+        },
+        "program": "$ZED_WORKTREE_ROOT/build/prog",
+        "request": "launch",
+        "adapter": "CodeLLDB",
+    },
+
+    {
+        "label": "build-debug",
+        "build": {
+            "command": "cmake",
+            "args": [
+                "--build",
+                "$ZED_WORKTREE_ROOT/build/all",
+                "--target",
+                "all_configs",
+                "--config",
+                "Debug",
+                "-v",
+            ],
+            "cwd": "$ZED_WORKTREE_ROOT",
+            "show_command": true,
+        },
+
+        "request": "launch",
+        "program": "${workspaceFolder}/build/debug/example_sdl3_vulkan_debug",
+        "adapter": "CodeLLDB",
+    },
+]

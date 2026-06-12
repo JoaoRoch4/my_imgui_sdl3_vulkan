@@ -273,14 +273,14 @@ SpacesInParensOptions:
   Other: false
 SpacesInSquareBrackets: false
 Standard: Latest
-StatementAttributeLikeMacros:
+StatementAttributeLikeMacros:  
   - Q_EMIT
 StatementMacros:
   - Q_UNUSED
   - QT_REQUIRE_VERSION
 TableGenBreakInsideDAGArg: DontBreak
 TabWidth: 4
-UseTab: AlignWithSpaces
+UseTab: ForContinuationAndIndentation
 VerilogBreakBetweenInstancePorts: true
 WhitespaceSensitiveMacros:
   - BOOST_PP_STRINGIZE

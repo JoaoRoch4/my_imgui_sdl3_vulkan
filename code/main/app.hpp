@@ -12,6 +12,8 @@
 #include "thread_reflection_panel.hpp"
 #include "vulkan_context.hpp"
 #include "window_state_toml.hpp"
+#include "Memory_management.hpp"
+
 
 class AppContext;
 
@@ -38,12 +40,16 @@ protected:
 	// Ordered teardown of everything KickStart() built; returns the exit code.
 	int destroy();
 
+	bool Alloc();
+
 private:
 	AppContext* m_AppContext = nullptr;
-
 	// Resolved command-line overrides, applied in KickStart() after the TOML
 	// load. See StartupOptions.
 	StartupOptions m_Opts;
+
+ MemoryManagement* m_mem;
+
 
 	// Session-only override bookkeeping: the file-explorer visibility as it was
 	// loaded from TOML, snapshotted BEFORE m_Opts is applied. destroy() restores
@@ -53,7 +59,7 @@ private:
 
 	// Platform + rendering backends. Default-constructed here (cheap), then
 	// actually initialised inside KickStart(); torn down in destroy().
-	sdl3_context              m_Sdl;
+	sdl3_context*              m_Sdl;
 	vulkan_context            m_Vk;
 	imgui_context             m_Imgui;
 	VkSurfaceKHR              m_Surface = VK_NULL_HANDLE;
