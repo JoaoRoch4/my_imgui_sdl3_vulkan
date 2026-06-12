@@ -87,6 +87,29 @@ class MemoryManagement {
 			return static_cast<T*>(address);
 		}
 
+		/**
+		 * @brief Static, type-keyed accessor for an already-stored object.
+		 *
+		 * The static sibling of GetSubobject: any class anywhere can reach a
+		 * shared object by type without first obtaining the singleton, e.g.
+		 * MemoryManagement::GetInstance<sdl3_context>(). The lookup itself is
+		 * not duplicated here — it routes through the global instance and the
+		 * existing const GetSubobject so the search logic has a single home.
+		 * A missing object is treated as an unrecoverable invariant violation
+		 * (the type was never PushGet'd): the failure is logged and the
+		 * process aborts, trapping immediately under the debugger rather than
+		 * propagating a null that some distant call site would dereference.
+		 */
+		template <typename T> [[nodiscard]] static T* GetInstance() {
+			T* instance {Get().GetSubobject<T>()};
+			if (!instance) {
+				std::println("[MemoryManagement] Fatal: no stored object of type '{}' — was it PushGet'd first?",
+					TypeNameOf<T>());
+				std::abort();
+			}
+			return instance;
+		}
+
 		[[nodiscard]] std::size_t GetObjectCount() const;
 		[[nodiscard]] std::size_t GetTotalMemoryBytes() const;
 		void                      DumpReflectionInfo() const;
