@@ -3,6 +3,7 @@
 #include "pch.hpp"
 
 #include "app_coordinator.hpp"
+#include "app_runtime_state.hpp"
 #include "fps_plot.hpp"
 #include "imgui_context.hpp"
 #include "managed_thread.hpp"
@@ -43,57 +44,41 @@ protected:
 	bool Alloc();
 
 private:
+	// Injected config / singletons / the registry handle itself — NOT
+	// registry-owned, so they keep their existing lifetimes.
 	AppContext* m_AppContext = nullptr;
 	// Resolved command-line overrides, applied in KickStart() after the TOML
 	// load. See StartupOptions.
-	StartupOptions m_Opts;
+	StartupOptions    m_Opts;
+	MemoryManagement* m_mem = nullptr;
 
- MemoryManagement* m_mem;
+	// Everything below is allocated in Alloc() via m_mem->PushGet<T>() at the
+	// start of each run(), cached here as a raw observer pointer, and dropped in
+	// destroy() via m_mem->Release<T>(). The registry owns the storage; App only
+	// holds the addresses. Re-created fresh on every reopen iteration.
 
-
-	// Session-only override bookkeeping: the file-explorer visibility as it was
-	// loaded from TOML, snapshotted BEFORE m_Opts is applied. destroy() restores
-	// it before saving so a --file-browser/--no-file-browser flag never rewrites
-	// the persisted preference on disk.
-	bool m_OriginalShowFileExplorer = false;
-
-	// Platform + rendering backends. Default-constructed here (cheap), then
-	// actually initialised inside KickStart(); torn down in destroy().
-	sdl3_context*              m_Sdl;
-	vulkan_context            m_Vk;
-	imgui_context             m_Imgui;
-	VkSurfaceKHR              m_Surface = VK_NULL_HANDLE;
-	ImGui_ImplVulkanH_Window* m_Wd      = nullptr;
+	// Platform + rendering backends.
+	sdl3_context*   m_Sdl   = nullptr;
+	vulkan_context* m_Vk    = nullptr;
+	imgui_context*  m_Imgui = nullptr;
 
 	// UI panels / editors drawn every frame.
-	FpsPlot               m_FpsPlot;
-	ThreadReflectionPanel m_ThreadPanel;
-	StyleEditor           m_StyleEditor;
-	AppCoordinator        m_MenuBar;
+	FpsPlot*               m_FpsPlot     = nullptr;
+	ThreadReflectionPanel* m_ThreadPanel = nullptr;
+	StyleEditor*           m_StyleEditor = nullptr;
+	AppCoordinator*        m_MenuBar     = nullptr;
 
-	// Persisted window/session state and the toml path it round-trips through.
-	WindowStateToml m_State;
-	std::string     m_StatePath;
+	// Persisted window/session state (round-trips through TOML).
+	WindowStateToml* m_State = nullptr;
 
-	// Runtime UI flags.
-	ImVec4 m_ClearColor        = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-	bool   m_Done              = false;
-	bool   m_ShowDemoWindow    = false;
-	bool   m_ShowAnotherWindow = false;
-	bool   m_Vsync             = false;
-	bool   m_StrTest           = false;
-	bool   m_ShowThreadPanel   = false;
-
-	// Shift-drag window-move state.
-	bool  m_IsDragging = false;
-	float m_DragStartX = 0.0f;
-	float m_DragStartY = 0.0f;
-
-	// Session uptime origin, stamped in KickStart().
-	std::chrono::steady_clock::time_point m_AppStartTime;
+	// Loose runtime flags + render handles, bundled into one registry entry.
+	// See AppRuntimeState. Replaces the former scattered m_Surface/m_Wd/
+	// m_StatePath/m_ClearColor/m_Done/... members.
+	AppRuntimeState* m_Rt = nullptr;
 
 #ifdef _DEBUG
 	// Session-lifetime demo thread so the reflection panel is populated on launch.
+	// A plain unique_ptr member (not registry-owned); re-spawned each KickStart().
 	std::unique_ptr<ManagedThread> m_DebugDemoThread;
 #endif
 };

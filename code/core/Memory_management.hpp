@@ -110,6 +110,41 @@ class MemoryManagement {
 			return instance;
 		}
 
+		/**
+		 * @brief Destroys every stored object of type T right now.
+		 *
+		 * The deterministic counterpart to PushGet: erasing the entry drops the
+		 * owning shared_ptr<void>, so the object's destructor runs at THIS call
+		 * site instead of being deferred to static-exit teardown. Returns the
+		 * registry to a state where a later PushGet<T> creates a genuinely fresh
+		 * instance — without this, a second PushGet<T> would append a duplicate
+		 * and the type-keyed lookup would keep handing back the stale first one.
+		 * Call only after any explicit cleanup method (cleanup()/shutdown()) has
+		 * run, and never on a type whose instance is executing this code.
+		 */
+		template <typename T> void Release() {
+			std::type_index const type {typeid(T)};
+			std::size_t const     removed {std::erase_if(m_entries,
+                [type](ObjectEntry const& entry) { return entry.type == type; })};
+			if (removed > 0)
+				std::println("[MemoryManagement] Released '{}' ({} entr{})", TypeNameOf<T>(), removed,
+					removed == 1 ? "y" : "ies");
+		}
+
+		/**
+		 * @brief Destroys all stored objects in reverse registration order.
+		 *
+		 * Pops entries back-to-front (LIFO) so dependents fall before the
+		 * dependencies they were built on, mirroring how stack-allocated members
+		 * unwind. Intended for a clean global shutdown. Must NOT be invoked from
+		 * inside a method of an object that is itself registered (e.g. App), as
+		 * it would free the very object running the call.
+		 */
+		void ReleaseAll() {
+			while (!m_entries.empty())
+				m_entries.pop_back();
+		}
+
 		[[nodiscard]] std::size_t GetObjectCount() const;
 		[[nodiscard]] std::size_t GetTotalMemoryBytes() const;
 		void                      DumpReflectionInfo() const;
