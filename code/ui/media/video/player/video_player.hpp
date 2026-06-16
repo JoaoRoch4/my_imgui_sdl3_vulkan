@@ -155,6 +155,16 @@ public:
     /// directed at the currently-active video entry.  No-op when no entry is active.
     void handle_media_key(SDL_Keycode key);
 
+    /// Seek the currently-active video entry by @p seconds (negative = backward).
+    /// Falls back to the first open entry; no-op when none is open.
+    void seek_active_video(double seconds);
+
+    /// Adjust the active entry's volume by @p delta percent (clamped 0..130).
+    void adjust_active_volume(int delta);
+
+    /// Toggle loop-file on the active entry (kept in sync with the UI button).
+    void toggle_active_loop();
+
     /// Attach a VideoContextMenu for right-click menus on video windows.
     ///
     /// @param ctx     Context menu instance (lifetime must exceed VideoPlayer).
@@ -193,6 +203,13 @@ private:
     bool ensure_setup();
     bool ensure_hover_setup();
 
+    /// Active entry (id == m_active_video_id), else the first open one, else null.
+    VideoEntry *active_or_first_entry();
+
+    /// Per-frame Space hold-to-accelerate FSM (tap = play/pause, hold = Nx),
+    /// mirroring the left-mouse behaviour in VideoUiWindow.
+    void update_space_hold_speed();
+
     /// All per-video runtime state.
     
 
@@ -220,6 +237,12 @@ private:
     int m_next_id;
     int m_active_video_id{-1};
     int m_resume_persist_min_duration_seconds;
+
+    // Space hold-to-accelerate state (see update_space_hold_speed()).
+    bool                                  m_space_active{false};
+    bool                                  m_space_accelerating{false};
+    double                                m_space_saved_speed{1.0};
+    std::chrono::steady_clock::time_point m_space_press_time{};
 
     // Global defaults applied to all newly-opened videos.
     bool m_global_hwdec_enabled = false;

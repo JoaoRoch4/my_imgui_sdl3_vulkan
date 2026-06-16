@@ -53,6 +53,12 @@ class ConfigRuntime {
 
 		[[nodiscard]] int VideoResumeThresholdSeconds() const;
 
+		/// Current hold-to-accelerate playback speed multiplier.
+		[[nodiscard]] float HoldSpeedMultiplier() const;
+
+		/// Current arrow-key / button seek step in seconds.
+		[[nodiscard]] int SeekStepSeconds() const;
+
 		/// Register a callback invoked when hover preview enabled/delay changes.
 		void SetHoverPreviewChangedCallback(std::function<void(bool, int)> cb);
 
@@ -80,6 +86,8 @@ class ConfigRuntime {
 		ImVec2                         m_pending_seek_size;
 		int                            m_pending_video_resume_threshold_seconds;
 		int                            m_applied_video_resume_threshold_seconds;
+		float                          m_pending_hold_speed_multiplier;
+		int                            m_pending_seek_step_seconds;
 		std::function<void()>          m_on_clear_thumbnail_cache;
 		std::function<void()>          m_on_clear_file_explorer_cache;
 		std::function<void()>          m_on_clear_video_cache;

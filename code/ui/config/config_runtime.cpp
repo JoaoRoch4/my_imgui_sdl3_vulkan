@@ -6,6 +6,7 @@
 #include "video_hover_preview.hpp"
 #include "video_playback_mode.hpp"
 #include "video_seek_preview.hpp"
+#include "video_ui_window.hpp"
 
 namespace {
 
@@ -30,6 +31,8 @@ ConfigRuntime::ConfigRuntime()
     , m_pending_seek_size {VideoSeekPreview::preview_size}
     , m_pending_video_resume_threshold_seconds {WindowStateToml {}.video_resume_persist_min_duration_seconds}
     , m_applied_video_resume_threshold_seconds {WindowStateToml {}.video_resume_persist_min_duration_seconds}
+    , m_pending_hold_speed_multiplier {WindowStateToml {}.video_hold_speed_multiplier}
+    , m_pending_seek_step_seconds {WindowStateToml {}.video_seek_step_seconds}
     , m_on_clear_thumbnail_cache {nullptr}
     , m_on_clear_file_explorer_cache {nullptr}
     , m_on_clear_video_cache {nullptr}
@@ -133,6 +136,10 @@ void ConfigRuntime::SetRestartAllThreadsCallback(std::function<void()> cb) { m_o
 
 int ConfigRuntime::VideoResumeThresholdSeconds() const { return m_applied_video_resume_threshold_seconds; }
 
+float ConfigRuntime::HoldSpeedMultiplier() const { return m_pending_hold_speed_multiplier; }
+
+int ConfigRuntime::SeekStepSeconds() const { return m_pending_seek_step_seconds; }
+
 void ConfigRuntime::ApplyLayout(const WindowStateToml& state) {
     IsOpen = state.show_runtime_config_window;
 
@@ -153,6 +160,11 @@ void ConfigRuntime::ApplyLayout(const WindowStateToml& state) {
     m_applied_video_resume_threshold_seconds = m_pending_video_resume_threshold_seconds;
     if (m_on_video_resume_threshold_changed)
 	m_on_video_resume_threshold_changed(m_applied_video_resume_threshold_seconds);
+
+    m_pending_hold_speed_multiplier	   = std::clamp(state.video_hold_speed_multiplier, 1.0f, 8.0f);
+    m_pending_seek_step_seconds		   = std::clamp(state.video_seek_step_seconds, 1, 600);
+    VideoUiWindow::hold_speed_multiplier   = m_pending_hold_speed_multiplier;
+    VideoUiWindow::seek_step_seconds	   = m_pending_seek_step_seconds;
 
     m_pending_hover_preview_enabled  = state.hover_preview_enabled;
     m_pending_hover_preview_delay_ms = std::clamp(state.hover_preview_delay_ms, 0, 5000);
@@ -186,6 +198,8 @@ void ConfigRuntime::ExportLayout(WindowStateToml* state) const {
     state->image_hover_preview_size
 	= WindowStateToml::Vec2Toml {ImageViewerPanel::hover_preview_size.x, ImageViewerPanel::hover_preview_size.y};
     state->video_resume_persist_min_duration_seconds = m_applied_video_resume_threshold_seconds;
+    state->video_hold_speed_multiplier		     = m_pending_hold_speed_multiplier;
+    state->video_seek_step_seconds		     = m_pending_seek_step_seconds;
     state->hover_preview_enabled		     = VideoHoverPreview::enabled;
     state->hover_preview_delay_ms		     = static_cast<int>(VideoHoverPreview::hover_delay.count());
     state->hover_preview_sound			     = VideoHoverPreview::preview_sound;

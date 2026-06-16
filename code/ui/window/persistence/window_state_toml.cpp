@@ -77,6 +77,12 @@ std::string FieldCommentFor(const std::string &section_name,
   if (key == "video_resume_persist_min_duration_seconds")
     return "# Only save resume_position_seconds for media at or above this "
            "duration.";
+  if (key == "video_hold_speed_multiplier")
+    return "# Playback speed applied while the left mouse button is held on "
+           "the video (released restores normal speed).";
+  if (key == "video_seek_step_seconds")
+    return "# Seconds the Left/Right arrow keys and seek buttons jump per "
+           "press.";
   if (key == "file_explorer_last_directory")
     return "# Last folder opened in File Explorer.";
   if (key == "file_explorer_sort_mode")

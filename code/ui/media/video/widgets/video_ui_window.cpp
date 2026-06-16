@@ -641,14 +641,62 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         const ImVec2 image_pos = ImGui::GetCursorScreenPos();
         ImGui::Image(std::bit_cast<ImTextureID>(state.descriptor_set),
                      ImVec2(display_width, display_height));
-        if (ImGui::IsItemHovered()) {
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                const bool next_fullscreen = !is_fullscreen_active();
-                set_fullscreen_active(next_fullscreen);
-                state.osd.show(next_fullscreen ? "Fullscreen" : "Windowed");
-            } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Left-button interaction on the video image:
+        //   * quick tap     -> toggle pause
+        //   * hold (>180ms) -> play at hold_speed_multiplier while held, restore on release
+        //   * double-click  -> toggle fullscreen
+        // Per-window transient state keyed by id (same pattern as s_auto_hide).
+        struct HoldSpeed {
+            bool   active       = false; // a press that began on this image is ongoing
+            bool   accelerating = false; // threshold passed -> speed boosted
+            bool   suppress_tap = false; // a double-click consumed this press
+            double saved_speed  = 1.0;   // speed to restore on release
+            std::chrono::steady_clock::time_point press_time{};
+        };
+        static std::unordered_map<int, HoldSpeed> s_hold_speed;
+        HoldSpeed &hold = s_hold_speed[state.id];
+        constexpr auto k_hold_threshold = std::chrono::milliseconds(180);
+
+        const bool image_hovered = ImGui::IsItemHovered();
+
+        if (image_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            hold.active       = true;
+            hold.accelerating = false;
+            hold.suppress_tap = false;
+            hold.press_time   = now;
+        }
+
+        if (image_hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            const bool next_fullscreen = !is_fullscreen_active();
+            set_fullscreen_active(next_fullscreen);
+            state.osd.show(next_fullscreen ? "Fullscreen" : "Windowed");
+            hold.suppress_tap = true; // don't let the release also toggle pause
+        }
+
+        // Engage the speed boost once the press has been held past the threshold.
+        if (hold.active && !hold.accelerating && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+            (now - hold.press_time) >= k_hold_threshold) {
+            hold.accelerating = true;
+            hold.saved_speed  = 1.0;
+            mpv_get_property(state.mpv, "speed", MPV_FORMAT_DOUBLE, &hold.saved_speed);
+            double boosted = static_cast<double>(VideoUiWindow::hold_speed_multiplier);
+            mpv_set_property(state.mpv, "speed", MPV_FORMAT_DOUBLE, &boosted);
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.2gx", boosted);
+            state.osd.show(buf);
+        }
+
+        // Release ends the interaction (handled even if the cursor left the image).
+        if (hold.active && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (hold.accelerating) {
+                mpv_set_property(state.mpv, "speed", MPV_FORMAT_DOUBLE, &hold.saved_speed);
+                state.osd.show("1x");
+            } else if (!hold.suppress_tap && (now - hold.press_time) < k_hold_threshold) {
                 toggle_pause();
             }
+            hold.active       = false;
+            hold.accelerating = false;
+            hold.suppress_tap = false;
         }
 
         if (is_fullscreen_active() && state.downloaded_bytes > 0 && !state.osd.visible()) {
@@ -697,7 +745,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton("<<"))
-        seek_by(seek_seconds_button_backward);
+        seek_by(-VideoUiWindow::seek_step_seconds);
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton(paused ? "|>" : "||"))
@@ -705,7 +753,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     ImGui::SameLine(0.0f, 4.0f);
     if (ImGui::SmallButton(">>"))
-        seek_by(static_cast<int>(seek_seconds_button_foward));
+        seek_by(VideoUiWindow::seek_step_seconds);
 
     ImGui::SameLine(0.0f, 4.0f);
     const bool loop_style_pushed = state.loop;

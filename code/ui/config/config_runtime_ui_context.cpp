@@ -8,6 +8,7 @@
 #include "video_hover_preview.hpp"
 #include "video_playback_mode.hpp"
 #include "video_seek_preview.hpp"
+#include "video_ui_window.hpp"
 
 void ConfigRuntimeUiContext::DrawUi() {
 
@@ -167,6 +168,27 @@ void ConfigRuntimeUiContext::DrawUi() {
 	}
 	ImGui::SameLine();
 	ImGui::TextDisabled("Only videos at or above this duration save resume position");
+    }
+
+    if (ImGui::CollapsingHeader("Playback Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+	ImGui::SetNextItemWidth(180.0f);
+	if (ImGui::DragFloat("Hold-to-speed multiplier##hold_speed",
+		&cfg->m_pending_hold_speed_multiplier, 0.05f, 1.0f, 8.0f, "%.2fx")) {
+	    cfg->m_pending_hold_speed_multiplier
+		= std::clamp(cfg->m_pending_hold_speed_multiplier, 1.0f, 8.0f);
+	    VideoUiWindow::hold_speed_multiplier = cfg->m_pending_hold_speed_multiplier;
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Speed while holding left mouse on the video");
+
+	ImGui::SetNextItemWidth(180.0f);
+	if (ImGui::DragInt("Seek step (seconds)##seek_step",
+		&cfg->m_pending_seek_step_seconds, 1.0f, 1, 600, "%d s")) {
+	    cfg->m_pending_seek_step_seconds = std::clamp(cfg->m_pending_seek_step_seconds, 1, 600);
+	    VideoUiWindow::seek_step_seconds = cfg->m_pending_seek_step_seconds;
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("Left/Right arrow keys and seek buttons jump this many seconds");
     }
 
     if (ImGui::CollapsingHeader("History Metadata", ImGuiTreeNodeFlags_DefaultOpen)) {

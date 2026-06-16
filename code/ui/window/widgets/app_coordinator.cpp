@@ -568,10 +568,34 @@ void AppCoordinator::HandleSdlEvent(const SDL_Event &event) {
 
   const SDL_Keycode key = event.key.key;
 
-  // Spacebar toggles play/pause only when ImGui is not consuming keyboard input.
-  if (key == SDLK_SPACE && !ImGui::GetIO().WantCaptureKeyboard) {
+  // Space (tap = play/pause, hold = accelerate) is handled per-frame in
+  // VideoPlayer::update_space_hold_speed() so the hold threshold is frame-accurate
+  // rather than tied to the OS key-repeat delay.
+
+  // Left/Right arrows seek the active video by the configurable step. Same
+  // WantTextInput guard so they still move the caret inside text fields.
+  if ((key == SDLK_LEFT || key == SDLK_RIGHT) && !ImGui::GetIO().WantTextInput) {
+    if (!m_use_video_player_placebo && m_video_player && m_config_runtime) {
+      const auto step = static_cast<double>(m_config_runtime->SeekStepSeconds());
+      m_video_player->seek_active_video(key == SDLK_RIGHT ? step : -step);
+    }
+    return;
+  }
+
+  // Up/Down adjust volume, C toggles mute, L toggles loop on the active video.
+  if ((key == SDLK_UP || key == SDLK_DOWN) && !ImGui::GetIO().WantTextInput) {
     if (!m_use_video_player_placebo && m_video_player)
-      m_video_player->handle_media_key(SDLK_MEDIA_PLAY_PAUSE);
+      m_video_player->adjust_active_volume(key == SDLK_UP ? 5 : -5);
+    return;
+  }
+  if (key == SDLK_C && !ImGui::GetIO().WantTextInput) {
+    if (!m_use_video_player_placebo && m_video_player)
+      m_video_player->handle_media_key(SDLK_MUTE);
+    return;
+  }
+  if (key == SDLK_L && !ImGui::GetIO().WantTextInput) {
+    if (!m_use_video_player_placebo && m_video_player)
+      m_video_player->toggle_active_loop();
     return;
   }
 

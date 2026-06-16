@@ -1477,26 +1477,22 @@ void VideoPlayer::set_all_loop(bool enabled)
     }
 }
 
-void VideoPlayer::handle_media_key(SDL_Keycode key) {
-    // Find the active entry (the one currently playing, or the most-recently-active).
-    VideoEntry *target = nullptr;
+VideoEntry *VideoPlayer::active_or_first_entry() {
+    // Prefer the active entry (the one currently playing / most-recently-active).
     for (auto &ep : m_entries) {
-        if (!ep->open || !ep->mpv)
-            continue;
-        if (ep->id == m_active_video_id) {
-            target = ep.get();
-            break;
-        }
+        if (ep->open && ep->mpv && ep->id == m_active_video_id)
+            return ep.get();
     }
     // Fall back to the first open entry when no active id is tracked.
-    if (!target) {
-        for (auto &ep : m_entries) {
-            if (ep->open && ep->mpv) {
-                target = ep.get();
-                break;
-            }
-        }
+    for (auto &ep : m_entries) {
+        if (ep->open && ep->mpv)
+            return ep.get();
     }
+    return nullptr;
+}
+
+void VideoPlayer::handle_media_key(SDL_Keycode key) {
+    VideoEntry *target = active_or_first_entry();
     if (!target)
         return;
 
@@ -1539,6 +1535,88 @@ void VideoPlayer::handle_media_key(SDL_Keycode key) {
     }
     default:
         break;
+    }
+}
+
+void VideoPlayer::seek_active_video(double seconds) {
+    VideoEntry *target = active_or_first_entry();
+    if (!target)
+        return;
+
+    const std::string amount = std::to_string(seconds);
+    const char *cmd[] = {"seek", amount.c_str(), "relative", nullptr};
+    mpv_command_async(target->mpv, 0, cmd);
+}
+
+void VideoPlayer::adjust_active_volume(int delta) {
+    VideoEntry *target = active_or_first_entry();
+    if (!target)
+        return;
+
+    int64_t volume = 100;
+    mpv_get_property(target->mpv, "volume", MPV_FORMAT_INT64, &volume);
+    volume = std::clamp<int64_t>(volume + delta, 0, 130);
+    mpv_set_property(target->mpv, "volume", MPV_FORMAT_INT64, &volume);
+
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "Volume %d%%", static_cast<int>(volume));
+    target->osd.show(buf);
+}
+
+void VideoPlayer::toggle_active_loop() {
+    VideoEntry *target = active_or_first_entry();
+    if (!target)
+        return;
+
+    target->loop = !target->loop;
+    mpv_command_string(target->mpv, target->loop ? "set loop-file inf" : "set loop-file no");
+    target->osd.show(target->loop ? "Loop On" : "Loop Off");
+}
+
+void VideoPlayer::update_space_hold_speed() {
+    // Mirror the left-mouse hold FSM (VideoUiWindow) for the Space key:
+    //   * quick tap     -> toggle play/pause
+    //   * hold (>180ms) -> play at hold_speed_multiplier, restore on release
+    // Read the live key state so the threshold is frame-accurate (independent of
+    // the OS key-repeat delay). WantTextInput keeps Space usable in text fields.
+    const ImGuiIO &io = ImGui::GetIO();
+    const bool space_down = ImGui::IsKeyDown(ImGuiKey_Space) && !io.WantTextInput;
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto k_hold_threshold = std::chrono::milliseconds(180);
+
+    VideoEntry *target = active_or_first_entry();
+
+    if (space_down && !m_space_active) {
+        m_space_active	   = true;
+        m_space_accelerating = false;
+        m_space_press_time   = now;
+    }
+
+    if (m_space_active && space_down && !m_space_accelerating && target &&
+        (now - m_space_press_time) >= k_hold_threshold) {
+        m_space_accelerating = true;
+        m_space_saved_speed  = 1.0;
+        mpv_get_property(target->mpv, "speed", MPV_FORMAT_DOUBLE, &m_space_saved_speed);
+        auto boosted = static_cast<double>(VideoUiWindow::hold_speed_multiplier);
+        mpv_set_property(target->mpv, "speed", MPV_FORMAT_DOUBLE, &boosted);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.2gx", boosted);
+        target->osd.show(buf);
+    }
+
+    if (m_space_active && !space_down) {
+        if (m_space_accelerating) {
+            if (target) {
+                mpv_set_property(target->mpv, "speed", MPV_FORMAT_DOUBLE, &m_space_saved_speed);
+                target->osd.show("1x");
+            }
+        } else if ((now - m_space_press_time) < k_hold_threshold && target) {
+            int paused = 1;
+            mpv_get_property(target->mpv, "pause", MPV_FORMAT_FLAG, &paused);
+            set_playback_state(target->id, paused != 0);
+        }
+        m_space_active	   = false;
+        m_space_accelerating = false;
     }
 }
 
@@ -1605,6 +1683,8 @@ void VideoPlayer::draw() {
            "VideoPlayer::draw() must be called from the main thread");
     if (!m_vk)
         return;
+
+    update_space_hold_speed();
 
     struct ReloadRequest {
         std::string source;

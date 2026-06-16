@@ -156,6 +156,8 @@ struct WindowStateToml {
   bool global_hwdec_enabled = false;
   int global_video_playback_mode = -1; // -1=derive from global_hwdec_enabled, else 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo
   bool global_loop_enabled = false;
+  float video_hold_speed_multiplier = 2.0f; // playback speed while left mouse is held on the video
+  int  video_seek_step_seconds = 5;         // arrow-key / button seek step in seconds
 
   std::optional<ColorToml> clear_color;
 

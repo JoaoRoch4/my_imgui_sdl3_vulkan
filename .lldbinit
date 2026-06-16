@@ -1,0 +1,15 @@
+# Project-local LLDB data formatters.
+# NOT auto-loaded (lldb only sources ~/.lldbinit by default) — the .vscode/launch.json
+# configs pull this in explicitly via `initCommands: ["command source ${workspaceFolder}/.lldbinit"]`.
+# These make the app's core value types print readably in the Variables pane.
+# LLDB already ships libstdc++ formatters, so std::span / string_view / vector
+# already render as "size=N {...}"; the rules below add the app's own types.
+
+# img::ImageBuffer  ->  "1920x1080x4ch, data:size=8294400"
+type summary add -s "${var.width}x${var.height}x${var.channels}ch, data:${var.data}" img::ImageBuffer
+
+# MemoryManagement::ObjectEntry  ->  "<typeName> '<debugName>' 1234B"
+type summary add -s "${var.typeName} '${var.debugName}' ${var.sizeBytes}B" "MemoryManagement::ObjectEntry"
+
+# MemoryManagement  ->  "registry: size=N"
+type summary add -s "registry: ${var.m_entries}" MemoryManagement

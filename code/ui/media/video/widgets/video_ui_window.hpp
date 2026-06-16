@@ -13,6 +13,14 @@ class VideoContextMenu;
 
 class VideoUiWindow {
 public:
+    /// Runtime-mutable (set from ConfigRuntime): playback speed applied while the
+    /// left mouse button is held on the video; released restores the prior speed.
+    static inline float hold_speed_multiplier = 2.0f;
+
+    /// Runtime-mutable (set from ConfigRuntime): seconds the arrow keys and the
+    /// on-screen seek buttons jump per press.
+    static inline int seek_step_seconds = 5;
+
     struct State {
         mpv_handle       *mpv;
         const std::string &display_title;
