@@ -1,9 +1,6 @@
 #pragma once
 #include "pch.hpp"
 
-
-
-
 template <typename T> [[nodiscard]] constexpr std::string_view TypeNameOf() {
 	constexpr std::string_view signature {__PRETTY_FUNCTION__};
 	constexpr std::string_view key {"T = "};
@@ -169,3 +166,4 @@ class MemoryManagement {
 
 		std::vector<ObjectEntry> m_entries;
 };
+

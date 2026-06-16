@@ -53,9 +53,11 @@ public:
   AppCoordinator(const AppCoordinator &) = delete;
   AppCoordinator &operator=(const AppCoordinator &) = delete;
 
-  void Setup(StyleEditor *style_editor, SDL_Window *window, vulkan_context *vk,
-             bool *show_demo_window, bool *show_another_window,
-             std::function<void(bool)> on_vsync_changed = nullptr);
+  // The former external dependencies (StyleEditor, the SDL_Window, the
+  // vulkan_context and the demo/another show flags) are now pulled directly from
+  // the MemoryManagement registry inside Setup() via GetInstance<T>(), so App no
+  // longer threads them through. Only the vsync behaviour hook is still injected.
+  void Setup(std::function<void(bool)> on_vsync_changed = nullptr);
 
   /// Call once per frame between NewFrame() and Render().
   void Build();

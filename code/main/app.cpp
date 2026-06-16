@@ -142,11 +142,12 @@ bool App::KickStart() {
 	m_Rt->vsync             = m_State->vsync;
 	m_Vk->set_vsync(m_Rt->wd, m_Rt->vsync);
 
-	m_MenuBar->Setup(m_StyleEditor, m_Sdl->window, m_Vk, &m_Rt->showDemoWindow, &m_Rt->showAnotherWindow,
-		[this](bool enabled) {
-			m_Rt->vsync = enabled;
-			m_Vk->set_vsync(m_Rt->wd, m_Rt->vsync);
-		});
+	// Phase-2: the coordinator now pulls StyleEditor / window / vulkan_context /
+	// show-flags from the registry itself. App only injects the vsync behaviour.
+	m_MenuBar->Setup([this](bool enabled) {
+		m_Rt->vsync = enabled;
+		m_Vk->set_vsync(m_Rt->wd, m_Rt->vsync);
+	});
 	m_MenuBar->LoadOpenedFilesHistoryFromToml(m_Rt->statePath);
 	m_MenuBar->SetStatePath(m_Rt->statePath);
 	m_MenuBar->ApplyHistory(*m_State);

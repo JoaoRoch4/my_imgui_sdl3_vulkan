@@ -23,6 +23,18 @@ include(PerConfigExternal)   # per-config ExternalProject helpers (FFmpeg/mpv/li
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ── Sanitizers (opt-in) ───────────────────────────────────────────────────────
+# -DENABLE_SANITIZERS=ON instruments the app target with AddressSanitizer + UBSan
+# in the Debug config ONLY — Release / RelWithDebInfo and the perf workflow are
+# never touched. It's a mode toggle on the shared build/all tree: reconfigure with
+# =ON, rebuild Debug, debug via the "Debug + ASan/UBSan" launch config; turn it
+# back off with -DENABLE_SANITIZERS=OFF. Only the app's own objects are
+# instrumented — the prebuilt thirdparty static archives (FFmpeg/mpv/libplacebo/
+# SDL3/…) stay as-is, so no media rebuild, and ASan still catches bugs in app code.
+# (Mixing instrumented app + un-instrumented STL needs detect_container_overflow=0,
+#  which the launch config's ASAN_OPTIONS sets.)
+option(ENABLE_SANITIZERS "Build the app target with ASan+UBSan (Debug config only)" OFF)
+
 # Emit compile_commands.json (clangd / tooling) for every configure, not just the
 # `all` preset. Harmless redundancy when the preset already sets it; the safety net
 # is for bare `cmake -S . -B <dir>` invocations that don't go through the preset.
@@ -306,6 +318,13 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
     $<$<CONFIG:Debug>:-mno-omit-leaf-frame-pointer>
 
+    # Sanitizers (opt-in via -DENABLE_SANITIZERS=ON; Debug only). The two
+    # -fsanitize= flags are kept separate — clang merges them, and a comma inside
+    # a generator expression would be parsed as an argument separator.
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=address>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fno-sanitize-recover=undefined>
+
     # Release (Clang only): aggressive optimisation + LTO + dead-code elimination
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-O3>
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-march=native>
@@ -326,6 +345,11 @@ target_link_options(example_sdl3_vulkan PRIVATE
     # profilers (perf, backtrace_symbols, sampling tools) can resolve stb /
     # ImGui / ImPlot and application frames at runtime. Applied to every config.
     -rdynamic
+
+    # Sanitizers (opt-in; Debug only) — must also be passed at link time so the
+    # ASan/UBSan runtimes are linked into the executable.
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=address>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
 
     # Release (Clang only): ThinLTO + strip unused sections
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-flto=thin>

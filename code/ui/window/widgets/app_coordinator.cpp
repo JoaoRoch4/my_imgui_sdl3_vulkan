@@ -9,6 +9,11 @@
 
 #include "app_coordinator.hpp"
 
+#include "Memory_management.hpp"
+#include "app_runtime_state.hpp"
+#include "sdl3_context.hpp"
+#include "vulkan_context.hpp"
+
 #include "Image_viewer_panel.hpp"
 #include "app_state_coordinator.hpp"
 #include "bulk_image_open_queue.hpp"
@@ -127,15 +132,17 @@ AppCoordinator::~AppCoordinator() = default;
 // Public lifecycle
 // ============================================================================
 
-void AppCoordinator::Setup(StyleEditor *style_editor, SDL_Window *window,
-                           vulkan_context *vk, bool *show_demo_window,
-                           bool *show_another_window,
-                           std::function<void(bool)> on_vsync_changed) {
-  m_style_editor = style_editor;
-  m_window = window;
-  m_vk = vk;
-  m_show_demo_window = show_demo_window;
-  m_show_another_window = show_another_window;
+void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
+  // Phase-2 centralization: instead of App threading these in, resolve the
+  // former external dependencies straight from the MemoryManagement registry.
+  // All of them were PushGet'd in App::Alloc() before KickStart() calls Setup(),
+  // so GetInstance<T>() (fatal-on-miss) always finds them here.
+  AppRuntimeState *rt = MemoryManagement::GetInstance<AppRuntimeState>();
+  m_style_editor = MemoryManagement::GetInstance<StyleEditor>();
+  m_window = MemoryManagement::GetInstance<sdl3_context>()->window;
+  m_vk = MemoryManagement::GetInstance<vulkan_context>();
+  m_show_demo_window = &rt->showDemoWindow;
+  m_show_another_window = &rt->showAnotherWindow;
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
 

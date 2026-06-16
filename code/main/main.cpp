@@ -1,5 +1,5 @@
-#include "main.hpp"
 #include "app.hpp"
+#include "main.hpp"
 #include "pch.hpp"
 
 #include "Args.hpp"
