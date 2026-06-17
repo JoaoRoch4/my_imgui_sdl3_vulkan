@@ -136,15 +136,11 @@ bool MainMenuBar::Draw(MainMenuBar::MenuContext const &mc) {
 
 	if (ImGui::BeginMenu("View")) {
 		auto &show_file_explorer = *mc.show_file_explorer;
-		auto &file_explorer      = *mc.file_explorer;
-
-		if (ImGui::MenuItem("File Explorer", nullptr, show_file_explorer)) {
+		// Only toggle the flag. AppCoordinator's render loop creates the heap browser
+		// (and Open()s it) when this turns on, and destroys it when it turns off — the
+		// menu no longer owns or touches the browser object (mc.file_explorer may be null).
+		if (ImGui::MenuItem("File Explorer", nullptr, show_file_explorer))
 			show_file_explorer = !show_file_explorer;
-			if (show_file_explorer)
-				file_explorer.Open();
-			else
-				file_explorer.Close();
-		}
 
 		if (ImGui::MenuItem("Console", nullptr, m_show_console))
 			m_show_console = !m_show_console;

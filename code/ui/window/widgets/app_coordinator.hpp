@@ -108,9 +108,11 @@ public:
   bool request_quit;   ///< Set to true when File > Quit is selected.
   bool request_reopen; ///< Set to true when Runtime Config requests app reopen.
 
-private:
-  // ---- Non-owning external dependencies (provided by App) -----------------
-  StyleEditor *m_style_editor;
+  ImGui::FileBrowser &open_file_explorer();
+
+	  private :
+	  // ---- Non-owning external dependencies (provided by App) -----------------
+	  StyleEditor *m_style_editor;
   SDL_Window *m_window;
   vulkan_context *m_vk;
   bool *m_show_demo_window;
@@ -143,6 +145,21 @@ private:
   AppStateCoordinator *m_app_state = nullptr;
   ConsoleCommands *m_console = nullptr;
   VulkanEmojiAtlas *m_emoji_atlas = nullptr;
+
+  // ---- File explorer lifecycle --------------------------------------------
+  // The file browser is NOT a persistent static. It is created on the heap
+  // (MemoryManagement registry) when opened and destroyed when closed, so its
+  // scanner + thumbnail worker threads start fresh each open and fully end on
+  // close. m_explorer_thumb_dir is captured by SetThumbDir so a (re)created
+  // browser can Setup() its thumbnail engine. See app_coordinator.cpp.
+  std::filesystem::path m_explorer_thumb_dir;
+
+
+  // Persist the browser's layout, end its threads, and release it from the
+  // registry (destructor joins scanner + thumbnail workers). No-op if absent.
+  void                close_file_explorer();
+  void                apply_file_explorer_layout(ImGui::FileBrowser &fb, WindowStateToml const &state) const;
+  void                export_file_explorer_layout(ImGui::FileBrowser &fb, WindowStateToml *state) const;
 
   // ---- Menu bar (rendering only) ------------------------------------------
   MainMenuBar m_menu;

@@ -45,18 +45,10 @@
 // ============================================================================
 
 namespace {
-ImGui::FileBrowser &GetMainFileExplorer() {
-	static ImGui::FileBrowser browser(ImGuiFileBrowserFlags_Window | ImGuiFileBrowserFlags_EditPathString
-		| ImGuiFileBrowserFlags_CreateNewDir | ImGuiFileBrowserFlags_MultipleSelection);
-	static bool               configured = false;
-	if (!configured) {
-		browser.SetTitle("File Explorer");
-		browser.SetWindowSize(900, 560);
-		browser.SetTypeFilters({".*"});
-		configured = true;
-	}
-	return browser;
-}
+// The file browser lives in the MemoryManagement registry, created on open and
+// released on close. fb_ptr() returns the current heap instance, or nullptr when
+// the explorer is closed — every call site must tolerate null.
+ImGui::FileBrowser *fb_ptr() { return MemoryManagement::Get().GetSubobject<ImGui::FileBrowser>(); }
 
 bool &GetShowFileExplorerFlag() {
 	static bool show_file_explorer = false;
@@ -139,7 +131,7 @@ void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
 	// former external dependencies straight from the MemoryManagement registry.
 	// All of them were PushGet'd in App::Alloc() before KickStart() calls Setup(),
 	// so GetInstance<T>() (fatal-on-miss) always finds them here.
-	AppRuntimeState *rt   = MemoryManagement::GetInstance<AppRuntimeState>();
+	auto *rt   = MemoryManagement::GetInstance<AppRuntimeState>();
 	m_style_editor        = MemoryManagement::GetInstance<StyleEditor>();
 	m_window              = MemoryManagement::GetInstance<sdl3_context>()->window;
 	m_vk                  = MemoryManagement::GetInstance<vulkan_context>();
@@ -213,24 +205,9 @@ void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
 		[this](bool enabled) { m_config_runtime->SetVsyncEnabled(enabled); });
 	m_history_preview->setup(m_vk, m_video_player, m_viewer, m_video_player_placebo, m_use_video_player_placebo);
 
-	// Wire the file explorer hover callback to the preview system.
-	GetMainFileExplorer().SetHoverFileCallback([this](std::filesystem::path const &path) {
-		if (!IsHoverPreviewMediaPath(path))
-			return;
-
-		WindowStateToml::ImageHistoryEntry tmp;
-		tmp.source = path.string();
-		tmp.title  = path.filename().string();
-		tmp.kind   = "file";
-		m_history_preview->draw_for_hover(tmp);
-	});
 
 	m_fb_context_menu->setup(m_window);
-	GetMainFileExplorer().SetContextMenuCallback([this](std::filesystem::path const &path) {
-		auto res = m_fb_context_menu->draw(path);
-		if (res.open)
-			m_open_image_dialogs->queue_path(res.open_path.string());
-	});
+
 
 	m_app_state->setup(m_history_mgr, m_config_runtime, m_history_preview, m_opened_files_window, m_video_downloader);
 
@@ -375,12 +352,14 @@ void AppCoordinator::Shutdown() {
 	m_video_downloader->shutdown();
 	m_history_preview->shutdown();
 	m_viewer->shutdown(*m_vk);
-	GetMainFileExplorer().ShutdownThumbnails(); // stop engine + free textures before ImGui/Vulkan teardown
-	m_ctx->DestroyEmojiAtlas(); // frees GPU resources before ImGui Vulkan shutdown
+	close_file_explorer(); // export layout + end scanner/thumbnail threads + free textures (vk/ImGui alive)
+						   m_ctx->DestroyEmojiAtlas(); // frees GPU resources before ImGui Vulkan shutdown
 	m_emoji_atlas = nullptr;
 
 	curl_global_cleanup();
 }
+
+
 
 // ============================================================================
 // History + config forwarding
@@ -391,34 +370,11 @@ void AppCoordinator::ApplyHistory(WindowStateToml const &state) { m_app_state->a
 void AppCoordinator::ApplyRuntimeConfig(WindowStateToml const &state) {
 	m_app_state->apply_runtime_config(state);
 
-	auto &browser = GetMainFileExplorer();
-	if (!state.file_explorer_recent_directories.empty()) {
-		std::vector<std::filesystem::path> dirs;
-		dirs.reserve(state.file_explorer_recent_directories.size());
-		for (auto const &dir : state.file_explorer_recent_directories) {
-			if (!dir.empty())
-				dirs.emplace_back(dir);
-		}
-		browser.SetRecentDirectories(dirs);
-	}
-	browser.SetSortModeIndex(state.file_explorer_sort_mode);
-	browser.SetSortAscending(state.file_explorer_sort_ascending);
-	browser.SetViewMode(static_cast<ImGui::FileBrowser::ViewMode>(state.file_explorer_view_mode));
-	browser.SetMediaFilter(static_cast<ImGui::FileBrowser::MediaFilter>(state.file_explorer_media_filter));
-	browser.SetPreviewEnabled(state.file_explorer_preview);
-	browser.SetShowThumbnails(state.file_explorer_show_thumbnails);
-	browser.SetKeepOpen(state.file_explorer_keep_open);
-	if (state.file_explorer_thumb_size)
-		browser.SetThumbnailSize(ImVec2 {state.file_explorer_thumb_size->x, state.file_explorer_thumb_size->y});
-	if (state.file_explorer_grid_thumb_size)
-		browser.SetGridThumbnailSize(ImVec2 {
-			state.file_explorer_grid_thumb_size->x, state.file_explorer_grid_thumb_size->y});
-	if (!state.file_explorer_last_directory.empty())
-		browser.SetDirectory(state.file_explorer_last_directory);
-	if (state.show_file_explorer_window) {
+	// The browser does not exist yet at startup — its layout is applied when
+	// open_file_explorer() creates it (it reads the same persisted state). Here we
+	// only restore the open/closed flag; the render loop creates it next frame.
+	if (state.show_file_explorer_window)
 		GetShowFileExplorerFlag() = true;
-		browser.Open();
-	}
 	m_show_console = state.show_console_window;
 }
 
@@ -439,30 +395,116 @@ void AppCoordinator::ExportHistory(WindowStateToml *state) {
 void AppCoordinator::ExportRuntimeConfig(WindowStateToml *state) const {
 	m_app_state->export_runtime_config(state);
 
-	auto &browser                        = GetMainFileExplorer();
-	state->file_explorer_last_directory  = browser.GetDirectory().string();
-	state->file_explorer_sort_mode       = browser.GetSortModeIndex();
-	state->file_explorer_sort_ascending  = browser.GetSortAscending();
-	state->file_explorer_view_mode       = static_cast<int>(browser.GetViewMode());
-	state->file_explorer_media_filter    = static_cast<int>(browser.GetMediaFilter());
-	state->file_explorer_preview         = browser.IsPreviewEnabled();
-	state->file_explorer_show_thumbnails = browser.GetShowThumbnails();
-	state->file_explorer_keep_open       = browser.GetKeepOpen();
-	{
-		ImVec2 const ts                 = browser.GetThumbnailSize();
-		state->file_explorer_thumb_size = WindowStateToml::Vec2Toml {ts.x, ts.y};
-	}
-	{
-		ImVec2 const gs                      = browser.GetGridThumbnailSize();
-		state->file_explorer_grid_thumb_size = WindowStateToml::Vec2Toml {gs.x, gs.y};
-	}
-	state->file_explorer_recent_directories.clear();
-	for (auto const &dir : browser.GetRecentDirectories())
-		state->file_explorer_recent_directories.push_back(dir.string());
+	// If the explorer is open, capture its live layout. If it is closed, the layout
+	// was already written into `state` when it was closed (close_file_explorer), so
+	// we leave those values untouched.
+	if (auto *fb = fb_ptr())
+		export_file_explorer_layout(*fb, state);
 	state->show_file_explorer_window = GetShowFileExplorerFlag();
 	state->show_console_window       = m_show_console;
 }
 
+void AppCoordinator::apply_file_explorer_layout(ImGui::FileBrowser &fb, WindowStateToml const &state) const {
+	if (!state.file_explorer_recent_directories.empty()) {
+		std::vector<std::filesystem::path> dirs;
+		dirs.reserve(state.file_explorer_recent_directories.size());
+		for (auto const &dir : state.file_explorer_recent_directories)
+			if (!dir.empty())
+				dirs.emplace_back(dir);
+		fb.SetRecentDirectories(dirs);
+	}
+	fb.SetSortModeIndex(state.file_explorer_sort_mode);
+	fb.SetSortAscending(state.file_explorer_sort_ascending);
+	fb.SetViewMode(static_cast<ImGui::FileBrowser::ViewMode>(state.file_explorer_view_mode));
+	fb.SetMediaFilter(static_cast<ImGui::FileBrowser::MediaFilter>(state.file_explorer_media_filter));
+	fb.SetPreviewEnabled(state.file_explorer_preview);
+	fb.SetShowThumbnails(state.file_explorer_show_thumbnails);
+	fb.SetKeepOpen(state.file_explorer_keep_open);
+	if (state.file_explorer_thumb_size)
+		fb.SetThumbnailSize(ImVec2 {state.file_explorer_thumb_size->x, state.file_explorer_thumb_size->y});
+	if (state.file_explorer_grid_thumb_size)
+		fb.SetGridThumbnailSize(ImVec2 {state.file_explorer_grid_thumb_size->x, state.file_explorer_grid_thumb_size->y});
+	if (!state.file_explorer_last_directory.empty())
+		fb.SetDirectory(state.file_explorer_last_directory);
+}
+
+void AppCoordinator::export_file_explorer_layout(ImGui::FileBrowser &fb, WindowStateToml *state) const {
+	state->file_explorer_last_directory  = fb.GetDirectory().string();
+	state->file_explorer_sort_mode       = fb.GetSortModeIndex();
+	state->file_explorer_sort_ascending  = fb.GetSortAscending();
+	state->file_explorer_view_mode       = static_cast<int>(fb.GetViewMode());
+	state->file_explorer_media_filter    = static_cast<int>(fb.GetMediaFilter());
+	state->file_explorer_preview         = fb.IsPreviewEnabled();
+	state->file_explorer_show_thumbnails = fb.GetShowThumbnails();
+	state->file_explorer_keep_open       = fb.GetKeepOpen();
+	{
+		ImVec2 const ts                 = fb.GetThumbnailSize();
+		state->file_explorer_thumb_size = WindowStateToml::Vec2Toml {ts.x, ts.y};
+	}
+	{
+		ImVec2 const gs                      = fb.GetGridThumbnailSize();
+		state->file_explorer_grid_thumb_size = WindowStateToml::Vec2Toml {gs.x, gs.y};
+	}
+	state->file_explorer_recent_directories.clear();
+	for (auto const &dir : fb.GetRecentDirectories())
+		state->file_explorer_recent_directories.push_back(dir.string());
+}
+
+ImGui::FileBrowser &AppCoordinator::open_file_explorer() {
+	if (auto *existing = fb_ptr())
+		return *existing; // already open — idempotent
+
+	// Heap-allocate a brand-new browser via the registry. Constructor flags match the
+	// old static. Everything below re-establishes the per-instance configuration that
+	// a fresh object needs, so each open is a clean start with fresh worker threads.
+	auto *fb = MemoryManagement::Get().PushGet<ImGui::FileBrowser>("FileExplorer",
+		ImGuiFileBrowserFlags_Window | ImGuiFileBrowserFlags_EditPathString | ImGuiFileBrowserFlags_CreateNewDir
+			| ImGuiFileBrowserFlags_MultipleSelection);
+	fb->SetTitle("File Explorer");
+	fb->SetWindowSize(900, 560);
+	fb->SetTypeFilters({".*"});
+
+	fb->SetHoverFileCallback([this](std::filesystem::path const &path) {
+		if (!IsHoverPreviewMediaPath(path))
+			return;
+		WindowStateToml::ImageHistoryEntry tmp;
+		tmp.source = path.string();
+		tmp.title  = path.filename().string();
+		tmp.kind   = "file";
+		m_history_preview->draw_for_hover(tmp);
+	});
+	fb->SetContextMenuCallback([this](std::filesystem::path const &path) {
+		auto res = m_fb_context_menu->draw(path);
+		if (res.open)
+			m_open_image_dialogs->queue_path(res.open_path.string());
+	});
+	fb->SetRebuildThumbnailCallback([](std::filesystem::path const &path) {
+		if (auto *b = fb_ptr())
+			b->RebuildThumbnail(path);
+	});
+
+	// Start the async thumbnail engine (fresh scanner + video worker threads), then
+	// restore the persisted layout (directory, sort, view, thumbnail sizes).
+	if (m_vk && !m_explorer_thumb_dir.empty())
+		fb->Setup(m_vk, m_explorer_thumb_dir);
+	apply_file_explorer_layout(*fb, *MemoryManagement::GetInstance<WindowStateToml>());
+	fb->Open();
+	return *fb;
+}
+
+void AppCoordinator::close_file_explorer() {
+	auto *fb = fb_ptr();
+	if (!fb)
+		return;
+	// Persist layout BEFORE destroying so the next open restores it (this also runs
+	// before ExportRuntimeConfig at shutdown, which then sees no browser).
+	export_file_explorer_layout(*fb, MemoryManagement::GetInstance<WindowStateToml>());
+	fb->ShutdownThumbnails(); // stop engine + free GPU textures while Vulkan/ImGui are alive
+	// Release runs ~FileBrowser now: m_thumbnails + m_scanner destruct, joining the
+	// video worker(s) and the scanner jthread. A later open creates a genuinely fresh one.
+	MemoryManagement::Get().Release<ImGui::FileBrowser>();
+}
+	
 void AppCoordinator::SetMediaPolicy(bool allow_video, bool allow_image) {
 	m_load_handler->set_media_policy(allow_video, allow_image);
 }
@@ -477,23 +519,29 @@ void AppCoordinator::ShowConsole() { m_show_console = true; }
 void AppCoordinator::SetThumbDir(std::filesystem::path const &dir) {
 	m_app_state->set_thumb_dir(dir);
 
-	// Enable the file browser's own async thumbnail engine now that both the Vulkan
-	// context (from Setup) and the thumb directory are known. The browser owns the
-	// engine (FileThumbnailCache is retired); these are thin forwards into it.
+	// Remember the thumbnail directory so open_file_explorer() can Setup() the
+	// browser's async thumbnail engine each time a fresh browser is created.
+	m_explorer_thumb_dir = dir;
+
 	if (m_vk) {
-		GetMainFileExplorer().Setup(m_vk, dir);
-
-		m_config_runtime->SetClearFileExplorerCacheCallback([]() { GetMainFileExplorer().ClearThumbnailCache(); });
-
-		GetMainFileExplorer().SetRebuildThumbnailCallback([](std::filesystem::path const &path) {
-			GetMainFileExplorer().RebuildThumbnail(path);
+		// Clear-cache may be triggered from the Runtime Config window while the
+		// explorer is closed (no browser): in that case the in-memory cache is
+		// already gone with the destroyed browser, so a missing browser is a no-op.
+		m_config_runtime->SetClearFileExplorerCacheCallback([]() {
+			if (auto *fb = fb_ptr())
+				fb->ClearThumbnailCache();
 		});
 
+		// Context-menu extras run from the browser's own context menu, so the
+		// browser is alive here; null-guarded anyway for safety.
 		m_fb_context_menu->SetExtraItemsCallback([this](std::filesystem::path const &path) {
+			auto *fb = fb_ptr();
+			if (!fb)
+				return;
 			if (ImGui::MenuItem("Rebuild Thumbnail"))
-				GetMainFileExplorer().RebuildThumbnail(path);
+				fb->RebuildThumbnail(path);
 			if (ImGui::MenuItem("Edit Tags\xe2\x80\xa6")) {
-				auto selected = GetMainFileExplorer().GetMultiSelected();
+				auto selected = fb->GetMultiSelected();
 				// Remove directories from the selection; only tag files.
 				selected.erase(
 					std::remove_if(selected.begin(), selected.end(),
@@ -629,57 +677,30 @@ void AppCoordinator::Build() {
 	mc.show_another_window      = m_show_another_window;
 	mc.show_console             = &m_show_console;
 	mc.show_file_explorer       = &GetShowFileExplorerFlag();
-	mc.file_explorer            = &GetMainFileExplorer();
+	mc.file_explorer            = fb_ptr(); // may be null while the explorer is closed
 	mc.request_quit             = &request_quit;
 	mc.use_video_player_placebo = m_use_video_player_placebo;
 	if (!m_menu.Draw(mc))
 		return;
 
-	auto &show_file_explorer = GetShowFileExplorerFlag();
-	auto &file_explorer      = GetMainFileExplorer();
-	if (show_file_explorer) {
-		file_explorer.Display();
-		if (file_explorer.HasSelected()) {
-			auto const selected = file_explorer.GetSelected();
-			m_open_image_dialogs->queue_path(selected.string());
-			file_explorer.ClearSelected();
-		}
-		if (!file_explorer.IsOpened())
-			show_file_explorer = false;
+	// Lifecycle edge detection: create the browser the frame the flag turns on,
+	// destroy it (ending its threads) the frame it turns off or its window is closed.
+	bool               &show_file_explorer = GetShowFileExplorerFlag();
+	ImGui::FileBrowser *file_explorer      = fb_ptr();
+	if (show_file_explorer && !file_explorer)
+		file_explorer = &open_file_explorer();
+	else if (!show_file_explorer && file_explorer) {
+		close_file_explorer();
+		file_explorer = nullptr;
 	}
-
-	// Console window
-	if (m_show_console && m_console)
-		m_console->Draw("Console##main", &m_show_console);
-
-	// Metadata editor window
-	m_metadata_editor->Draw();
-
-	// Step 9 — URL popup
-	m_open_image_dialogs->draw_url_popup();
-
-	// Steps 10–12 — subsystem rendering
-	if (m_use_video_player_placebo)
-		m_video_player_placebo->update_frames();
-	else
-		m_video_player->update_frames();
-	m_config_runtime_ui.DrawUi(m_config_runtime);
-	m_viewer->draw_windows();
-	if (m_use_video_player_placebo)
-		m_video_player_placebo->draw();
-	else
-		m_video_player->draw();
-
-	int        focus_id  = -1;
-	auto const activated = m_opened_files_window->draw(*m_viewer, *m_history_preview, &focus_id, m_video_context_menu);
-
-	if (focus_id >= 0)
-		m_viewer->request_focus(focus_id);
-
-	if (activated.has_value()) {
-		if (activated->kind == "file")
-			m_open_image_dialogs->queue_path(activated->source);
-		else if (activated->kind == "url")
-			m_open_image_dialogs->queue_url(activated->source);
+	if (file_explorer) {
+		file_explorer->Display();
+		if (file_explorer->HasSelected()) {
+			auto const selected = file_explorer->GetSelected();
+			m_open_image_dialogs->queue_path(selected.string());
+			file_explorer->ClearSelected();
+		}
+		if (!file_explorer->IsOpened())
+			show_file_explorer = false; // window closed (X) -> destroyed next frame
 	}
 }
