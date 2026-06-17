@@ -33,3 +33,11 @@
 *.exe
 *.out
 external/*
+node_modules/*
+FLAME.svg
+package-lock.json
+package.json
+perf.data
+perf.data.old
+perf.data.perfparser
+todo.txt
