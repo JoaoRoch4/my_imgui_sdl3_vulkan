@@ -38,18 +38,27 @@ function(app_meson_buildtype_args out_var config)
 endfunction()
 
 # Map a CMake config name to FFmpeg (autotools) configure arguments. FFmpeg enables
-# optimisation by default; we only toggle debug info / stripping:
-#   Debug          -> full debug info (=3), unstripped, frame pointers (optimised, so
-#                     video stays usable while remaining steppable)
-#   RelWithDebInfo -> debug info (=2), unstripped, frame pointers
-#   Release / other-> no debug info, stripped
+# optimisation by default; we only toggle debug info. Stripping is DISABLED for
+# every config on purpose:
+#   Debug          -> full debug info (=3), frame pointers (optimised, so video
+#                     stays usable while remaining steppable)
+#   RelWithDebInfo -> debug info (=2), frame pointers
+#   Release / other-> no debug info, still NOT stripped (see note)
+#
+# NOTE: never pass --enable-stripping. FFmpeg's stripping step runs strip on the
+# per-object output of the static build and EMPTIES the nasm-assembled x86 SIMD
+# objects (e.g. h264_intrapred.o) — they install as 0-byte archive members, so
+# ld.lld reports them "neither ET_REL nor LLVM bitcode" and every
+# ff_pred*_mmxext/sse symbol is undefined at the app link. Stripping a static .a
+# that gets linked into the app buys nothing (only the final executable is worth
+# stripping), so it stays off in all configs.
 function(app_ffmpeg_buildtype_args out_var config)
   if(config STREQUAL "Debug")
     set(_a --enable-debug=3 --disable-stripping --extra-cflags=-fno-omit-frame-pointer)
   elseif(config STREQUAL "RelWithDebInfo")
     set(_a --enable-debug=2 --disable-stripping --extra-cflags=-fno-omit-frame-pointer)
   else()
-    set(_a --disable-debug --enable-stripping)
+    set(_a --disable-debug --disable-stripping)
   endif()
   set(${out_var} "${_a}" PARENT_SCOPE)
 endfunction()

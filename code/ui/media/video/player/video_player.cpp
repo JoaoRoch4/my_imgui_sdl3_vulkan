@@ -1354,6 +1354,17 @@ void VideoPlayer::notify_hover(const std::string &source)
     m_hover->notify_hover(source);
 }
 
+bool VideoPlayer::is_hover_previewing() const
+{
+    return m_hover && m_hover->is_previewing();
+}
+
+void VideoPlayer::seek_hover_preview(double seconds)
+{
+    if (m_hover)
+        m_hover->seek_relative(seconds);
+}
+
 bool VideoPlayer::can_toggle_hwdec(const std::string &source) const
 {
     return std::any_of(m_entries.begin(), m_entries.end(), [&source](const std::unique_ptr<VideoEntry> &entry) {

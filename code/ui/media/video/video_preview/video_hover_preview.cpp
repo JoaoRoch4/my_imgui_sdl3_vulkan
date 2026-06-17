@@ -120,16 +120,11 @@ void VideoHoverPreview::init_mpv() {
     mpv_set_option_string(m_mpv, "mute", preview_sound ? "no" : "yes");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
     mpv_set_option_string(m_mpv, "hwdec", "nvdec");
-    mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,av1,vp9,mpeg4,vc1");
     mpv_set_option_string(m_mpv, "ytdl", "yes");
-    mpv_set_option_string(m_mpv, "ytdl-format",
-                          "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best");
-    mpv_set_option_string(m_mpv, "cache", "no");
-    // Use Lanczos downscaling when the video's native resolution exceeds preview_size.
-    // Only activates when mpv scales *down*; upscaling is unaffected.
-    mpv_set_option_string(m_mpv, "dscale", "lanczos");
+	mpv_set_option_string(m_mpv, "cache", "no");
 
-    mpv_initialize(m_mpv);
+
+	mpv_initialize(m_mpv);
 
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_API_TYPE, static_cast<void *>(const_cast<char *>(MPV_RENDER_API_TYPE_SW))},
@@ -259,6 +254,20 @@ void VideoHoverPreview::stop_playback() {
         mpv_set_property_string(m_mpv, "pause", "yes");
         m_playing.clear();
     }
+}
+
+bool VideoHoverPreview::is_previewing() const noexcept {
+    // m_playing is only mutated on the UI thread (thumbnail/start/stop_playback),
+    // the same thread that asks this — no synchronization needed.
+    return m_mpv != nullptr && !m_playing.empty();
+}
+
+void VideoHoverPreview::seek_relative(double seconds) {
+    if (!m_mpv || m_playing.empty())
+        return;
+    const std::string amount = std::to_string(seconds);
+    const char       *cmd[]  = {"seek", amount.c_str(), "relative", nullptr};
+    mpv_command_async(m_mpv, 0, cmd);
 }
 
 VkDescriptorSet VideoHoverPreview::thumbnail(const std::string &source) {

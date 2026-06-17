@@ -4,9 +4,26 @@
 
 #include "managed_thread.hpp"
 
+#include <fcntl.h>     // AT_FDCWD
+#include <sys/stat.h>  // statx, STATX_BTIME
 #include <sys/xattr.h>
 
+#include <cstdint>
+
 namespace {
+
+/// File birth (creation) time in nanoseconds since the Unix epoch, via statx's
+/// STATX_BTIME. Returns 0 when the kernel/filesystem doesn't record a birth time
+/// (e.g. some network/FUSE mounts) so those entries simply sort as "oldest".
+std::int64_t creation_time_ns(const std::filesystem::path& p) {
+    struct statx stx{};
+    if (statx(AT_FDCWD, p.c_str(), AT_STATX_SYNC_AS_STAT, STATX_BTIME, &stx) != 0)
+	return 0;
+    if (!(stx.stx_mask & STATX_BTIME))
+	return 0; // birth time unsupported on this filesystem
+    return static_cast<std::int64_t>(stx.stx_btime.tv_sec) * 1'000'000'000LL +
+	   static_cast<std::int64_t>(stx.stx_btime.tv_nsec);
+}
 
 /// Convert a path's UTF-8 representation to std::string (char8_t-safe).
 std::string u8_to_string(const std::filesystem::path& p) {
@@ -177,6 +194,7 @@ std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::
 		    rcd.lastWriteTime = p.last_write_time(ec);
 		    if (ec)
 			rcd.lastWriteTime = {};
+		    rcd.creationTime = creation_time_ns(p.path());
 		    read_xdg_tags(p.path(), rcd.tags);
 		}
 	    } catch (...) {

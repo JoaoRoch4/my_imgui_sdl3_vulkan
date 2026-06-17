@@ -603,6 +603,15 @@ void VideoPlayerPlacebo::notify_hover(const std::string &source) {
     m_hover_player->notify_hover(source);
 }
 
+bool VideoPlayerPlacebo::is_hover_previewing() const {
+  return m_hover_player && m_hover_player->is_hover_previewing();
+}
+
+void VideoPlayerPlacebo::seek_hover_preview(double seconds) {
+  if (m_hover_player)
+    m_hover_player->seek_hover_preview(seconds);
+}
+
 bool VideoPlayerPlacebo::save_hover_frame(const std::filesystem::path &path) {
   if (m_hover_player)
     return m_hover_player->save_hover_frame(path);

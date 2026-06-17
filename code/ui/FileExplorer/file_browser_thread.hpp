@@ -17,7 +17,14 @@ struct FileRecord {
 	std::filesystem::path		extension;
 	std::uintmax_t			size	      = 0;
 	std::filesystem::file_time_type lastWriteTime = {};
+	std::int64_t			creationTime  = 0; ///< birth time (statx STATX_BTIME), ns since epoch; 0 if unknown
 	std::vector<std::string>	tags; ///< parsed user.xdg.tags xattr; empty for dirs
+
+	/// Thumbnail fast-path, computed once per scan (see FileBrowser::PollScan) so the
+	/// per-frame render loop never re-normalizes the path or re-parses the extension.
+	/// Empty key => not thumbnailable (skip the thumbnail engine entirely for this row).
+	std::string			thumbKey;
+	bool				isVideoThumb = false;
 };
 
 /// Background directory scanner for the file browser.

@@ -43,6 +43,13 @@ public:
     void notify_hover(const std::string &source);
     bool save_frame(const std::filesystem::path &path);
     void tick_idle();
+
+    /// True while a source is actively loaded/playing in the popup (so the caller
+    /// can route arrow-key seeks here instead of to the main player).
+    [[nodiscard]] bool is_previewing() const noexcept;
+    /// Seek the preview's mpv by `seconds` (negative rewinds). No-op when idle.
+    /// Safe to call from the UI thread while the worker polls events (mpv async API).
+    void seek_relative(double seconds);
     bool consume_popup_reopen_request();
     [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
 

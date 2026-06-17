@@ -83,6 +83,8 @@ public:
   void restart_hover_preview();
   [[nodiscard]] bool consume_hover_popup_reopen_request();
   [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
+  [[nodiscard]] bool is_hover_previewing() const;
+  void               seek_hover_preview(double seconds);
 
   [[nodiscard]] bool can_toggle_hwdec(const std::string &source) const;
   [[nodiscard]] bool is_hwdec_enabled(const std::string &source) const;

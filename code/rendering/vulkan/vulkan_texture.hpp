@@ -1,7 +1,7 @@
 #pragma once
 
-#include "vulkan_context.hpp"
 #include "image_buffer.hpp" // img::ImageBuffer (CPU RGBA8 currency)
+#include "vulkan_context.hpp"
 
 
 // Owns a GPU-side RGBA texture loaded from disk via stb_image.
@@ -12,51 +12,51 @@
 //   tex.unload(vk);  // before ImGui_ImplVulkan_Shutdown
 #include "pch.hpp"
 
-class VulkanTexture
-{
-public:
-    VulkanTexture();
-    ~VulkanTexture() = default;
+class VulkanTexture {
+	public:
 
-    VulkanTexture(const VulkanTexture&)            = delete;
-    VulkanTexture& operator=(const VulkanTexture&) = delete;
+		VulkanTexture();
+		~VulkanTexture() = default;
 
-    VulkanTexture(VulkanTexture&&) noexcept;
-    VulkanTexture& operator=(VulkanTexture&&) noexcept;
+		VulkanTexture(VulkanTexture const&)            = delete;
+		VulkanTexture& operator=(VulkanTexture const&) = delete;
 
-    // Load image from disk and upload to GPU. Returns false on failure.
-    bool load(const std::filesystem::path& path, vulkan_context& vk);
+		VulkanTexture(VulkanTexture&&) noexcept;
+		VulkanTexture& operator=(VulkanTexture&&) noexcept;
 
-    // Upload an already-decoded CPU RGBA8 buffer to the GPU (no file I/O, no decode).
-    // Lets the render thread consume buffers produced by ImageJobSystem. False on failure.
-    bool upload(const img::ImageBuffer& buf, vulkan_context& vk);
+		// Load image from disk and upload to GPU. Returns false on failure.
+		bool load(std::filesystem::path const& path, vulkan_context& vk);
 
-    // Free all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
-    void unload(vulkan_context& vk);
+		// Upload an already-decoded CPU RGBA8 buffer to the GPU (no file I/O, no decode).
+		// Lets the render thread consume buffers produced by ImageJobSystem. False on failure.
+		bool upload(img::ImageBuffer const& buf, vulkan_context& vk);
 
-    [[nodiscard]] bool is_loaded() const;
+		// Free all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
+		void unload(vulkan_context& vk);
 
-    // Pass to ImGui::Image().
-    [[nodiscard]] ImTextureID imgui_id() const;
+		[[nodiscard]] bool is_loaded() const;
 
-    int width;
-    int height;
+		// Pass to ImGui::Image().
+		[[nodiscard]] ImTextureID imgui_id() const;
 
-private:
-    static uint32_t find_memory_type(VkPhysicalDevice physical_device,
-                                     uint32_t type_filter,
-                                     VkMemoryPropertyFlags properties);
+		int width;
+		int height;
 
-    // Create the GPU image/view/sampler, register with ImGui, and stage-upload the
-    // given interleaved RGBA8 pixels (w*h*4 bytes). Caller owns `pixels`. Sets
-    // width/height. Shared by load() (from a decoded file) and upload() (from a buffer).
-    bool upload_pixels(const unsigned char* pixels, int w, int h, vulkan_context& vk);
+	private:
 
-    VkDescriptorSet m_descriptor_set;
-    VkSampler       m_sampler;
-    VkImageView     m_image_view;
-    VkImage         m_image;
-    VkDeviceMemory  m_image_memory;
-    VkBuffer        m_upload_buffer;
-    VkDeviceMemory  m_upload_buffer_memory;
+		static uint32_t
+		find_memory_type(VkPhysicalDevice physical_device, uint32_t type_filter, VkMemoryPropertyFlags properties);
+
+		// Create the GPU image/view/sampler, register with ImGui, and stage-upload the
+		// given interleaved RGBA8 pixels (w*h*4 bytes). Caller owns `pixels`. Sets
+		// width/height. Shared by load() (from a decoded file) and upload() (from a buffer).
+		bool upload_pixels(unsigned char const* pixels, int w, int h, vulkan_context& vk);
+
+		VkDescriptorSet m_descriptor_set;
+		VkSampler       m_sampler;
+		VkImageView     m_image_view;
+		VkImage         m_image;
+		VkDeviceMemory  m_image_memory;
+		VkBuffer        m_upload_buffer;
+		VkDeviceMemory  m_upload_buffer_memory;
 };

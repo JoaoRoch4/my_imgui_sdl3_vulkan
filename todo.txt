@@ -1,11 +1,9 @@
 now:
-MONITOR THREADS ARGUMENT
-MORE THREADS FOR HOT PATHS: PREVIEWS, THUMBNAILS, METADATA READ/WRITE
+
 ffmpeg tags for videos
 
 fix:
-video thumb black
-keyboard keys suport: space in video player
+
 image thumb aspect ratio
 
 todo:

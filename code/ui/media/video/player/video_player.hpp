@@ -133,6 +133,12 @@ public:
     /// True while the hover dwell delay has not yet elapsed for the given source.
     [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
 
+    /// True while the hover-preview popup is actively playing a source — lets the
+    /// input layer route arrow-key seeks to the popup instead of the open video.
+    [[nodiscard]] bool is_hover_previewing() const;
+    /// Seek the hover-preview popup by `seconds` (negative rewinds). No-op when idle.
+    void seek_hover_preview(double seconds);
+
     [[nodiscard]] bool can_toggle_hwdec(const std::string &source) const;
     [[nodiscard]] bool is_hwdec_enabled(const std::string &source) const;
     [[nodiscard]] int current_position_seconds(const std::string &source) const;

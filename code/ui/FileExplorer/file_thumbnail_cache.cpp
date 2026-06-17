@@ -295,20 +295,32 @@ void FileThumbnailCache::generate_thumbnail(const std::filesystem::path &file,
         return;
     }
     mpv_handle *mpv = mpv_create();
-    if (!mpv)
-        return;
+    if (!mpv)        return;
 
-    mpv_set_option_string(mpv, "vo",       "libmpv");
-    mpv_set_option_string(mpv, "pause",    "yes");
+	mpv_set_option_string(mpv, "vo", "libmpv");
+
+
+	// 2. Habilitar o descarte de frames atrasados se o hardware gargalar
+	mpv_set_option_string(mpv, "framedrop", "vo");
+
     mpv_set_option_string(mpv, "mute",     "yes");
-    mpv_set_option_string(mpv, "hwdec",    "no");
+    mpv_set_option_string(mpv, "hwdec",    "nvdec");
     mpv_set_option_string(mpv, "loop-file","no");
     mpv_set_option_string(mpv, "cache",    "no");
     mpv_set_option_string(mpv, "ytdl",     "no");
     mpv_set_option_string(mpv, "terminal", "no");
     mpv_set_option_string(mpv, "msg-level","all=no");
 
-    if (mpv_initialize(mpv) < 0) {
+
+	// --- Redução Gráfica Manual (Foco em GPU) ---
+	mpv_set_option_string(mpv, "scale", "bilinear");
+	mpv_set_option_string(mpv, "cscale", "bilinear");
+	mpv_set_option_string(mpv, "dscale", "bilinear");
+
+	// --- Desativação de Tráfego Paralelo (Opcional, se não precisar deles) ---
+	mpv_set_option_string(mpv, "aid", "no"); // Desativa Áudio
+
+	if (mpv_initialize(mpv) < 0) {
         mpv_terminate_destroy(mpv);
         return;
     }

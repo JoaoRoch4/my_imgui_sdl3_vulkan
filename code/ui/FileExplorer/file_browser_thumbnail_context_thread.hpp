@@ -46,6 +46,12 @@ public:
     static constexpr int k_thumb_w = 320;
     static constexpr int k_thumb_h = 180;
 
+    // Number of parallel mpv render workers. Each pulls independently from the shared
+    // queue with its own mpv instance, so a folder of videos generates several thumbnails
+    // at once instead of serially. Kept modest because each worker is an NVDEC session
+    // (consumer GPUs cap concurrent decode sessions) and a live mpv+render context.
+    static constexpr int k_worker_count = 4;
+
 private:
     struct Job {
         std::string           key;
@@ -64,5 +70,5 @@ private:
     std::deque<Job>                m_queue;
     std::atomic<bool>              m_stopping{false};
     DoneFn                         m_on_done;
-    std::unique_ptr<ManagedThread> m_worker;
+    std::vector<std::unique_ptr<ManagedThread>> m_workers;
 };

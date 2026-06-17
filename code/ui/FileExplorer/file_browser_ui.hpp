@@ -197,7 +197,7 @@ class FileBrowser {
 
 	// The column/attribute rows are ordered by. Direction (ascending vs
 	// descending) is tracked separately in sortAscending_.
-	enum class SortField { Name, Type, Size, Modified };
+	enum class SortField { Name, Type, Size, Modified, Created };
 
 	// Defined in file_browser_thread.hpp so the scanner thread can fill it.
 	using FileRecord = ::FileRecord;

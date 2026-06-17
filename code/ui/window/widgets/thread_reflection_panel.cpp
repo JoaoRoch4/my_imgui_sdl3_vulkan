@@ -109,7 +109,7 @@ void ThreadReflectionPanel::refresh_os_threads()
     }
 }
 
-void ThreadReflectionPanel::draw(bool *open)
+void ThreadReflectionPanel::draw(bool *open) // TO HOT
 {
     if (open != nullptr && !*open)
         return;
