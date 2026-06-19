@@ -14,8 +14,9 @@ class ConfigRuntimeUiContext {
     public:
 
 	/// Draw the runtime config window (no-op when the model is closed).
-	/// `cfg` MUST be the same ConfigRuntime the menu toggles (AppCoordinator's
-	/// m_ctx->Config()) — NOT AppContext::GetInstance(), which is a different
-	/// instance whose IsOpen/callbacks are never wired up.
+	/// `cfg` MUST be the same ConfigRuntime the menu toggles — i.e. the single
+	/// registry-owned instance reached via
+	/// MemoryManagement::GetInstance<ConfigRuntime>() — so its IsOpen flag and
+	/// callbacks are the ones that were wired up.
 	void DrawUi(ConfigRuntime *cfg);
 };

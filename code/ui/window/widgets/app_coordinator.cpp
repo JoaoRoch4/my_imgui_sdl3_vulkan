@@ -33,7 +33,6 @@
 #include "window_fullscreen_utils.hpp"
 #include "window_state_toml.hpp"
 
-#include "app_context.hpp"
 #include "file_browser_ui.hpp"
 #include "file_thumbnail_cache.hpp"
 #include "imgui_console.hpp"
@@ -97,26 +96,10 @@ AppCoordinator::AppCoordinator()
 	, m_vk {nullptr}
 	, m_show_demo_window {nullptr}
 	, m_show_another_window {nullptr}
-	, m_ctx {std::make_unique<AppContext>()}
 	, m_use_video_player_placebo {UseVideoPlayerPlacebo()} {
-	// Bind non-owning aliases to the centrally-owned subsystems. Ownership stays
-	// in m_ctx; these pointers are observers used by the orchestration code.
-	m_viewer               = m_ctx->Viewer();
-	m_open_image_dialogs   = m_ctx->OpenImageDialogsPanel();
-	m_bulk_image_open      = m_ctx->BulkImageOpen();
-	m_video_player         = m_ctx->Player();
-	m_video_player_placebo = m_ctx->PlayerPlacebo();
-	m_video_downloader     = m_ctx->Downloader();
-	m_config_runtime       = m_ctx->Config();
-	m_history_preview      = m_ctx->Preview();
-	m_opened_files_window  = m_ctx->OpenedFiles();
-	m_video_context_menu   = m_ctx->VideoMenu();
-	m_fb_context_menu      = m_ctx->FileBrowserMenu();
-	m_metadata_editor      = m_ctx->Metadata();
-	m_history_mgr          = m_ctx->History();
-	m_load_handler         = m_ctx->LoadHandler();
-	m_app_state            = m_ctx->AppState();
-	m_console              = m_ctx->Console();
+	// All subsystem observers are bound from the MemoryManagement registry in
+	// Setup(); the registry-owned objects are PushGet'd in App::Alloc() before
+	// this coordinator. The constructor only captures the player-mode env flag.
 }
 
 // Destructor must be defined where all unique_ptr types are complete.
@@ -137,6 +120,27 @@ void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
 	m_vk                  = MemoryManagement::GetInstance<vulkan_context>();
 	m_show_demo_window    = &rt->showDemoWindow;
 	m_show_another_window = &rt->showAnotherWindow;
+
+	// Bind the subsystem observers from the registry. Each was PushGet'd in
+	// App::Alloc() before this coordinator, so GetInstance<T>() (fatal-on-miss)
+	// always resolves here. The EmojiAtlas is GPU-dependent and bound below.
+	m_viewer               = MemoryManagement::GetInstance<ImageViewerPanel>();
+	m_open_image_dialogs   = MemoryManagement::GetInstance<OpenImageDialogs>();
+	m_bulk_image_open      = MemoryManagement::GetInstance<BulkImageOpenQueue>();
+	m_video_player         = MemoryManagement::GetInstance<VideoPlayer>();
+	m_video_player_placebo = MemoryManagement::GetInstance<VideoPlayerPlacebo>();
+	m_video_downloader     = MemoryManagement::GetInstance<VideoDownloader>();
+	m_config_runtime       = MemoryManagement::GetInstance<ConfigRuntime>();
+	m_history_preview      = MemoryManagement::GetInstance<HistoryPreview>();
+	m_opened_files_window  = MemoryManagement::GetInstance<OpenedFilesWindow>();
+	m_video_context_menu   = MemoryManagement::GetInstance<VideoContextMenu>();
+	m_fb_context_menu      = MemoryManagement::GetInstance<FileBrowserContextMenu>();
+	m_thumb_cache          = MemoryManagement::GetInstance<FileThumbnailCache>();
+	m_metadata_editor      = MemoryManagement::GetInstance<MetadataEditor>();
+	m_history_mgr          = MemoryManagement::GetInstance<MediaHistoryManager>();
+	m_load_handler         = MemoryManagement::GetInstance<MediaLoadHandler>();
+	m_app_state            = MemoryManagement::GetInstance<AppStateCoordinator>();
+	m_console              = MemoryManagement::GetInstance<ConsoleCommands>();
 
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -316,7 +320,7 @@ void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
 		m_video_downloader, m_opened_files_window, m_vk, m_use_video_player_placebo);
 
 	// ---- Console -------------------------------------------------------
-	// ConsoleCommands is owned by AppContext; m_console is the bound alias.
+	// ConsoleCommands is registry-owned; m_console is the observer bound in Setup().
 	m_console->OnQuit       = [this]() { request_quit = true; };
 	m_console->OnDemoToggle = [this](bool on) {
 		if (m_show_demo_window)
@@ -337,8 +341,10 @@ void AppCoordinator::Setup(std::function<void(bool)> on_vsync_changed) {
 			break;
 		}
 	};
-	m_ctx->CreateEmojiAtlas(*m_vk);
-	m_emoji_atlas = m_ctx->EmojiAtlas();
+	// VulkanEmojiAtlas is GPU-dependent (needs vulkan_context), so it is created
+	// here rather than in App::Alloc(); Shutdown() Releases it before ImGui's
+	// Vulkan backend dies. PushGet returns the owned observer.
+	m_emoji_atlas = MemoryManagement::Get().PushGet<VulkanEmojiAtlas>("EmojiAtlas", *m_vk);
 	// Build the atlas lazily on first Draw() — deferred to avoid blocking Setup.
 }
 
@@ -353,7 +359,7 @@ void AppCoordinator::Shutdown() {
 	m_history_preview->shutdown();
 	m_viewer->shutdown(*m_vk);
 	close_file_explorer(); // export layout + end scanner/thumbnail threads + free textures (vk/ImGui alive)
-						   m_ctx->DestroyEmojiAtlas(); // frees GPU resources before ImGui Vulkan shutdown
+	MemoryManagement::Get().Release<VulkanEmojiAtlas>(); // frees GPU resources before ImGui Vulkan shutdown
 	m_emoji_atlas = nullptr;
 
 	curl_global_cleanup();
@@ -671,7 +677,6 @@ void AppCoordinator::Build() {
 
 	// Step 8 — menu bar rendering (delegated to MainMenuBar)
 	MainMenuBar::MenuContext mc;
-	mc.ctx                      = m_ctx.get();
 	mc.style_editor             = m_style_editor;
 	mc.show_demo_window         = m_show_demo_window;
 	mc.show_another_window      = m_show_another_window;
@@ -702,5 +707,40 @@ void AppCoordinator::Build() {
 		}
 		if (!file_explorer->IsOpened())
 			show_file_explorer = false; // window closed (X) -> destroyed next frame
+	}
+
+	// Console window
+	if (m_show_console && m_console)
+		m_console->Draw("Console##main", &m_show_console);
+
+	// Metadata editor window
+	m_metadata_editor->Draw();
+
+	// Step 9 — URL popup
+	m_open_image_dialogs->draw_url_popup();
+
+	// Steps 10–12 — subsystem rendering
+	if (m_use_video_player_placebo)
+		m_video_player_placebo->update_frames();
+	else
+		m_video_player->update_frames();
+	m_config_runtime_ui.DrawUi(m_config_runtime);
+	m_viewer->draw_windows();
+	if (m_use_video_player_placebo)
+		m_video_player_placebo->draw();
+	else
+		m_video_player->draw();
+
+	int        focus_id  = -1;
+	auto const activated = m_opened_files_window->draw(*m_viewer, *m_history_preview, &focus_id, m_video_context_menu);
+
+	if (focus_id >= 0)
+		m_viewer->request_focus(focus_id);
+
+	if (activated.has_value()) {
+		if (activated->kind == "file")
+			m_open_image_dialogs->queue_path(activated->source);
+		else if (activated->kind == "url")
+			m_open_image_dialogs->queue_url(activated->source);
 	}
 }

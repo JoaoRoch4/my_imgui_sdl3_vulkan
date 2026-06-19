@@ -2,19 +2,11 @@
 
 #include "file_browser_thumbnail_context.hpp"
 
-#include <algorithm>
-#include <cctype>
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <utility>
-
 #include "image_job_system.hpp"
 #include "image_ops.hpp"
-#include "rendering/vulkan/vulkan_texture.hpp"
+#include "vulkan_texture.hpp"
 
-#include <format>
-#include <print>
+
 
 // Thumbnail-pipeline debug logging. Set to 0 to silence. Logs only on state transitions
 // (first sighting, decode result, upload, video done) — NOT per-frame — so it is safe to
@@ -66,14 +58,49 @@ std::string lower_ext(std::filesystem::path const &p) {
 
 bool is_image_ext(std::filesystem::path const &p) {
 	std::string const e = lower_ext(p);
-	return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp";
+	// .gif is decoded as a still (first frame) via decode_file/libav, which ignores
+	// seek failures — unlike ffmpegthumbnailer's seek, which fails on most GIFs.
+	return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif";
 }
 
 bool is_video_ext(std::filesystem::path const &p) {
 	std::string const e = lower_ext(p);
 	return e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v" || e == ".wmv"
-		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv"
-		|| e == ".gif";
+		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv";
+}
+
+// Scale `src` to fit inside WxH preserving its aspect ratio, then centre it on a fully
+// transparent WxH RGBA canvas (letterbox). Keeps the thumbnail's fixed dimensions — so
+// the cache/upload/display pipeline is unchanged — while the image is no longer stretched.
+std::expected<img::ImageBuffer, img::ImageError> letterbox_fit(img::ImageBuffer const &src, int W, int H) {
+	if (src.width <= 0 || src.height <= 0)
+		return std::unexpected(img::ImageError::DecodeFailed);
+
+	double const scale = std::min(static_cast<double>(W) / src.width, static_cast<double>(H) / src.height);
+	int const    sw    = std::clamp(static_cast<int>(std::lround(src.width * scale)), 1, W);
+	int const    sh    = std::clamp(static_cast<int>(std::lround(src.height * scale)), 1, H);
+
+	auto scaled = img::ops::resize(src, sw, sh); // aspect-correct intermediate
+	if (!scaled)
+		return std::unexpected(scaled.error());
+
+	img::ImageBuffer out;
+	out.width    = W;
+	out.height   = H;
+	out.channels = 4;
+	out.data.assign(static_cast<std::size_t>(W) * H * 4, 0); // transparent padding
+
+	int const         ox         = (W - sw) / 2;
+	int const         oy         = (H - sh) / 2;
+	std::size_t const row_bytes  = static_cast<std::size_t>(sw) * 4;
+	std::size_t const dst_stride = static_cast<std::size_t>(W) * 4;
+	for (int y = 0; y < sh; ++y) {
+		std::uint8_t const *srow = scaled->data.data() + static_cast<std::size_t>(y) * row_bytes;
+		std::uint8_t       *drow = out.data.data() + static_cast<std::size_t>(oy + y) * dst_stride
+			+ static_cast<std::size_t>(ox) * 4;
+		std::memcpy(drow, srow, row_bytes);
+	}
+	return out;
 }
 
 } // namespace
@@ -90,11 +117,11 @@ FileBrowserThumbnailContext::Classification FileBrowserThumbnailContext::classif
 	// is_video_ext each re-allocating the lowered extension (the old per-frame cost).
 	std::string const e = lower_ext(path);
 	Classification    c;
-	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp") {
+	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp"|| e == ".gif") {
 		c.thumbnailable = true;
 	} else if (e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v" || e == ".wmv"
 		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv"
-		|| e == ".gif") {
+	 ) {
 		c.thumbnailable = true;
 		c.is_video      = true;
 	}
@@ -155,13 +182,13 @@ std::filesystem::path FileBrowserThumbnailContext::png_for(std::string const &ke
 	return m_thumb_dir / (std::string(hex) + ".png");
 }
 
-void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file, Entry &e) {
+void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file, Entry &e, bool decode_as_video) {
 	// One composite pool job: decode -> resize(320x180) -> encode PNG (persistence) ->
 	// return the RGBA for in-memory GPU upload. encode_png takes const&, so the same
 	// buffer is both written to disk and handed back (no extra copy, no re-decode).
 	// A cached PNG from a prior session is just decoded (already thumbnail-sized).
 	e.img_future = img::ImageJobSystem::instance().submit(
-		[file, out = e.png_path]() -> ImgResult {
+		[file, out = e.png_path, decode_as_video]() -> ImgResult {
 
 			std::error_code ec;
 
@@ -175,13 +202,19 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 				return cached;
 			}
 
-			THUMB_LOG("img GENERATE from {}", file.filename().string());
-			auto dec = img::ops::decode_file(file, 4);
+			// Video sources use ffmpegthumbnailer (smart non-black frame, ~20ms CPU
+			// decode) instead of spinning up a full mpv+nvdec instance per file. Both
+			// paths feed the same letterbox below, so caching/delivery are identical.
+			THUMB_LOG("{} GENERATE from {}", decode_as_video ? "vid" : "img", file.filename().string());
+			auto dec = decode_as_video ? img::ops::decode_video_thumbnail(file, k_thumb_w, 4)
+									   : img::ops::decode_file(file, 4);
 
 			if (!dec)
 				return std::unexpected(dec.error());
 
-			auto rz = img::ops::resize(*dec, k_thumb_w, k_thumb_h);
+			// Aspect-preserving: fit within k_thumb_w x k_thumb_h and letterbox onto a
+			// transparent canvas instead of stretching the source to fill the box.
+			auto rz = letterbox_fit(*dec, k_thumb_w, k_thumb_h);
 
 			if (!rz)
 				return std::unexpected(rz.error());
@@ -365,21 +398,15 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 
 		THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW", stored_key,
 			is_video, have_png, e.png_path.filename().string());
-		if (is_video && !have_png) {
-			// No cached PNG yet: render the source via the mpv worker. Results arrive
-			// through begin_frame() -> PixelsReady, so mark this the video-delivery path.
-			e.is_video = true;
-			m_video.submit(stored_key, file, e.png_path); // source render (one-time)
-			e.state = State::Generating;
-		} else {
-			// Image source OR a video with a cached PNG: either way this decodes on the
-			// ImageJobSystem pool and is delivered through e.img_future. poll_entry only
-			// polls that future when is_video == false, so it MUST be false here regardless
-			// of the SOURCE type — otherwise the decoded pixels are never picked up and the
-			// (cached video) thumbnail silently stays blank.
-			e.is_video = false;
-			submit_image(file, e);
-		}
+		// Image and video sources BOTH decode on the ImageJobSystem pool and deliver via
+		// e.img_future. A fresh video source is decoded by ffmpegthumbnailer (~20ms CPU)
+		// rather than the old per-file mpv+nvdec render (seconds, and it produced the wrong
+		// 640x480 size the context then rejected). is_video stays false: poll_entry only
+		// polls the future when is_video == false, so it MUST be false regardless of the
+		// SOURCE type, else the decoded pixels are never picked up and the thumb stays blank.
+		// (The m_video mpv worker pool is now unused — safe to remove in a follow-up.)
+		e.is_video = false;
+		submit_image(file, e, /*decode_as_video=*/is_video && !have_png);
 	}
 
 	return poll_entry(e);

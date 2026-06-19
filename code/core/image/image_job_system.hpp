@@ -1,14 +1,6 @@
 #pragma once
 
-#include <atomic>
-#include <chrono>
-#include <cstdint>
-#include <expected>
-#include <filesystem>
-#include <future>
-#include <memory>
-#include <type_traits>
-#include <vector>
+#include "pch.hpp"
 
 #include "image_buffer.hpp"
 #include "image_ops.hpp"
@@ -34,7 +26,7 @@ class ImageJobSystem {
 
 		struct Config {
 				unsigned                  worker_count  = 0; // 0 => hardware_concurrency - reserve_cores
-				unsigned                  reserve_cores = 2; // leave cores for render + main
+				unsigned                  reserve_cores = 0; // leave cores for render + main
 				std::chrono::milliseconds worker_timeout {30'000};
 				bool                      watch = true; // register workers with ThreadOverwatch
 		};

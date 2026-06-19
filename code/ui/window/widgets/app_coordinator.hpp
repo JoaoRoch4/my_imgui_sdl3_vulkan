@@ -10,7 +10,6 @@ struct SDL_Window;
 class StyleEditor;
 struct WindowStateToml;
 class vulkan_context;
-class AppContext;
 class ImageViewerPanel;
 class OpenImageDialogs;
 class BulkImageOpenQueue;
@@ -33,8 +32,10 @@ class MetadataEditor;
 /**
  * Top-level UI/subsystem coordinator.
  *
- * AppCoordinator owns every subsystem (through AppContext) and is responsible
- * for:
+ * Every subsystem is owned by the global MemoryManagement registry (PushGet in
+ * App::Alloc(), Release in App::destroy()).  AppCoordinator holds only non-owning
+ * observer pointers into that registry, bound in Setup() via GetInstance<T>().
+ * It is responsible for:
  *   - Wiring the subsystems together in Setup().
  *   - Driving the per-frame orchestration in Build() (background draining,
  *     media loading, window rendering) and delegating the menu-bar rendering to
@@ -111,21 +112,18 @@ public:
   ImGui::FileBrowser &open_file_explorer();
 
 	  private :
-	  // ---- Non-owning external dependencies (provided by App) -----------------
+	  // ---- Non-owning observers into the MemoryManagement registry -------------
+	  // Every pointer below is a non-owning observer.  Ownership lives in the
+	  // global registry (PushGet in App::Alloc / Release in App::destroy); these
+	  // are bound from MemoryManagement::GetInstance<T>() in Setup().  Never
+	  // delete or reset them.  m_vk stays null until Setup() runs and so doubles
+	  // as the "has Setup() run" sentinel used by the guards in the .cpp.
 	  StyleEditor *m_style_editor;
   SDL_Window *m_window;
   vulkan_context *m_vk;
   bool *m_show_demo_window;
   bool *m_show_another_window;
 
-  // ---- Central ownership ---------------------------------------------------
-  // AppContext is the sole owner of every subsystem below.  It is declared
-  // first so it is destroyed last (members tear down in reverse order).
-  std::unique_ptr<AppContext> m_ctx;
-
-  // ---- Non-owning aliases into m_ctx (bound once in the constructor) -------
-  // These keep the existing `m_xxx->` call sites unchanged while ownership
-  // lives in AppContext.  They never own; do not delete or reset them.
   ImageViewerPanel *m_viewer = nullptr;
   OpenImageDialogs *m_open_image_dialogs = nullptr;
   BulkImageOpenQueue *m_bulk_image_open = nullptr;

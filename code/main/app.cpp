@@ -1,26 +1,41 @@
-#include "pch.hpp"
-
 #include "app.hpp"
 
-
-#include "Memory_management.hpp"
-#include "app_context.hpp"
-#include "app_runtime_state.hpp"
-#include "image_job_system.hpp"
-#include "window_fullscreen_utils.hpp"
 #include <bit>
 #include <utility>
 
+#include "Memory_management.hpp"
+#include "SDL3/SDL_events.h"
+#include "app_runtime_state.hpp"
+#include "image_job_system.hpp"
+#include "pch.hpp"
+#include "window_fullscreen_utils.hpp"
 
-
+// Subsystem headers — App::Alloc() now PushGet's each subsystem directly into
+// the registry (these moved off the deleted AppContext), so their complete
+// types are required here for make_unique<T>/sizeof(T).
+#include "Image_viewer_panel.hpp"
+#include "app_state_coordinator.hpp"
+#include "bulk_image_open_queue.hpp"
+#include "config_runtime.hpp"
+#include "file_browser_context_menu.hpp"
+#include "file_thumbnail_cache.hpp"
+#include "history_preview.hpp"
+#include "imgui_console.hpp"
+#include "media_history_manager.hpp"
+#include "media_load_handler.hpp"
+#include "metadata_editor.hpp"
+#include "open_image_dialogs.hpp"
+#include "opened_files_window.hpp"
+#include "video_context_menu.hpp"
+#include "video_downloader.hpp"
+#include "video_player.hpp"
+#include "video_player_placebo.hpp"
 
 App::App(StartupOptions opts)
-	: m_Opts(std::move(opts)) {
-	m_AppContext = AppContext::GetInstance();
-	// Allocation is no longer done here: every owned subobject is created in
-	// Alloc(), which run() calls at the START of each iteration so a reopen gets
-	// a fresh set (see main.cpp's reopen loop). The ctor only wires the injected
-	// singleton.
+	: m_Opts(opts) {
+	// Allocation is not done here: every owned subobject is created in Alloc(),
+	// which run() calls at the START of each iteration so a reopen gets a fresh
+	// set (see main.cpp's reopen loop).
 }
 
 bool App::Alloc() {
@@ -38,11 +53,38 @@ bool App::Alloc() {
 	m_FpsPlot     = m_mem->PushGet<FpsPlot>("FpsPlot");
 	m_ThreadPanel = m_mem->PushGet<ThreadReflectionPanel>("ThreadPanel");
 	m_StyleEditor = m_mem->PushGet<StyleEditor>("StyleEditor");
-	m_MenuBar     = m_mem->PushGet<AppCoordinator>("MenuBar");
 
-	return m_Rt && m_State && m_Sdl && m_Vk && m_Imgui && m_FpsPlot && m_ThreadPanel && m_StyleEditor && m_MenuBar;
+	// The UI subsystems (formerly owned by AppContext) are PushGet'd here, in the
+	// historical AppContext member-declaration order so destroy() can Release them
+	// in the exact reverse. They must exist before AppCoordinator, whose Setup()
+	// binds non-owning observers to them via GetInstance<T>(). VulkanEmojiAtlas is
+	// GPU-dependent and created later in AppCoordinator::Setup(). PushGet is
+	// [[nodiscard]]; fold each non-null result into a flag so a failed allocation
+	// is caught here (App keeps no observers — the coordinator resolves its own).
+	bool subsystems_ok  = true;
+	subsystems_ok  = m_mem->Push<ImageViewerPanel>("Viewer") ;
+	subsystems_ok  = m_mem->Push<OpenImageDialogs>("OpenImageDialogs") ;
+	subsystems_ok  = m_mem->Push<BulkImageOpenQueue>("BulkImageOpen") ;
+	subsystems_ok  = m_mem->Push<VideoPlayer>("VideoPlayer") ;
+	subsystems_ok  = m_mem->Push<VideoPlayerPlacebo>("VideoPlayerPlacebo") ;
+	subsystems_ok  = m_mem->Push<VideoDownloader>("VideoDownloader") ;
+	subsystems_ok  = m_mem->Push<ConfigRuntime>("ConfigRuntime") ;
+	subsystems_ok  = m_mem->Push<HistoryPreview>("HistoryPreview") ;
+	subsystems_ok  = m_mem->Push<OpenedFilesWindow>("OpenedFiles") ;
+	subsystems_ok  = m_mem->Push<VideoContextMenu>("VideoContextMenu") ;
+	subsystems_ok  = m_mem->Push<FileBrowserContextMenu>("FileBrowserMenu") ;
+	subsystems_ok  = m_mem->Push<FileThumbnailCache>("ThumbCache") ;
+	subsystems_ok  = m_mem->Push<MetadataEditor>("MetadataEditor") ;
+	subsystems_ok  = m_mem->Push<MediaHistoryManager>("HistoryMgr") ;
+	subsystems_ok  = m_mem->Push<MediaLoadHandler>("LoadHandler") ;
+	subsystems_ok  = m_mem->Push<AppStateCoordinator>("AppState") ;
+	subsystems_ok  = m_mem->Push<ConsoleCommands>("Console") ;
+
+	m_MenuBar = m_mem->PushGet<AppCoordinator>("MenuBar");
+
+	return subsystems_ok && m_Rt && m_State && m_Sdl && m_Vk && m_Imgui && m_FpsPlot && m_ThreadPanel && m_StyleEditor
+		&& m_MenuBar;
 }
-
 
 bool App::KickStart() {
 	// Name the main OS thread so it shows as "MainThread" instead of the process
@@ -55,10 +97,8 @@ bool App::KickStart() {
 	// ThreadOverwatch) for the whole session; shut it down in destroy().
 	img::ImageJobSystem::instance().start();
 
-
 	if (!m_Sdl->init("Dear ImGui SDL3+Vulkan example", 1280, 800))
 		return false;
-
 
 	{
 		std::vector<char const*> extensions;
@@ -156,7 +196,8 @@ bool App::KickStart() {
 	// --no-video / --no-media: gate the media-routing choke point. Video is
 	// disabled by either flag; images only by --no-media. Subsystems still boot;
 	// they just receive nothing to load.
-	m_MenuBar->SetMediaPolicy(/*allow_video=*/!(m_Opts.disable_video || m_Opts.disable_media),
+	m_MenuBar->SetMediaPolicy(
+		/*allow_video=*/!(m_Opts.disable_video || m_Opts.disable_media),
 		/*allow_image=*/!m_Opts.disable_media);
 
 	// Echo what the flags did to BOTH stdout and the integrated console, then
@@ -176,15 +217,12 @@ bool App::KickStart() {
 	m_MenuBar->SetDownloadCacheDir(cache_dir / "video_cache");
 
 	m_Rt->clearColor = m_State->clear_color
-		? ImVec4(static_cast<float>(m_State->clear_color->r) / 255.0f,
-			  static_cast<float>(m_State->clear_color->g) / 255.0f,
-			  static_cast<float>(m_State->clear_color->b) / 255.0f,
-			  static_cast<float>(m_State->clear_color->a) / 255.0f)
+		? ImVec4(static_cast<float>(m_State->clear_color->r) / 255.0f, static_cast<float>(m_State->clear_color->g) / 255.0f,
+			  static_cast<float>(m_State->clear_color->b) / 255.0f, static_cast<float>(m_State->clear_color->a) / 255.0f)
 		: ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
 	return true;
 }
-
 
 void App::tick() {
 	while (!m_Rt->done) {
@@ -197,7 +235,8 @@ void App::tick() {
 
 			if (event.type == SDL_EVENT_QUIT)
 				m_Rt->done = true;
-			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(m_Sdl->window))
+			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+				&& event.window.windowID == SDL_GetWindowID(m_Sdl->window))
 				m_Rt->done = true;
 
 			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -247,22 +286,23 @@ void App::tick() {
 			SDL_Delay(10);
 			continue;
 		}
-
 		int fb_width;
 		int fb_height;
 		SDL_GetWindowSize(m_Sdl->window, &fb_width, &fb_height);
 		if (fb_width > 0 && fb_height > 0
-			&& (m_Vk->swap_chain_rebuild || m_Rt->wd->Width != fb_width || m_Rt->wd->Height != fb_height))
+			&& (m_Vk->swap_chain_rebuild || m_Rt->wd->Width != fb_width
+				|| m_Rt->wd->Height != fb_height))
 			m_Vk->resize_window(m_Rt->wd, fb_width, fb_height);
 
 		m_Imgui->new_frame();
 
-		auto const   uptime_now           = std::chrono::steady_clock::now();
-		double const uptime_seconds       = std::chrono::duration<double>(uptime_now - m_Rt->appStartTime).count();
-		auto const   uptime_total_seconds = static_cast<int>(uptime_seconds);
-		int const    uptime_hours         = uptime_total_seconds / 3600;
-		int const    uptime_minutes       = (uptime_total_seconds % 3600) / 60;
-		int const    uptime_secs          = uptime_total_seconds % 60;
+		auto const   uptime_now = std::chrono::steady_clock::now();
+		double const uptime_seconds
+			= std::chrono::duration<double>(uptime_now - m_Rt->appStartTime).count();
+		auto const uptime_total_seconds = static_cast<int>(uptime_seconds);
+		int const  uptime_hours         = uptime_total_seconds / 3600;
+		int const  uptime_minutes       = (uptime_total_seconds % 3600) / 60;
+		int const  uptime_secs          = uptime_total_seconds % 60;
 
 		m_FpsPlot->add_sample(ImGui::GetIO().Framerate);
 
@@ -278,12 +318,14 @@ void App::tick() {
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-			constexpr ImGuiWindowFlags dock_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse
-				| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus
-				| ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
+			constexpr ImGuiWindowFlags dock_flags = ImGuiWindowFlags_NoTitleBar
+				| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+				| ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus
+				| ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
 			ImGui::Begin("UI", nullptr, dock_flags);
 			ImGui::PopStyleVar(3);
-			ImGui::DockSpace(ImGui::GetID("UI"), ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+			ImGui::DockSpace(ImGui::GetID("UI"), ImVec2(0.0f, 0.0f),
+				ImGuiDockNodeFlags_PassthruCentralNode);
 			ImGui::End();
 		}
 
@@ -297,8 +339,10 @@ void App::tick() {
 			static int   counter = 0;
 
 			if (m_State->hello_world_window.valid) {
-				ImGui::SetNextWindowPos({m_State->hello_world_window.x, m_State->hello_world_window.y}, ImGuiCond_Once);
-				ImGui::SetNextWindowSize({m_State->hello_world_window.w, m_State->hello_world_window.h}, ImGuiCond_Once);
+				ImGui::SetNextWindowPos(
+					{m_State->hello_world_window.x, m_State->hello_world_window.y}, ImGuiCond_Once);
+				ImGui::SetNextWindowSize(
+					{m_State->hello_world_window.w, m_State->hello_world_window.h}, ImGuiCond_Once);
 			}
 			ImGui::Begin("Hello, world!");
 			{
@@ -320,16 +364,18 @@ void App::tick() {
 				counter++;
 			ImGui::SameLine();
 			ImGui::Text("counter = %d", counter);
-			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
-				ImGui::GetIO().Framerate);
+			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
+				1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 			ImGui::Text("Uptime: %02d:%02d:%02d", uptime_hours, uptime_minutes, uptime_secs);
 			ImGui::End();
 		}
 
 		if (m_Rt->showAnotherWindow) {
 			if (m_State->another_window.valid) {
-				ImGui::SetNextWindowPos({m_State->another_window.x, m_State->another_window.y}, ImGuiCond_Once);
-				ImGui::SetNextWindowSize({m_State->another_window.w, m_State->another_window.h}, ImGuiCond_Once);
+				ImGui::SetNextWindowPos({m_State->another_window.x, m_State->another_window.y},
+					ImGuiCond_Once);
+				ImGui::SetNextWindowSize({m_State->another_window.w, m_State->another_window.h},
+					ImGuiCond_Once);
 			}
 			ImGui::Begin("Another Window", &m_Rt->showAnotherWindow);
 			{
@@ -354,7 +400,6 @@ void App::tick() {
 	}
 }
 
-
 int App::destroy() {
 	bool const reopen_requested = m_MenuBar->request_reopen;
 
@@ -366,10 +411,10 @@ int App::destroy() {
 	m_State->show_demo_window    = m_Rt->showDemoWindow;
 	m_State->show_another_window = m_Rt->showAnotherWindow;
 	m_State->vsync               = m_Rt->vsync;
-	m_State->clear_color = WindowStateToml::ColorToml {static_cast<int>(std::lround(m_Rt->clearColor.x * 255.0f + 0.5f)),
-		static_cast<int>(std::lround(m_Rt->clearColor.y * 255.0f + 0.5f)),
-		static_cast<int>(std::lround(m_Rt->clearColor.z * 255.0f + 0.5f)),
-		static_cast<int>(std::lround(m_Rt->clearColor.w * 255.0f + 0.5f))};
+	m_State->clear_color         = WindowStateToml::ColorToml(std::lround(m_Rt->clearColor.x * 255.0f + 0.5f),
+				std::lround(m_Rt->clearColor.y * 255.0f + 0.5f), std::lround(m_Rt->clearColor.z * 255.0f + 0.5f),
+				std::lround(m_Rt->clearColor.w * 255.0f + 0.5f));
+
 	m_StyleEditor->ExportLayout(m_State);
 	m_MenuBar->ExportHistory(m_State);
 	m_MenuBar->ExportRuntimeConfig(m_State);
@@ -391,6 +436,29 @@ int App::destroy() {
 	// explicit cleanup above) rather than at static exit, and the next reopen
 	// iteration's Alloc() finds an empty registry — no duplicate type entries.
 	m_mem->Release<AppCoordinator>();
+
+	// Release the UI subsystems in the EXACT reverse of Alloc()'s PushGet order,
+	// so each destructor (thread joins, plain cleanup) runs here, after the
+	// explicit GPU/thread teardown done in AppCoordinator::Shutdown() above. This
+	// mirrors the old ~AppContext reverse-member-declaration destruction.
+	m_mem->Release<ConsoleCommands>();
+	m_mem->Release<AppStateCoordinator>();
+	m_mem->Release<MediaLoadHandler>();
+	m_mem->Release<MediaHistoryManager>();
+	m_mem->Release<MetadataEditor>();
+	m_mem->Release<FileThumbnailCache>();
+	m_mem->Release<FileBrowserContextMenu>();
+	m_mem->Release<VideoContextMenu>();
+	m_mem->Release<OpenedFilesWindow>();
+	m_mem->Release<HistoryPreview>();
+	m_mem->Release<ConfigRuntime>();
+	m_mem->Release<VideoDownloader>();
+	m_mem->Release<VideoPlayerPlacebo>();
+	m_mem->Release<VideoPlayer>();
+	m_mem->Release<BulkImageOpenQueue>();
+	m_mem->Release<OpenImageDialogs>();
+	m_mem->Release<ImageViewerPanel>();
+
 	m_mem->Release<StyleEditor>();
 	m_mem->Release<ThreadReflectionPanel>();
 	m_mem->Release<FpsPlot>();
@@ -414,8 +482,6 @@ int App::destroy() {
 
 	return reopen_requested ? App::k_reopen_exit_code : 0;
 }
-
-
 int App::run() {
 	// Central allocation up front, fresh on every iteration of main.cpp's reopen
 	// loop. Releasing in destroy() keeps these PushGet calls creating new objects

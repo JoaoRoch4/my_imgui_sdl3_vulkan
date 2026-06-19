@@ -1,5 +1,6 @@
 #include "app.hpp"
 #include "main.hpp"
+#include <exception>
 #include "pch.hpp"
 
 #include "Args.hpp"
@@ -15,17 +16,21 @@ int start(int argc, char* argv[]) {
 	// the reopen loop below — CLI flags survive a reopen.
 	Args args;
 	args.parseArgs(argc, argv);
-	if (!args.empty()) // stay silent when no arguments were passed
+	if (!args.empty())	// stay silent when no arguments were passed
 		args.printArgs();
-	StartupOptions const     opts  = resolve_startup_options(args);
+	StartupOptions const	 opts  = resolve_startup_options(args);
 	static MemoryManagement& m_mem = MemoryManagement::Get();
-	App*                     app {m_mem.PushGet<App>("app", opts)};
+	App*					 app{m_mem.PushGet<App>("app", opts)};
 
-
+	int code{};
 
 	while (true) {
-		int const code = app->run();
-		if (code != App::k_reopen_exit_code)
-			return code;
+		try {
+			code = app->run();
+		} catch (std::exception& e) {
+			std::cerr << "General Error: " << e.what() << '\n';
+		}
+
+		if (code != App::k_reopen_exit_code) return code;
 	}
 }

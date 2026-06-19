@@ -1,7 +1,6 @@
 #pragma once
 #include "pch.hpp"
 
-class AppContext;
 class StyleEditor;
 namespace ImGui {
 class FileBrowser;
@@ -12,14 +11,13 @@ class FileBrowser;
  * dispatches the immediate action for each item.
  *
  * MainMenuBar holds no state: everything it needs is supplied per-frame through
- * MenuContext.  Ownership of the subsystems lives in AppContext / AppCoordinator
- * — this class only reads them (via the context getters) to build the menu.
+ * MenuContext.  Subsystems are owned by the MemoryManagement registry; Draw()
+ * reads them via GetInstance<T>() to build the menu.
  */
 class MainMenuBar {
 public:
   /// Per-frame inputs for drawing the menu bar.
   struct MenuContext {
-    AppContext *ctx = nullptr;          ///< subsystem access (getters)
     StyleEditor *style_editor = nullptr;
     bool *show_demo_window = nullptr;   ///< toggled by "Demo Window"
     bool *show_another_window = nullptr;

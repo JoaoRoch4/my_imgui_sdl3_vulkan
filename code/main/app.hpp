@@ -16,8 +16,6 @@
 #include "Memory_management.hpp"
 
 
-class AppContext;
-
 class App {
 public:
 	static constexpr int k_reopen_exit_code = 42;
@@ -44,9 +42,6 @@ protected:
 	bool Alloc();
 
 private:
-	// Injected config / singletons / the registry handle itself — NOT
-	// registry-owned, so they keep their existing lifetimes.
-	AppContext* m_AppContext = nullptr;
 	// Resolved command-line overrides, applied in KickStart() after the TOML
 	// load. See StartupOptions.
 	StartupOptions    m_Opts;

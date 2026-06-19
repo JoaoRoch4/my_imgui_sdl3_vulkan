@@ -2,8 +2,6 @@
 
 #include "image_job_system.hpp"
 
-#include <string>
-#include <thread>
 
 #include "core/thread/managed_thread.hpp"
 #include "core/thread/thread_overwatch.hpp"

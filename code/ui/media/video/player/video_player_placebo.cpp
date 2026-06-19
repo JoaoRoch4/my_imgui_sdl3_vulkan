@@ -1262,6 +1262,8 @@ bool VideoPlayerPlacebo::entry_create_mpv(PlaceboEntry &e,
 
   mpv_set_option_string(e.mpv, "terminal", "no");
   mpv_set_option_string(e.mpv, "vo", "libmpv");
+  mpv_set_option_string(e.mpv, "vo", "gpu-next");
+
   mpv_set_option_string(e.mpv, "gpu-api", "opengl");
   mpv_set_option_string(e.mpv, "hwdec", hwdec ? "nvdec" : "no");
   mpv_set_option_string(e.mpv, "loop-file", "yes");

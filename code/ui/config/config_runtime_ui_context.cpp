@@ -3,7 +3,6 @@
 #include "config_runtime_ui_context.hpp"
 
 #include "Image_viewer_panel.hpp"
-#include "app_context.hpp"
 #include "config_runtime.hpp"
 #include "video_hover_preview.hpp"
 #include "video_playback_mode.hpp"

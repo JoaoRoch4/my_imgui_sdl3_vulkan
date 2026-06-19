@@ -84,7 +84,7 @@ class FileBrowserThumbnailContext {
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are
 		// retired so a folder with thousands of files can't exhaust samplers/descriptors/
 		// VRAM. Must comfortably exceed the number of thumbnails visible at once.
-		static constexpr int k_max_live_textures     = 4096 * 3;
+		static constexpr int k_max_live_textures     = 32;
 
 	private:
 
@@ -125,7 +125,10 @@ class FileBrowserThumbnailContext {
 
 		[[nodiscard]] std::string           key_for(std::filesystem::path const &path) const;
 		[[nodiscard]] std::filesystem::path png_for(std::string const &key) const;
-		void                                submit_image(std::filesystem::path const &file, Entry &e);
+		// Decode -> letterbox(320x180) -> encode PNG -> deliver via e.img_future, on the
+		// ImageJobSystem pool. `decode_as_video` picks ffmpegthumbnailer (smart frame, fast
+		// CPU decode) over decode_file() for a fresh video source; both letterbox identically.
+		void submit_image(std::filesystem::path const &file, Entry &e, bool decode_as_video);
 		// Per-frame state advance (future poll -> upload-budget -> texture id) shared by both
 		// get() overloads; assumes last_used was already stamped by the caller.
 		[[nodiscard]] ImTextureID           poll_entry(Entry &e);

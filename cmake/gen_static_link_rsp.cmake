@@ -27,8 +27,13 @@ endforeach()
 
 set(ENV{PKG_CONFIG_PATH} "${PC_PATH}")
 
+# MODULE may name a single .pc (e.g. "mpv") or several space-separated ones
+# (e.g. "libavformat libavcodec libswscale" — FFmpeg ships no umbrella .pc), so
+# split it into individual pkg-config arguments rather than one quoted token.
+separate_arguments(_modules NATIVE_COMMAND "${MODULE}")
+
 execute_process(
-  COMMAND "${PKG_CONFIG}" --static --libs "${MODULE}"
+  COMMAND "${PKG_CONFIG}" --static --libs ${_modules}
   OUTPUT_VARIABLE _libs
   OUTPUT_STRIP_TRAILING_WHITESPACE
   ERROR_VARIABLE  _err

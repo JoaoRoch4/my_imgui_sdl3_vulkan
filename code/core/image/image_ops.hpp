@@ -1,11 +1,10 @@
 #pragma once
 
+#include "image_buffer.hpp"
+#include "image_types.hpp"
 #include <expected>
 #include <filesystem>
 #include <functional>
-
-#include "image_buffer.hpp"
-#include "image_types.hpp"
 
 // Synchronous, thread-free image operations wrapping stb + libwebp. These are pure
 // functions with no scheduling, no Vulkan and no project-PCH dependency, so they can
@@ -13,10 +12,21 @@
 
 namespace img::ops {
 
-// Decode an image file (PNG/JPEG/WebP/...) into an interleaved 8-bit buffer with
-// `desired_channels` channels (4 = RGBA). libwebp handles .webp; stb_image the rest.
+// Decode the first frame of any file FFmpeg can open (PNG/JPEG/WebP/MP4/MKV/...)
+// into an interleaved 8-bit buffer with `desired_channels` channels (4 = RGBA).
+// For *video* thumbnails prefer decode_video_thumbnail(): this grabs an early
+// keyframe, which is frequently black/blank.
 [[nodiscard]] std::expected<ImageBuffer, ImageError>
 decode_file(const std::filesystem::path &file, int desired_channels = 4);
+
+// Decode a representative *video* thumbnail via ffmpegthumbnailer, which picks a
+// high-variance (non-black) frame instead of the first keyframe decode_file() lands
+// on. Output is an interleaved 8-bit buffer with `desired_channels` (3 = RGB,
+// 4 = RGBA with opaque alpha). `thumbnail_size` is the longest-edge target in pixels
+// (<= 0 = native frame size). The frame-selection policy lives in the .cpp.
+[[nodiscard]] std::expected<ImageBuffer, ImageError>
+decode_video_thumbnail(const std::filesystem::path &file, int thumbnail_size,
+                       int desired_channels = 4);
 
 // Single-threaded resize (stb_image_resize2, linear). The multithreaded split-based
 // resize lives in ImageJobSystem and is validated bit-exact against this one.

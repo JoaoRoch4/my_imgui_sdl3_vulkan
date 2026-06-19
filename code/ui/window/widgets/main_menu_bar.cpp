@@ -12,7 +12,7 @@
 
 #include "main_menu_bar.hpp"
 
-#include "app_context.hpp"
+#include "Memory_management.hpp"
 #include "file_browser_ui.hpp"
 
 #include "Image_viewer_panel.hpp"
@@ -31,17 +31,17 @@
 
 bool MainMenuBar::Draw(MainMenuBar::MenuContext const &mc) {
 	// Local aliases mirror the historical member names so the menu logic below is
-	// unchanged.  Ownership stays in AppContext; these are non-owning observers.
-	AppContext &ctx                    = *mc.ctx;
-	auto       *m_open_image_dialogs   = ctx.OpenImageDialogsPanel();
-	auto       *m_history_mgr          = ctx.History();
-	auto       *m_history_preview      = ctx.Preview();
-	auto       *m_video_context_menu   = ctx.VideoMenu();
-	auto       *m_opened_files_window  = ctx.OpenedFiles();
-	auto       *m_video_player         = ctx.Player();
-	auto       *m_video_player_placebo = ctx.PlayerPlacebo();
-	auto       *m_config_runtime       = ctx.Config();
-	auto       *m_viewer               = ctx.Viewer();
+	// unchanged.  Ownership lives in the MemoryManagement registry; these are
+	// non-owning observers resolved via GetInstance<T>().
+	auto *m_open_image_dialogs   = MemoryManagement::GetInstance<OpenImageDialogs>();
+	auto *m_history_mgr          = MemoryManagement::GetInstance<MediaHistoryManager>();
+	auto *m_history_preview      = MemoryManagement::GetInstance<HistoryPreview>();
+	auto *m_video_context_menu   = MemoryManagement::GetInstance<VideoContextMenu>();
+	auto *m_opened_files_window  = MemoryManagement::GetInstance<OpenedFilesWindow>();
+	auto *m_video_player         = MemoryManagement::GetInstance<VideoPlayer>();
+	auto *m_video_player_placebo = MemoryManagement::GetInstance<VideoPlayerPlacebo>();
+	auto *m_config_runtime       = MemoryManagement::GetInstance<ConfigRuntime>();
+	auto *m_viewer               = MemoryManagement::GetInstance<ImageViewerPanel>();
 
 	StyleEditor *m_style_editor             = mc.style_editor;
 	bool        *m_show_demo_window         = mc.show_demo_window;

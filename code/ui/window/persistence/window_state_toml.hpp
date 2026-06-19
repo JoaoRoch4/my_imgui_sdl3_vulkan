@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SDL3/SDL_stdinc.h"
 #include "pch.hpp"
 
 struct CommentRule {
@@ -29,10 +30,10 @@ struct WindowStateToml {
   };
 
   struct ColorToml {
-    int r = 0;
-    int g = 0;
-    int b = 0;
-    int a = 255;
+    Uint64 r = 0;
+    Uint64 g = 0;
+    Uint64 b = 0;
+    Uint64 a = 255;
   };
 
   struct StyleToml {

@@ -120,15 +120,15 @@ BreakBeforeBinaryOperators: All
 BreakBeforeConceptDeclarations: Always
 BreakBeforeBraces: Attach
 BreakBeforeInlineASMColon: OnlyMultiline
-BreakBeforeTemplateCloser: false
+BreakBeforeTemplateCloser: true
 BreakBeforeTernaryOperators: true
 BreakBinaryOperations: Never
 BreakConstructorInitializers: BeforeComma
 BreakFunctionDefinitionParameters: false
 BreakInheritanceList: BeforeColon
 BreakStringLiterals: true
-BreakTemplateDeclarations: MultiLine
-ColumnLimit: 120
+BreakTemplateDeclarations: Yes
+ColumnLimit: 100
 CommentPragmas: "^ IWYU pragma:"
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 4
@@ -212,7 +212,7 @@ PenaltyBreakFirstLessLess: 120
 PenaltyBreakOpenParenthesis: 300
 PenaltyBreakScopeResolution: 500
 PenaltyBreakString: 100
-PenaltyBreakTemplateDeclaration: 10
+PenaltyBreakTemplateDeclaration: 0
 PenaltyExcessCharacter: 100
 PenaltyIndentedWhitespace: 100
 PenaltyReturnTypeOnItsOwnLine: 60

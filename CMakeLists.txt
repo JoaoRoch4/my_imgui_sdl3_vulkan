@@ -33,7 +33,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # SDL3/…) stay as-is, so no media rebuild, and ASan still catches bugs in app code.
 # (Mixing instrumented app + un-instrumented STL needs detect_container_overflow=0,
 #  which the launch config's ASAN_OPTIONS sets.)
-option(ENABLE_SANITIZERS "Build the app target with ASan+UBSan (Debug config only)" OFF)
+option(ENABLE_SANITIZERS "Build the app target with ASan+UBSan (Debug config only)" ON)
 
 # Emit compile_commands.json (clangd / tooling) for every configure, not just the
 # `all` preset. Harmless redundancy when the preset already sets it; the safety net
@@ -101,6 +101,7 @@ add_subdirectory(thirdparty/imgui)
 add_subdirectory(thirdparty/implot)
 add_subdirectory(thirdparty/stb)
 add_subdirectory(thirdparty/ffmpeg)
+add_subdirectory(thirdparty/ffmpegthumbnailer)   # static, against our FFmpeg 8.0
 add_subdirectory(thirdparty/libplacebo)
 add_subdirectory(thirdparty/mpv)
 
@@ -112,7 +113,6 @@ add_executable(example_sdl3_vulkan
     code/main/app.cpp
 
     # Core utilities
-    code/core/app_context.cpp
     code/core/thread/thread_overwatch.cpp
     code/core/thread/thread_registry.cpp
     code/core/thread/managed_thread.cpp
@@ -413,6 +413,18 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     stdc++exp          # std::stacktrace backend (libstdc++ >= 13); used by ManagedThread::escalate
 )
 
+# ── ffmpegthumbnailer (static, from-source) ───────────────────────────────────
+# Header path for <libffmpegthumbnailer/...> + the per-config static archive built
+# against our FFmpeg 8.0 (thirdparty/ffmpegthumbnailer). The archive is linked by
+# full $<CONFIG> path and placed BEFORE the mpv media-link.rsp below, so its libav*
+# references resolve against the FFmpeg --start-group inside that rsp (a static lib
+# must precede the libraries it depends on). LINK_DEPENDS on the same $<CONFIG>
+# archive makes the link wait for — and so build — only this config's EP (which in
+# turn DEPENDS on the same-config FFmpeg). No .so, no rpath; one FFmpeg in-process.
+set(_ffthumb_a "${CMAKE_BINARY_DIR}/thirdparty/ffmpegthumbnailer/$<CONFIG>/install/lib/libffmpegthumbnailer.a")
+target_link_libraries(example_sdl3_vulkan PRIVATE ffthumb::ffthumb "${_ffthumb_a}")
+set_property(TARGET example_sdl3_vulkan APPEND PROPERTY LINK_DEPENDS "${_ffthumb_a}")
+
 # ── Static media stack: per-config transitive link resolution ─────────────────
 # FFmpeg / libplacebo / mpv are built as STATIC archives (.a) per config (see
 # thirdparty/{ffmpeg,libplacebo,mpv}). A static archive carries only its own
@@ -434,9 +446,23 @@ set_property(TARGET example_sdl3_vulkan APPEND PROPERTY LINK_DEPENDS "${_media_r
 # its own `image_tests` target — NOT linked into the application. Run with:
 #   cmake --build build/all --config Debug --target image_tests
 #   ./build/all/Debug/image_tests          (or via `ctest` in the config dir)
-# The JobQueue + image_ops are intentionally PCH-free and Vulkan-free, so the test
-# target only needs the stb library and libwebp.
+# The JobQueue + image_ops are PCH-free and Vulkan-free, but image_ops now decodes
+# via FFmpeg (decode_file/encode_png), so the test targets that compile it must link
+# the same static FFmpeg the app uses — stb + libwebp alone no longer satisfy it.
 enable_testing()
+
+# Per-config FFmpeg surface for the test targets: our 8.0 headers + the FFmpeg-only
+# static-link rsp (a byproduct of ffmpeg_ep_<cfg>'s gen_static_rsp step — the full
+# avformat/avcodec/swscale closure + system libs). LINK_DEPENDS on the $<CONFIG> rsp
+# makes the link wait for, and so build, only that config's already-built FFmpeg.
+set(_ffmpeg_test_inc "${CMAKE_BINARY_DIR}/thirdparty/ffmpeg/$<CONFIG>/install/include")
+set(_ffmpeg_test_rsp "${CMAKE_BINARY_DIR}/thirdparty/ffmpeg/$<CONFIG>/ffmpeg-link.rsp")
+# image_ops.cpp also calls ffmpegthumbnailer (decode_video_thumbnail), so the test
+# targets need its header + static archive. The archive must be linked BEFORE the
+# FFmpeg rsp (it references libav* symbols resolved by that --start-group).
+set(_ffthumb_test_inc "${CMAKE_SOURCE_DIR}/external/ffmpegthumbnailer")
+set(_ffthumb_test_a   "${CMAKE_BINARY_DIR}/thirdparty/ffmpegthumbnailer/$<CONFIG>/install/lib/libffmpegthumbnailer.a")
+
 add_executable(image_tests
     tests/test_main.cpp
     tests/image_ops_test.cpp
@@ -455,11 +481,16 @@ target_include_directories(image_tests PRIVATE
 target_include_directories(image_tests SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/external/doctest
     ${WEBP_INCLUDE_DIR}
+    ${_ffmpeg_test_inc}    # our FFmpeg 8.0 headers (not the /usr/local shadow install)
+    ${_ffthumb_test_inc}   # <libffmpegthumbnailer/...>
 )
 target_link_libraries(image_tests PRIVATE
-    stb                # decode/resize/encode implementations (image / image_resize2 / image_write)
-    WebP::webp         # .webp decode
+    stb                        # resize implementation (image_resize2)
+    WebP::webp                 # .webp decode
+    "${_ffthumb_test_a}"       # ffmpegthumbnailer (before the FFmpeg group below)
+    "-Wl,@${_ffmpeg_test_rsp}" # static FFmpeg closure for decode_file/encode_png
 )
+set_property(TARGET image_tests APPEND PROPERTY LINK_DEPENDS "${_ffmpeg_test_rsp}" "${_ffthumb_test_a}")
 # doctest unconditionally includes <ciso646> (removed in C++20); silence just that
 # preprocessor #warning so test build output stays pristine.
 target_compile_options(image_tests PRIVATE "-Wno-#warnings")
@@ -493,12 +524,16 @@ target_include_directories(image_job_tests SYSTEM PRIVATE
     $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
     ${CMAKE_SOURCE_DIR}/external/doctest
     # pch.hpp pulls SDL3 / Vulkan / mpv / libplacebo headers. Use the vendored
-    # *source* header dirs so this lightweight test compiles without dragging in
-    # the heavy from-source mpv / FFmpeg / libplacebo ExternalProject builds.
+    # *source* header dirs for those so this test compiles without dragging in the
+    # heavy mpv / libplacebo ExternalProject builds. FFmpeg is the exception: it must
+    # be the same-config *installed* 8.0 headers, because image_ops.cpp links the
+    # matching static archives (rsp below) — a header/ABI mismatch would crash.
     ${CMAKE_SOURCE_DIR}/external/SDL3-3.4.10/include
     ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
     ${CMAKE_SOURCE_DIR}/external/mpv/include
     ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
+    ${_ffmpeg_test_inc}
+    ${_ffthumb_test_inc}
 )
 target_precompile_headers(image_job_tests PRIVATE code/pch/pch.hpp)
 target_compile_options(image_job_tests PRIVATE "-Wno-#warnings")
@@ -511,5 +546,8 @@ target_link_libraries(image_job_tests PRIVATE
     CURL::libcurl               # header paths only (curl/curl.h)
     tag                         # header paths only (taglib/*) — from-source TagLib
     stdc++exp                   # std::stacktrace (ManagedThread::escalate)
+    "${_ffthumb_test_a}"        # ffmpegthumbnailer (before the FFmpeg group below)
+    "-Wl,@${_ffmpeg_test_rsp}"  # static FFmpeg closure for decode_file/encode_png
 )
+set_property(TARGET image_job_tests APPEND PROPERTY LINK_DEPENDS "${_ffmpeg_test_rsp}" "${_ffthumb_test_a}")
 add_test(NAME image_job_tests COMMAND image_job_tests)

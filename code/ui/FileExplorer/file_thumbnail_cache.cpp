@@ -300,12 +300,15 @@ void FileThumbnailCache::generate_thumbnail(const std::filesystem::path &file,
 	mpv_set_option_string(mpv, "vo", "libmpv");
 
 
+
 	// 2. Habilitar o descarte de frames atrasados se o hardware gargalar
 	mpv_set_option_string(mpv, "framedrop", "vo");
 
     mpv_set_option_string(mpv, "mute",     "yes");
-    mpv_set_option_string(mpv, "hwdec",    "nvdec");
-    mpv_set_option_string(mpv, "loop-file","no");
+    mpv_set_option_string(mpv, "hwdec",    "nvdec-copy");
+	mpv_set_option_string(mpv, "gpu-api", "vulkan");
+
+	mpv_set_option_string(mpv, "loop-file","no");
     mpv_set_option_string(mpv, "cache",    "no");
     mpv_set_option_string(mpv, "ytdl",     "no");
     mpv_set_option_string(mpv, "terminal", "no");

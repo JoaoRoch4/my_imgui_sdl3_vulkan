@@ -60,6 +60,27 @@ foreach(cfg IN LISTS _ffmpeg_cfgs)
     # Expose this config's pkgconfig dir + install prefix to the same-config mpv build.
     set(FFMPEG_PKGCONFIG_DIR_${cfg} ${_install}/lib/pkgconfig CACHE INTERNAL "FFmpeg .pc dir (${cfg})")
     set(FFMPEG_INSTALL_DIR_${cfg}   ${_install}               CACHE INTERNAL "FFmpeg install prefix (${cfg})")
+
+    # Resolve the FULL static link line for the image-core FFmpeg surface into a
+    # response file the image_tests / image_job_tests targets read via `-Wl,@`.
+    # Modules: avformat+avcodec+swscale (decode_file/encode_png) + avfilter
+    # (ffmpegthumbnailer's internal scaling/film-strip filter graph) — pkg-config
+    # pulls their transitive closure (avutil/swresample/postproc + system libs like
+    # lzma/z/drm/va/X11). image_ops.cpp uses libav* directly and doesn't go through
+    # mpv, hence this dedicated FFmpeg-only rsp. Same EP-step rationale as mpv's media
+    # rsp: runs after install (so the .pc files exist), is a per-config byproduct, and
+    # a root custom command would be cross-config in Ninja Multi-Config.
+    ExternalProject_Add_Step(ffmpeg_ep_${cfg} gen_static_rsp
+        DEPENDEES  install
+        DEPENDS    ${CMAKE_SOURCE_DIR}/cmake/gen_static_link_rsp.cmake
+        BYPRODUCTS ${_prefix}/ffmpeg-link.rsp
+        COMMAND    ${CMAKE_COMMAND}
+                     -DPKG_CONFIG=${PKG_CONFIG_EXECUTABLE}
+                     -DPC_PATH=${_install}/lib/pkgconfig
+                     "-DMODULE=libavfilter libavformat libavcodec libswscale"
+                     -DOUT=${_prefix}/ffmpeg-link.rsp
+                     -P ${CMAKE_SOURCE_DIR}/cmake/gen_static_link_rsp.cmake
+        COMMENT    "Resolving static FFmpeg link flags (${cfg})")
 endforeach()
 
 # Include-only INTERFACE targets per FFmpeg library. The actual static archives are

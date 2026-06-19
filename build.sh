@@ -19,6 +19,12 @@
 #   --test       Build and run the test suite (image_tests, image_job_tests).
 #   --fresh      Reconfigure from scratch (wipes build/all/.ninja_deps — see the
 #                "stale deps" note below) before building.
+#   --rebuild    Force a full recompile of the APP only (all its TUs + PCH +
+#                relink) while PRESERVING the ExternalProject libraries
+#                (build/all/thirdparty: ffmpeg, mpv, sdl3, libplacebo) and the
+#                runtime cache (build/cache: thumbnails, video cache, TOML).
+#                Use after toggling a flag/option that should re-touch app code
+#                without paying for a from-scratch media rebuild.
 #   -h|--help    Show this help.
 #
 set -euo pipefail
@@ -103,6 +109,28 @@ reset_ninja_deps() {
     rm -f "$BUILD_DIR/.ninja_deps"
 }
 
+# Per-config object tree of the APP target. Deleting one config's subtree forces
+# every app TU + the PCH for that config to recompile and relink, WITHOUT touching
+# the ExternalProject outputs (build/all/thirdparty/*) — their stamps stay valid so
+# ninja leaves ffmpeg/mpv/sdl3/libplacebo alone — and WITHOUT touching build/cache.
+readonly APP_OBJ_DIR="$BUILD_DIR/CMakeFiles/example_sdl3_vulkan.dir"
+
+rebuild_clean_app() {
+    local cfg="$1" name bin dir
+    name="$(config_name "$cfg")"
+    bin="$(binary_path "$cfg")"
+    dir="$APP_OBJ_DIR/$name"
+    [[ -d "$dir" ]] || { warn "no app objects for $name yet — full build will create them"; return 0; }
+    log "Rebuild: clearing app objects for ${C_DIM}$name${C_OFF} (keeping thirdparty libs + cache)"
+    # Delete only COMPILED outputs: object files, their depfiles, and the compiled PCH.
+    # Do NOT remove the whole dir — it also holds cmake_pch.hxx / cmake_pch.hxx.cxx,
+    # which CMake generates at CONFIGURE time and ninja has no rule to recreate. Deleting
+    # them wedges the build ("cmake_pch.hxx ... missing and no known rule to make it").
+    # The .pch IS rebuilt from cmake_pch.hxx, so removing it forces a fresh PCH.
+    find "$dir" -type f \( -name '*.o' -o -name '*.o.d' -o -name '*.pch' \) -delete
+    rm -f "$bin"
+}
+
 build_config() {
     local cfg="$1" name
     name="$(config_name "$cfg")"
@@ -145,6 +173,7 @@ DO_RUN=0
 DO_PERF=0
 DO_TEST=0
 DO_FRESH=0
+DO_REBUILD=0
 CONFIGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -155,6 +184,7 @@ while [[ $# -gt 0 ]]; do
         --perf)     DO_PERF=1 ;;
         --test)     DO_TEST=1 ;;
         --fresh)    DO_FRESH=1 ;;
+        --rebuild)  DO_REBUILD=1 ;;
         -h|--help)  usage; exit 0 ;;
         *)          die "unknown argument '$1' (try --help)" ;;
     esac
@@ -172,6 +202,7 @@ if ninja_deps_looks_stale; then
 fi
 
 for cfg in "${CONFIGS[@]}"; do
+    (( DO_REBUILD )) && rebuild_clean_app "$cfg"
     build_config "$cfg"
 done
 

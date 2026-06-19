@@ -116,11 +116,16 @@ void VideoHoverPreview::init_mpv() {
     m_mpv = mpv_create();
 
     mpv_set_option_string(m_mpv, "vo", "libmpv");
-    mpv_set_option_string(m_mpv, "pause", "yes");
+	mpv_set_option_string(m_mpv, "profile", "fast");
+
+	mpv_set_option_string(m_mpv, "pause", "yes");
     mpv_set_option_string(m_mpv, "mute", preview_sound ? "no" : "yes");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
-    mpv_set_option_string(m_mpv, "hwdec", "nvdec");
-    mpv_set_option_string(m_mpv, "ytdl", "yes");
+    mpv_set_option_string(m_mpv, "hwdec", "nvdec-copy");
+
+	mpv_set_option_string(m_mpv, "gpu-api", "vulkan");
+
+	mpv_set_option_string(m_mpv, "ytdl", "yes");
 	mpv_set_option_string(m_mpv, "cache", "no");
 
 

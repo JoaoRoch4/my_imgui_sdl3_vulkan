@@ -133,15 +133,20 @@ void VideoSeekPreview::init_mpv(std::string const &source) {
 	m_mpv = mpv_create();
 	if (!m_mpv)
 		return;
+	mpv_set_option_string(m_mpv, "vo", "libmpv");
 	mpv_set_option_string(m_mpv, "profile", "fast");
+	
 
 	// 2. Habilitar o descarte de frames atrasados se o hardware gargalar
 	mpv_set_option_string(m_mpv, "framedrop", "vo");
-	mpv_set_option_string(m_mpv, "vo", "libmpv");
+
+
 	mpv_set_option_string(m_mpv, "mute", "no");
 	mpv_set_option_string(m_mpv, "pause", "yes");
 	mpv_set_option_string(m_mpv, "hr-seek", "yes");
-	mpv_set_option_string(m_mpv, "hwdec", "nvdec");
+	mpv_set_option_string(m_mpv, "hwdec", "nvdec-copy");
+	mpv_set_option_string(m_mpv, "gpu-api", "vulkan");
+
 	// 1. Forçar o perfil de baixo custo computacional (reduz qualidade visual)
 
 	// yt-dlp integration — lets mpv stream YouTube, Vimeo, Twitch, etc.

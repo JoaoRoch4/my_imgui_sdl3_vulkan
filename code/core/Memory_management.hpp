@@ -1,7 +1,8 @@
 #pragma once
 #include "pch.hpp"
 
-template <typename T> [[nodiscard]] constexpr std::string_view TypeNameOf() {
+template <typename T>
+[[nodiscard]] static constexpr std::string_view TypeNameOf() {
 	constexpr std::string_view signature {__PRETTY_FUNCTION__};
 	constexpr std::string_view key {"T = "};
 	constexpr std::size_t      start {signature.find(key) + key.size()};
@@ -10,6 +11,9 @@ template <typename T> [[nodiscard]] constexpr std::string_view TypeNameOf() {
 }
 
 class MemoryManagement {
+
+		
+
 
 		/**
 		 * @brief Takes ownership of a built object and records its metadata.
@@ -21,21 +25,24 @@ class MemoryManagement {
 		 * type name. A new entry is appended, the event is logged, and the raw
 		 * observer address is returned so the caller can static_cast it back.
 		 */
-		void* findErased(std::type_index type) const {
+		[[nodiscard]] void* findErased(std::type_index type) const {
 			for (ObjectEntry const& entry : m_entries) {
 				if (entry.type == type) {
-					std::println("[MemoryManagement] Lookup hit for type '{}' at {}", entry.typeName,
-						static_cast<void const*>(entry.instance.get()));
+					//	std::println("[MemoryManagement] Lookup hit for type '{}' at {}",
+					//entry.typeName, 	auto e = static_cast<void const*>(entry.instance.get()));
+					// if(e){}
 					return entry.instance.get();
 				}
 			}
-			std::println("[MemoryManagement] Lookup miss: no object of the requested type");
+			// std::println("[MemoryManagement] Lookup miss: no object of the requested type");
 			return nullptr;
 		}
 
-		void* registerErased(std::shared_ptr<void> instance, std::type_index type, std::size_t sizeBytes,
-			std::string_view debugName, std::string_view typeName) {
+		void* registerErased(std::shared_ptr<void> instance, std::type_index type,
+			std::size_t sizeBytes, std::string_view debugName, std::string_view typeName) {
+
 			void* address {instance.get()};
+
 			m_entries.push_back(ObjectEntry {
 				.instance  = std::move(instance),
 				.type      = type,
@@ -43,8 +50,9 @@ class MemoryManagement {
 				.debugName = std::string {debugName},
 				.typeName  = std::string {typeName},
 			});
-			std::println("[ObjectRegistry] Created subobject '{}' (type '{}', {} bytes) at {}", debugName, typeName,
-				sizeBytes, address);
+
+			std::println("[ObjectRegistry] Created subobject '{}' (type '{}', {} bytes) at {}",
+				debugName, typeName, sizeBytes, address);
 			return address;
 		}
 
@@ -66,21 +74,73 @@ class MemoryManagement {
 
 		template <typename T, typename... Args>
 		[[nodiscard]] T* PushGet(std::string_view debugName, Args&&... args) {
+
 			std::shared_ptr<void> instance {std::make_unique<T>(std::forward<Args>(args)...)};
-			void* address {registerErased(std::move(instance), std::type_index {typeid(T)}, sizeof(T), debugName,
-				TypeNameOf<T>())};
+
+			void* address {registerErased(std::move(instance), std::type_index {typeid(T)},
+				sizeof(T), debugName, TypeNameOf<T>())};
+
+			if (!(address)){
+				throw std::runtime_error("memory allocation fail");
+				return nullptr;
+			}
 			return static_cast<T*>(address);
 		}
 
-		template <typename T, typename... Args> [[nodiscard]] T* PushGet(std::string_view debugName) {
+		template <typename T, typename... Args>
+		[[nodiscard]] T* PushGet(std::string_view debugName) {
+
 			std::shared_ptr<void> instance {std::make_unique<T>()};
-			void* address {registerErased(std::move(instance), std::type_index {typeid(T)}, sizeof(T), debugName,
-				TypeNameOf<T>())};
+
+			void* address {registerErased(std::move(instance), std::type_index {typeid(T)},
+				sizeof(T), debugName, TypeNameOf<T>())};
+
+
+			if (!(address)) {
+				throw std::runtime_error("memory allocation fail");
+				return nullptr;
+			}
 			return static_cast<T*>(address);
 		}
 
-		template <typename T> [[nodiscard]] T* GetSubobject() const {
+		template <typename T, typename... Args>
+		bool Push(std::string_view debugName, Args&&... args) {
+
+			std::shared_ptr<void> instance {std::make_unique<T>(std::forward<Args>(args)...)};
+
+			void* address = registerErased(std::move(instance), std::type_index {typeid(T)},
+				sizeof(T), debugName, TypeNameOf<T>());
+
+			if (!(address)) {
+
+				throw std::runtime_error("memory allocation fail");
+				return false;
+			}
+
+			return true;
+		};
+
+		template <typename T, typename... Args>
+		bool Push(std::string_view debugName) {
+
+			std::shared_ptr<void> instance {std::make_unique<T>()};
+
+			void* address {registerErased(std::move(instance), std::type_index {typeid(T)},
+				sizeof(T), debugName, TypeNameOf<T>())};
+
+			if (!(address)) {
+				throw std::runtime_error("memory allocation fail");
+				return false;
+			}
+
+			return true;
+		}
+
+		template <typename T>
+		[[nodiscard]] T* GetSubobject() const {
+
 			void* address {findErased(std::type_index {typeid(T)})};
+
 			return static_cast<T*>(address);
 		}
 
@@ -97,10 +157,12 @@ class MemoryManagement {
 		 * process aborts, trapping immediately under the debugger rather than
 		 * propagating a null that some distant call site would dereference.
 		 */
-		template <typename T> [[nodiscard]] static T* GetInstance() {
+		template <typename T>
+		[[nodiscard]] static T* GetInstance() {
 			T* instance {Get().GetSubobject<T>()};
 			if (!instance) {
-				std::println("[MemoryManagement] Fatal: no stored object of type '{}' — was it PushGet'd first?",
+				std::println("[MemoryManagement] Fatal: no stored object of type '{}' — was it "
+							 "PushGet'd first?",
 					TypeNameOf<T>());
 				std::abort();
 			}
@@ -119,13 +181,15 @@ class MemoryManagement {
 		 * Call only after any explicit cleanup method (cleanup()/shutdown()) has
 		 * run, and never on a type whose instance is executing this code.
 		 */
-		template <typename T> void Release() {
+		template <typename T>
+		void Release() {
 			std::type_index const type {typeid(T)};
-			std::size_t const     removed {std::erase_if(m_entries,
-                [type](ObjectEntry const& entry) { return entry.type == type; })};
+			std::size_t const removed {std::erase_if(m_entries, [type](ObjectEntry const& entry) {
+				return entry.type == type;
+			})};
 			if (removed > 0)
-				std::println("[MemoryManagement] Released '{}' ({} entr{})", TypeNameOf<T>(), removed,
-					removed == 1 ? "y" : "ies");
+				std::println("[MemoryManagement] Released '{}' ({} entr{})", TypeNameOf<T>(),
+					removed, removed == 1 ? "y" : "ies");
 		}
 
 		/**
@@ -150,7 +214,8 @@ class MemoryManagement {
 
 		MemoryManagement()
 			: m_entries {} {
-			std::println("[MemoryManagement] Global registry constructed at {}", static_cast<void const*>(this));
+			std::println("[MemoryManagement] Global registry constructed at {}",
+				static_cast<void const*>(this));
 		}
 
 		struct ObjectEntry {
