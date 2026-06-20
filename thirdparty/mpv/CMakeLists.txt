@@ -34,7 +34,7 @@ foreach(cfg IN LISTS _mpv_cfgs)
                             --default-library static
                             ${_meson_flags}
                             -Dlibmpv=true -Dcplayer=false
-                            -Dlua=auto
+                            -Dlua=luajit
         # Build AND install in the BUILD step — BUILD_BYPRODUCTS attach to the build
         # step, so install must run there too or ninja links a not-yet-installed .so
         # (we have no config-aware add_dependencies() to order a separate install).
