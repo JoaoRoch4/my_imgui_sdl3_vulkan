@@ -1,11 +1,11 @@
 #pragma once
 #include "pch.hpp"
 
-struct mpv_handle;
 class ManagedThread;
 
-/// Downloads online video/audio URLs to a local disk cache using the libmpv
-/// stream layer (yt-dlp is used internally for YouTube, Vimeo, Twitch, etc.).
+/// Downloads online video/audio URLs to a local disk cache by shelling out to
+/// yt-dlp (handles YouTube, Vimeo, Twitch, etc., and muxes separate DASH
+/// video+audio tracks into one playable file).
 ///
 /// One background jthread drains a FIFO queue of pending jobs.
 /// Cache filenames are stable FNV-1a hashes of the URL — a given URL is never
@@ -67,11 +67,18 @@ private:
 
     [[nodiscard]] std::filesystem::path cache_path_for(const std::string &url) const;
 
-    /// Download url to target via mpv stream-dump. Deletes partial file on failure.
+    /// Download url to target by running yt-dlp. Deletes partial file on failure.
     [[nodiscard]] bool download(const std::string &url,
                                const std::filesystem::path &target,
                                const std::stop_token &st,
                                ManagedThread &self);
+
+    /// yt-dlp -f format string (quality/codec policy — see .cpp).
+    [[nodiscard]] static std::string ytdl_format();
+
+    /// Did the finished yt-dlp run actually leave a usable file? (success policy)
+    [[nodiscard]] static bool download_succeeded(int exit_code,
+                                                 const std::filesystem::path &target);
 
     static uint64_t fnv1a(const std::string &s);
 
@@ -81,6 +88,6 @@ private:
     std::vector<Job>                m_queue;
     std::vector<Result>             m_completed;
     std::vector<std::string>        m_inflight; ///< URLs queued or currently downloading.
-    std::atomic<mpv_handle *>       m_current_mpv;
+    std::atomic<int>                m_current_pid; ///< PID of the running yt-dlp, -1 if none.
     std::unique_ptr<ManagedThread>  m_worker;
 };
