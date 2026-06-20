@@ -738,21 +738,21 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
 
     if (!state.has_prev)
         ImGui::BeginDisabled();
-    if (ImGui::SmallButton("|<") && callbacks.on_switch_relative)
+    if (ImGui::SmallButton("◄◄") && callbacks.on_switch_relative)
         callbacks.on_switch_relative(-1);
     if (!state.has_prev)
         ImGui::EndDisabled();
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::SmallButton("<<"))
+    if (ImGui::SmallButton("◄◄"))
         seek_by(-VideoUiWindow::seek_step_seconds);
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::SmallButton(paused ? "|>" : "||"))
+    if (ImGui::SmallButton(paused ? " ▶" : "⏸"))
         toggle_pause();
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::SmallButton(">>"))
+    if (ImGui::SmallButton("►►"))
         seek_by(VideoUiWindow::seek_step_seconds);
 
     ImGui::SameLine(0.0f, 4.0f);
@@ -770,13 +770,13 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
     ImGui::SameLine(0.0f, 4.0f);
     if (!state.has_next)
         ImGui::BeginDisabled();
-    if (ImGui::SmallButton(">|") && callbacks.on_switch_relative)
+    if (ImGui::SmallButton(" ▶") && callbacks.on_switch_relative)
         callbacks.on_switch_relative(1);
     if (!state.has_next)
         ImGui::EndDisabled();
 
     ImGui::SameLine(0.0f, 4.0f);
-    if (ImGui::SmallButton("Reload")) {
+    if (ImGui::SmallButton("↳↰")) {
         state.reload_requested = true;
         state.osd.show("Reloading...");
     }
@@ -829,7 +829,7 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
     if (ImGui::SliderInt("##vol", &volume_percent, 0, 150, "Vol %d%%")) {
         int64_t new_volume = volume_percent;
         mpv_set_property(state.mpv, "volume", MPV_FORMAT_INT64, &new_volume);
-        state.osd.show("Volume " + std::to_string(volume_percent) + "%");
+        state.osd.show("▁▂▃▄▅▆▇▉ " + std::to_string(volume_percent) + "%");
     }
 
     ImGui::End();
