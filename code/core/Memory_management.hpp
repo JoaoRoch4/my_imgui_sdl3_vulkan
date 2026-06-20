@@ -39,6 +39,20 @@ class MemoryManagement {
 			return nullptr;
 		}
 
+		/**
+		 * @brief Already-registered instance of T, typed, or nullptr.
+		 *
+		 * Allocation guard: a second PushGet<T>/Push<T> for a type that is still
+		 * registered must NOT append a duplicate entry — the type-keyed lookup
+		 * would shadow it and Release<T> would only drop one of them, leaking the
+		 * other until ReleaseAll(). Checked BEFORE the object is constructed so a
+		 * heavy constructor (worker threads, mpv handles) never runs a second time.
+		 */
+		template <typename T>
+		[[nodiscard]] T* findExisting() const {
+			return static_cast<T*>(findErased(std::type_index {typeid(T)}));
+		}
+
 		void* registerErased(std::shared_ptr<void> instance, std::type_index type,
 			std::size_t sizeBytes, std::string_view debugName, std::string_view typeName) {
 
@@ -76,6 +90,13 @@ class MemoryManagement {
 		template <typename T, typename... Args>
 		[[nodiscard]] T* PushGet(std::string_view debugName, Args&&... args) {
 
+			if (T* existing {findExisting<T>()}) {
+				std::println("[MemoryManagement] '{}' (type '{}') already allocated at {} — "
+					"returning existing instance (duplicate PushGet ignored)",
+					debugName, TypeNameOf<T>(), static_cast<void const*>(existing));
+				return existing;
+			}
+
 			std::shared_ptr<void> instance {std::make_unique<T>(std::forward<Args>(args)...)};
 
 			void* address {registerErased(std::move(instance), std::type_index {typeid(T)},
@@ -90,6 +111,13 @@ class MemoryManagement {
 
 		template <typename T, typename... Args>
 		[[nodiscard]] T* PushGet(std::string_view debugName) {
+
+			if (T* existing {findExisting<T>()}) {
+				std::println("[MemoryManagement] '{}' (type '{}') already allocated at {} — "
+					"returning existing instance (duplicate PushGet ignored)",
+					debugName, TypeNameOf<T>(), static_cast<void const*>(existing));
+				return existing;
+			}
 
 			std::shared_ptr<void> instance {std::make_unique<T>()};
 
@@ -107,6 +135,12 @@ class MemoryManagement {
 		template <typename T, typename... Args>
 		bool Push(std::string_view debugName, Args&&... args) {
 
+			if (findExisting<T>()) {
+				std::println("[MemoryManagement] '{}' (type '{}') already allocated — "
+					"skipping duplicate Push", debugName, TypeNameOf<T>());
+				return true;
+			}
+
 			std::shared_ptr<void> instance {std::make_unique<T>(std::forward<Args>(args)...)};
 
 			void* address = registerErased(std::move(instance), std::type_index {typeid(T)},
@@ -123,6 +157,12 @@ class MemoryManagement {
 
 		template <typename T, typename... Args>
 		bool Push(std::string_view debugName) {
+
+			if (findExisting<T>()) {
+				std::println("[MemoryManagement] '{}' (type '{}') already allocated — "
+					"skipping duplicate Push", debugName, TypeNameOf<T>());
+				return true;
+			}
 
 			std::shared_ptr<void> instance {std::make_unique<T>()};
 
