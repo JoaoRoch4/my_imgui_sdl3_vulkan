@@ -2,14 +2,14 @@
   "name": "my-imgui-app",
   "version": "1.0",
   "dependencies": [
+    "curl",
+    "libwebp",
     {
       "name": "reflectcpp",
       "features": [
         "toml"
       ]
     },
-    "libwebp",
-    "curl",
     "taglib"
   ]
 }

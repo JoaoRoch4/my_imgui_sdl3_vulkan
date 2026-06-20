@@ -88,6 +88,7 @@ find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 # NOTE: SDL3, Vulkan (loader), mpv, libplacebo, taglib — and stb/imgui/implot —
 # are now compiled from source; see the thirdparty/<lib> subdirectories below.
+# SDL3 is the static archive built by thirdparty/sdl3 (SDL3::SDL3), not vcpkg.
 
 # ── Compiled external libraries (each in its own thirdparty/<lib> folder) ─────
 # The root file is now a thin orchestrator: each dependency owns its build under
@@ -330,9 +331,10 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fno-sanitize-recover=undefined>
 
-    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=address>
-    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=undefined>
-    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fno-sanitize-recover=undefined>
+    # NOTE: RelWithDebInfo is deliberately NOT sanitized — it's the profiling
+    # config, and ASan's shadow-memory load/store instrumentation grossly distorts
+    # CPU profiles (esp. tight pixel loops in JPEG decode / stbir resize). Keep ASan
+    # in Debug for correctness; profile RelWithDebInfo (or Release) clean.
 
     # Release (Clang only): aggressive optimisation + LTO + dead-code elimination
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-O3>
@@ -359,9 +361,6 @@ target_link_options(example_sdl3_vulkan PRIVATE
     # ASan/UBSan runtimes are linked into the executable.
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=address>
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
-
-    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=address>
-    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=undefined>
 
     # Release (Clang only): ThinLTO + strip unused sections
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-flto=thin>
@@ -540,7 +539,7 @@ target_include_directories(image_job_tests SYSTEM PRIVATE
     # heavy mpv / libplacebo ExternalProject builds. FFmpeg is the exception: it must
     # be the same-config *installed* 8.0 headers, because image_ops.cpp links the
     # matching static archives (rsp below) — a header/ABI mismatch would crash.
-    ${CMAKE_SOURCE_DIR}/external/SDL3-3.4.10/include
+    ${CMAKE_SOURCE_DIR}/external/SDL/include
     ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
     ${CMAKE_SOURCE_DIR}/external/mpv/include
     ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include

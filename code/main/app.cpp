@@ -236,20 +236,22 @@ void App::tick() {
 			m_MenuBar->HandleSdlEvent(event);
 			ImGui_ImplSDL3_ProcessEvent(&event);
 
-			// Captura de solicitação de fechamento
-			if ((event.type == SDL_EVENT_QUIT)
-				|| ((event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
-					&& event.window.windowID == SDL_GetWindowID(m_Sdl->window)))) {
+			ImGuiIO& io = ImGui::GetIO();
+			(void)io;
 
-				ImGui::OpenPopup("Confirm Exit");
-			}
+			if (event.type == SDL_EVENT_QUIT)
+				m_Rt->done = true;
+			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+				&& event.window.windowID == SDL_GetWindowID(m_Sdl->window))
+				m_Rt->done = true;
 
-			// Lógica de arrastar janela (Shift + Botão Esquerdo)
 			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
 				if (event.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_SHIFT)) {
 					m_Rt->isDragging = true;
 					SDL_GetGlobalMouseState(&m_Rt->dragStartX, &m_Rt->dragStartY);
-					ImGui::ClearActiveID(); // Libera o foco do ImGui para priorizar o OS
+
+					// Force ImGui to release active widgets so window dragging can take over.
+					ImGui::ClearActiveID();
 				}
 			}
 
@@ -259,13 +261,15 @@ void App::tick() {
 			}
 
 			if (event.type == SDL_EVENT_MOUSE_MOTION && m_Rt->isDragging) {
-				float current_x, current_y;
+				float current_x;
+				float current_y;
 				SDL_GetGlobalMouseState(&current_x, &current_y);
 
 				float delta_x = current_x - m_Rt->dragStartX;
 				float delta_y = current_y - m_Rt->dragStartY;
 
-				int win_x, win_y;
+				int win_x;
+				int win_y;
 				SDL_GetWindowPosition(m_Sdl->window, &win_x, &win_y);
 
 				SDL_SetWindowPosition(m_Sdl->window, win_x + static_cast<int>(delta_x),
@@ -281,6 +285,7 @@ void App::tick() {
 					toggle_window_fullscreen(m_Sdl->window);
 				}
 			}
+			m_Rt->done |= m_MenuBar->request_quit;
 		}
 
 		// 2. OTIMIZAÇÃO DE MINIMIZAÇÃO
