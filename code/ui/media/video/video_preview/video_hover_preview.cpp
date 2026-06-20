@@ -249,7 +249,12 @@ void VideoHoverPreview::start_playback(const std::string &source) {
         load_source(source);
 
     m_playing = source;
-    mpv_set_property_string(m_mpv, "mute", preview_sound ? "no" : "yes");
+    // preview_sound is the persisted default; m_user_unmuted is a live override
+    // from the volume keys so a new hover source keeps the sound the user set.
+    const bool audible = preview_sound || m_user_unmuted;
+    mpv_set_property_string(m_mpv, "mute", audible ? "no" : "yes");
+    int64_t vol = m_volume;
+    mpv_set_property(m_mpv, "volume", MPV_FORMAT_INT64, &vol);
     mpv_set_property_string(m_mpv, "pause", "no");
 }
 
@@ -273,6 +278,39 @@ void VideoHoverPreview::seek_relative(double seconds) {
     const std::string amount = std::to_string(seconds);
     const char       *cmd[]  = {"seek", amount.c_str(), "relative", nullptr};
     mpv_command_async(m_mpv, 0, cmd);
+}
+
+void VideoHoverPreview::toggle_pause() {
+    if (!m_mpv || m_playing.empty())
+        return;
+    int paused = 0;
+    mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &paused);
+    int next = paused ? 0 : 1;
+    mpv_set_property(m_mpv, "pause", MPV_FORMAT_FLAG, &next);
+}
+
+double VideoHoverPreview::speed() const {
+    double s = 1.0;
+    if (m_mpv)
+        mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &s);
+    return s;
+}
+
+void VideoHoverPreview::set_speed(double s) {
+    if (m_mpv)
+        mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &s);
+}
+
+void VideoHoverPreview::adjust_volume(int delta) {
+    if (!m_mpv)
+        return;
+    m_volume       = std::clamp(m_volume + delta, 0, 130);
+    m_user_unmuted = m_volume > 0;
+
+    mpv_set_property_string(m_mpv, "mute", m_user_unmuted ? "no" : "yes");
+    int64_t vol = m_volume;
+    mpv_set_property(m_mpv, "volume", MPV_FORMAT_INT64, &vol);
+    _Debug("volume {} (mute={})", m_volume, m_user_unmuted ? "no" : "yes");
 }
 
 VkDescriptorSet VideoHoverPreview::thumbnail(const std::string &source) {

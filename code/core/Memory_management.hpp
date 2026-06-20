@@ -1,5 +1,6 @@
 #pragma once
 #include "pch.hpp"
+#include <typeinfo>
 
 template <typename T>
 [[nodiscard]] static constexpr std::string_view TypeNameOf() {
@@ -159,13 +160,11 @@ class MemoryManagement {
 		 */
 		template <typename T>
 		[[nodiscard]] static T* GetInstance() {
+			std::type_info const& typeInfo = typeid(T);
+
 			T* instance {Get().GetSubobject<T>()};
 			if (!instance) {
-				std::println("[MemoryManagement] Fatal: no stored object of type '{}' — was it "
-							 "PushGet'd first?",
-					TypeNameOf<T>());
-				std::abort();
-			}
+				instance = Get().PushGet<T>(static_cast<std::string_view>(typeInfo.name()));			}
 			return instance;
 		}
 

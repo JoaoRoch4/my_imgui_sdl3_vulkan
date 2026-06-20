@@ -1,16 +1,5 @@
 #pragma once
-
-#include <atomic>
-#include <condition_variable>
-#include <cstdint>
-#include <deque>
-#include <filesystem>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <stop_token>
-#include <string>
-#include <vector>
+#include "pch.hpp"	
 
 class ManagedThread;
 

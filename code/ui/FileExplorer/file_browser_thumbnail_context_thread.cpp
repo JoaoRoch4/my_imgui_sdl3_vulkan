@@ -108,10 +108,10 @@ bool FileBrowserThumbnailThread::render_video(std::filesystem::path const& file,
 	mpv_set_option_string(mpv, "vo", "libmpv");
 
 	mpv_set_option_string(mpv, "profile", "fast");
-	// Pure software decode. We read frames back through the SOFTWARE render API
-	// (MPV_RENDER_API_TYPE_SW), which needs the decoded frame in system memory. Any GPU
-	// hwdec (nvdec / nvdec-copy) risks a black readback on this path; for a single
-	// 320x180 thumbnail frame the CPU-decode cost is negligible, so disable hwdec.
+	// Hardware decode via nvdec-COPY: NVDEC decodes on the GPU but copies each frame back to
+	// system memory, which is exactly what the SOFTWARE render API (MPV_RENDER_API_TYPE_SW)
+	// needs to read pixels. Plain "nvdec" keeps frames GPU-side and reads back black on this
+	// path; nvdec-copy is a hardware-fast decode WITH a valid CPU readback for the thumbnail.
 	mpv_set_option_string(mpv, "hwdec", "nvdec-copy");
 	mpv_set_option_string(mpv, "mute", "yes");
 

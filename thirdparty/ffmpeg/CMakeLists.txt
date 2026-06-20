@@ -17,7 +17,7 @@ foreach(cfg IN LISTS _ffmpeg_cfgs)
 
     # EXCLUDE_FROM_ALL: a bare `ninja` must NOT build every config's FFmpeg. The EP
     # is pulled only when the same-config mpv build (DEPENDS, below) needs it.
-    ExternalProject_Add(ffmpeg_ep_${cfg}
+    externalproject_add(ffmpeg_ep_${cfg}
         SOURCE_DIR        ${CMAKE_SOURCE_DIR}/external/FFmpeg
         PREFIX            ${_prefix}
         BINARY_DIR        ${_prefix}/build
@@ -34,7 +34,7 @@ foreach(cfg IN LISTS _ffmpeg_cfgs)
                             --enable-gpl --enable-version3
                             --disable-programs --disable-doc --disable-htmlpages
                             --disable-manpages --disable-podpages --disable-txtpages
-                            ${_ff_flags}
+                            ${_ff_flags} 
         # Build AND install in the BUILD step. BUILD_BYPRODUCTS attach to the build
         # step, but the install-tree .so files below are created by `make install`;
         # with a separate INSTALL step nothing forces install to run before the app
@@ -70,7 +70,7 @@ foreach(cfg IN LISTS _ffmpeg_cfgs)
     # mpv, hence this dedicated FFmpeg-only rsp. Same EP-step rationale as mpv's media
     # rsp: runs after install (so the .pc files exist), is a per-config byproduct, and
     # a root custom command would be cross-config in Ninja Multi-Config.
-    ExternalProject_Add_Step(ffmpeg_ep_${cfg} gen_static_rsp
+    externalproject_add_step(ffmpeg_ep_${cfg} gen_static_rsp
         DEPENDEES  install
         DEPENDS    ${CMAKE_SOURCE_DIR}/cmake/gen_static_link_rsp.cmake
         BYPRODUCTS ${_prefix}/ffmpeg-link.rsp

@@ -40,8 +40,12 @@ endfunction()
 # Map a CMake config name to FFmpeg (autotools) configure arguments. FFmpeg enables
 # optimisation by default; we only toggle debug info. Stripping is DISABLED for
 # every config on purpose:
-#   Debug          -> full debug info (=3), frame pointers (optimised, so video
-#                     stays usable while remaining steppable)
+#   Debug          -> full debug info (=3), frame pointers, AND C + asm
+#                     optimisations OFF (--disable-optimizations --disable-asm) so
+#                     FFmpeg is pure-C, -O0, fully steppable in lldb. Decode is
+#                     slow — acceptable for a debug build. Bonus: --disable-asm
+#                     emits no nasm objects, so this config can't hit the
+#                     empty-asm-object failure described below.
 #   RelWithDebInfo -> debug info (=2), frame pointers
 #   Release / other-> no debug info, still NOT stripped (see note)
 #
@@ -54,7 +58,7 @@ endfunction()
 # stripping), so it stays off in all configs.
 function(app_ffmpeg_buildtype_args out_var config)
   if(config STREQUAL "Debug")
-    set(_a --enable-debug=3 --disable-stripping --extra-cflags=-fno-omit-frame-pointer)
+    set(_a --enable-debug=3 --disable-stripping --disable-optimizations --disable-asm --extra-cflags=-fno-omit-frame-pointer)
   elseif(config STREQUAL "RelWithDebInfo")
     set(_a --enable-debug=2 --disable-stripping --extra-cflags=-fno-omit-frame-pointer)
   else()

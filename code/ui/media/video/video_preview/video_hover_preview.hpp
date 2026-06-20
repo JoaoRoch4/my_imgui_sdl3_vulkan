@@ -50,6 +50,18 @@ public:
     /// Seek the preview's mpv by `seconds` (negative rewinds). No-op when idle.
     /// Safe to call from the UI thread while the worker polls events (mpv async API).
     void seek_relative(double seconds);
+
+    /// Toggle pause on the currently-playing preview. No-op when idle.
+    void toggle_pause();
+    /// Current playback speed (1.0 = normal). Returns 1.0 when unknown/idle.
+    [[nodiscard]] double speed() const;
+    /// Set playback speed (used by the Space hold-to-fast-forward FSM).
+    void set_speed(double s);
+    /// Raise/lower preview volume by `delta` (clamped 0..130). Unmutes on raise
+    /// and remembers the choice across source reloads without touching the
+    /// persisted `preview_sound` config flag.
+    void adjust_volume(int delta);
+
     bool consume_popup_reopen_request();
     [[nodiscard]] bool is_hover_dwell_pending(const std::string &source) const;
 
@@ -99,6 +111,12 @@ private:
 
     std::string m_hovered_source;
     std::chrono::steady_clock::time_point m_hover_start{};
+
+    // Runtime audio state for keyboard volume control. m_user_unmuted overrides
+    // the muted-by-default preview so a reload (new hover source) keeps the sound
+    // the user dialled in, without writing back to the persisted preview_sound.
+    int  m_volume{100};
+    bool m_user_unmuted{false};
 
     mpv_handle *m_mpv{};
     mpv_render_context *m_render{};

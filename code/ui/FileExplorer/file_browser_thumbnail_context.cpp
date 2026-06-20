@@ -3,7 +3,7 @@
 #include "file_browser_thumbnail_context.hpp"
 
 #include "image_job_system.hpp"
-#include "image_ops.hpp"
+#include "thumbnail_generator.hpp"
 #include "vulkan_texture.hpp"
 
 
@@ -69,40 +69,6 @@ bool is_video_ext(std::filesystem::path const &p) {
 		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv";
 }
 
-// Scale `src` to fit inside WxH preserving its aspect ratio, then centre it on a fully
-// transparent WxH RGBA canvas (letterbox). Keeps the thumbnail's fixed dimensions — so
-// the cache/upload/display pipeline is unchanged — while the image is no longer stretched.
-std::expected<img::ImageBuffer, img::ImageError> letterbox_fit(img::ImageBuffer const &src, int W, int H) {
-	if (src.width <= 0 || src.height <= 0)
-		return std::unexpected(img::ImageError::DecodeFailed);
-
-	double const scale = std::min(static_cast<double>(W) / src.width, static_cast<double>(H) / src.height);
-	int const    sw    = std::clamp(static_cast<int>(std::lround(src.width * scale)), 1, W);
-	int const    sh    = std::clamp(static_cast<int>(std::lround(src.height * scale)), 1, H);
-
-	auto scaled = img::ops::resize(src, sw, sh); // aspect-correct intermediate
-	if (!scaled)
-		return std::unexpected(scaled.error());
-
-	img::ImageBuffer out;
-	out.width    = W;
-	out.height   = H;
-	out.channels = 4;
-	out.data.assign(static_cast<std::size_t>(W) * H * 4, 0); // transparent padding
-
-	int const         ox         = (W - sw) / 2;
-	int const         oy         = (H - sh) / 2;
-	std::size_t const row_bytes  = static_cast<std::size_t>(sw) * 4;
-	std::size_t const dst_stride = static_cast<std::size_t>(W) * 4;
-	for (int y = 0; y < sh; ++y) {
-		std::uint8_t const *srow = scaled->data.data() + static_cast<std::size_t>(y) * row_bytes;
-		std::uint8_t       *drow = out.data.data() + static_cast<std::size_t>(oy + y) * dst_stride
-			+ static_cast<std::size_t>(ox) * 4;
-		std::memcpy(drow, srow, row_bytes);
-	}
-	return out;
-}
-
 } // namespace
 
 FileBrowserThumbnailContext::FileBrowserThumbnailContext() = default;
@@ -140,9 +106,13 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 	std::filesystem::create_directories(m_thumb_dir, ec);
 	THUMB_LOG("setup thumb_dir={} vk={}", m_thumb_dir.string(), static_cast<void const *>(vk));
 
-	m_video.start([this](std::string const &key, std::vector<std::uint8_t> rgba, bool ok) {
-		on_video_done(key, std::move(rgba), ok);
-	});
+	// Start the Reproducer's nvdec-copy mpv worker pool (sized to match our thumbnails). It
+	// stays idle unless a video generate fails and poll_entry routes a re-derive to it.
+	m_reproducer.start(
+		[this](std::string const &key, std::vector<std::uint8_t> rgba, bool ok) {
+			on_video_done(key, std::move(rgba), ok);
+		},
+		k_thumb_w, k_thumb_h);
 }
 
 void FileBrowserThumbnailContext::shutdown() {
@@ -150,7 +120,7 @@ void FileBrowserThumbnailContext::shutdown() {
 		return;
 	m_setup = false;
 
-	m_video.shutdown(); // stop + join the video worker
+	m_reproducer.shutdown(); // stop + join the mpv (nvdec-copy) worker pool
 	img::ImageJobSystem::instance().clear_pending(); // drop queued image jobs
 
 	if (m_vk) {
@@ -183,50 +153,19 @@ std::filesystem::path FileBrowserThumbnailContext::png_for(std::string const &ke
 }
 
 void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file, Entry &e, bool decode_as_video) {
-	// One composite pool job: decode -> resize(320x180) -> encode PNG (persistence) ->
-	// return the RGBA for in-memory GPU upload. encode_png takes const&, so the same
-	// buffer is both written to disk and handed back (no extra copy, no re-decode).
-	// A cached PNG from a prior session is just decoded (already thumbnail-sized).
+	// One composite pool job that dispatches to the two thumbnail engines:
+	//   cache HIT  -> ThumbnailReproducer::reload  (stb decode of the already-sized PNG);
+	//   cache MISS -> ThumbnailGenerator::generate (video: ffmpegthumbnailer, image/gif: stb,
+	//                 then letterbox -> persisted PNG).
+	// Both entry points are static and thread-safe, so the job captures no `this`. A fresh
+	// VIDEO generate that fails is retried on the Reproducer's mpv (nvdec-copy) worker by
+	// poll_entry (gated by Entry::source_is_video / tried_mpv).
 	e.img_future = img::ImageJobSystem::instance().submit(
 		[file, out = e.png_path, decode_as_video]() -> ImgResult {
-
 			std::error_code ec;
-
-			if (std::filesystem::exists(out, ec) && !ec) {
-
-				auto cached = img::ops::decode_file(out, 4);
-
-				THUMB_LOG("img cache-HIT {} -> {}", out.filename().string(),
-					cached ? px_summary(*cached) : std::string("DECODE-FAIL"));
-
-				return cached;
-			}
-
-			// Video sources use ffmpegthumbnailer (smart non-black frame, ~20ms CPU
-			// decode) instead of spinning up a full mpv+nvdec instance per file. Both
-			// paths feed the same letterbox below, so caching/delivery are identical.
-			THUMB_LOG("{} GENERATE from {}", decode_as_video ? "vid" : "img", file.filename().string());
-			auto dec = decode_as_video ? img::ops::decode_video_thumbnail(file, k_thumb_w, 4)
-									   : img::ops::decode_file(file, 4);
-
-			if (!dec)
-				return std::unexpected(dec.error());
-
-			// Aspect-preserving: fit within k_thumb_w x k_thumb_h and letterbox onto a
-			// transparent canvas instead of stretching the source to fill the box.
-			auto rz = letterbox_fit(*dec, k_thumb_w, k_thumb_h);
-
-			if (!rz)
-				return std::unexpected(rz.error());
-
-			std::filesystem::create_directories(out.parent_path(), ec);
-			
-			// Persist the thumbnail to disk so the next session loads it instead of
-			// regenerating. MUST NOT be `static` — that would run encode_png only once
-			// per process and leave every later thumbnail unwritten.
-			auto const encoded = img::ops::encode_png(*rz, out); // best-effort
-			static_cast<void>(encoded);
-			return rz;
+			if (std::filesystem::exists(out, ec) && !ec)
+				return ThumbnailReproducer::reload(out);
+			return ThumbnailGenerator::generate(file, decode_as_video, out, k_thumb_w, k_thumb_h);
 		},
 		img::Priority::Normal);
 	e.state = State::Generating;
@@ -398,18 +337,29 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 
 		THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW", stored_key,
 			is_video, have_png, e.png_path.filename().string());
-		// Image and video sources BOTH decode on the ImageJobSystem pool and deliver via
-		// e.img_future. A fresh video source is decoded by ffmpegthumbnailer (~20ms CPU)
-		// rather than the old per-file mpv+nvdec render (seconds, and it produced the wrong
-		// 640x480 size the context then rejected). is_video stays false: poll_entry only
-		// polls the future when is_video == false, so it MUST be false regardless of the
-		// SOURCE type, else the decoded pixels are never picked up and the thumb stays blank.
-		// (The m_video mpv worker pool is now unused — safe to remove in a follow-up.)
-		e.is_video = false;
-		submit_image(file, e, /*decode_as_video=*/is_video && !have_png);
+		// Both source kinds decode on the ImageJobSystem pool and deliver via e.img_future, so
+		// e.is_video stays false (poll_entry only polls the future when is_video == false, else
+		// the decoded pixels are never picked up and the thumb stays blank). e.source_is_video
+		// records the REAL source kind so a failed video generate can fall back to mpv below.
+		e.is_video                   = false;
+		bool const generate_as_video = is_video && !have_png;
+		e.source_is_video            = generate_as_video;
+		submit_image(file, e, generate_as_video);
 	}
 
-	return poll_entry(e);
+	ImTextureID const id = poll_entry(e);
+
+	// mpv re-derive fallback: a fresh video whose Generator (ffmpegthumbnailer) decode failed
+	// is retried EXACTLY ONCE on the Reproducer's nvdec-copy worker. Its result returns
+	// asynchronously via on_video_done -> m_video_results -> begin_frame, which sets the entry
+	// to PixelsReady/Failed for this key. tried_mpv guards against an infinite re-derive loop.
+	if (e.state == State::Failed && e.source_is_video && !e.tried_mpv) {
+		e.tried_mpv = true;
+		m_reproducer.submit(std::string(key), dir / name, e.png_path);
+		e.state = State::Generating; // await the async mpv result
+	}
+
+	return id;
 }
 
 void FileBrowserThumbnailContext::evict(std::filesystem::path const &path) {
@@ -430,7 +380,7 @@ void FileBrowserThumbnailContext::evict(std::filesystem::path const &path) {
 void FileBrowserThumbnailContext::clear() {
 	if (!m_setup)
 		return;
-	m_video.clear_pending();
+	m_reproducer.clear_pending();
 	img::ImageJobSystem::instance().clear_pending();
 	std::error_code ec;
 	for (auto &[k, e] : m_entries) {

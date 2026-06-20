@@ -138,6 +138,8 @@ public:
     [[nodiscard]] bool is_hover_previewing() const;
     /// Seek the hover-preview popup by `seconds` (negative rewinds). No-op when idle.
     void seek_hover_preview(double seconds);
+    /// Raise/lower hover-preview volume by `delta` (Up/Down while previewing).
+    void adjust_hover_volume(int delta);
 
     [[nodiscard]] bool can_toggle_hwdec(const std::string &source) const;
     [[nodiscard]] bool is_hwdec_enabled(const std::string &source) const;
@@ -213,8 +215,14 @@ private:
     VideoEntry *active_or_first_entry();
 
     /// Per-frame Space hold-to-accelerate FSM (tap = play/pause, hold = Nx),
-    /// mirroring the left-mouse behaviour in VideoUiWindow.
+    /// mirroring the left-mouse behaviour in VideoUiWindow. Skips the active
+    /// window while the hover preview owns the Space key (see below).
     void update_space_hold_speed();
+
+    /// Same FSM, but driving the hover-preview popup. Runs from update_frames()
+    /// so it works in both render paths (the placebo player forwards there),
+    /// whereas update_space_hold_speed() runs only inside draw().
+    void update_hover_space_hold_speed();
 
     /// All per-video runtime state.
     
@@ -249,6 +257,13 @@ private:
     bool                                  m_space_accelerating{false};
     double                                m_space_saved_speed{1.0};
     std::chrono::steady_clock::time_point m_space_press_time{};
+
+    // Independent Space FSM state for the hover preview so it never collides with
+    // the active-window FSM above (they target different mpv handles).
+    bool                                  m_hover_space_active{false};
+    bool                                  m_hover_space_accelerating{false};
+    double                                m_hover_space_saved_speed{1.0};
+    std::chrono::steady_clock::time_point m_hover_space_press_time{};
 
     // Global defaults applied to all newly-opened videos.
     bool m_global_hwdec_enabled = false;

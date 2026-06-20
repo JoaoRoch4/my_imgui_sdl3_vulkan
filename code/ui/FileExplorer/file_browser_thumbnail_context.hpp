@@ -2,22 +2,9 @@
 
 #include "pch.hpp" // ImTextureID
 
-#include <cstdint>
-#include <expected>
-#include <filesystem>
-#include <functional>
-#include <future>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
-#include <vector>
-
-#include "file_browser_thumbnail_context_thread.hpp"
 #include "image_buffer.hpp"
 #include "image_types.hpp"
+#include "thumbnail_reproducer.hpp" // owns the nvdec-copy mpv worker; pulls in the thread header
 
 class vulkan_context;
 class VulkanTexture;
@@ -29,11 +16,13 @@ class VulkanTexture;
 //   * deferred texture frees (retire-after-N-frames) instead of vkDeviceWaitIdle;
 //   * in-memory RGBA handoff (no PNG re-decode on the hot path for fresh thumbnails).
 //
-// Image thumbnails are generated on the shared ImageJobSystem pool (one composite
-// decode->resize->encode job per file); video thumbnails are produced by the owned
-// FileBrowserThumbnailThread (libmpv). Both deliver an RGBA ImageBuffer that this class
-// uploads via VulkanTexture::upload on the render thread. All public methods MUST be
-// called from the render thread.
+// Thumbnails are produced on the shared ImageJobSystem pool by two single-responsibility
+// engines: ThumbnailGenerator creates a thumbnail from a source on a cache miss (video ->
+// ffmpegthumbnailer, image/gif -> stb) and persists a PNG; ThumbnailReproducer reloads an
+// existing cached PNG via stb on a cache hit. A video the Generator can't decode falls back
+// to the Reproducer's nvdec-copy mpv worker (async, delivered via on_video_done). Every path
+// yields an RGBA ImageBuffer this class uploads via VulkanTexture::upload on the render
+// thread. All public methods MUST be called from the render thread.
 class FileBrowserThumbnailContext {
 	public:
 
@@ -84,7 +73,7 @@ class FileBrowserThumbnailContext {
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are
 		// retired so a folder with thousands of files can't exhaust samplers/descriptors/
 		// VRAM. Must comfortably exceed the number of thumbnails visible at once.
-		static constexpr int k_max_live_textures     = 32;
+		static constexpr int k_max_live_textures     = 1024 *8;
 
 	private:
 
@@ -103,6 +92,12 @@ class FileBrowserThumbnailContext {
 				State                          state = State::Queued;
 				std::filesystem::path          png_path;
 				bool                           is_video = false;
+				// Source type + fallback bookkeeping: when a fresh VIDEO generate (ffmpegthumbnailer)
+				// fails, poll_entry re-submits the source to the Reproducer's mpv (nvdec-copy) worker
+				// exactly once. source_is_video records the source kind (distinct from is_video, which
+				// gates future polling); tried_mpv prevents an infinite re-derive loop.
+				bool                           source_is_video = false;
+				bool                           tried_mpv       = false;
 				std::future<ImgResult>         img_future; // image path: composite ImageJobSystem job
 				img::ImageBuffer               pixels; // PixelsReady: RGBA awaiting GPU upload
 				bool                           have_pixels = false;
@@ -144,8 +139,10 @@ class FileBrowserThumbnailContext {
 		int                                                                 m_uploads_this_frame = 0;
 		std::uint64_t m_frame = 0; // monotonic frame index (LRU clock)
 
-		FileBrowserThumbnailThread                     m_video;
-		// Video worker delivers results here (worker thread); drained on begin_frame.
+		// Reload cached PNGs (stb) + owns the nvdec-copy mpv worker used as the video
+		// re-derive fallback. The worker delivers results via on_video_done.
+		ThumbnailReproducer                            m_reproducer;
+		// mpv worker delivers results here (worker thread); drained on begin_frame.
 		std::mutex                                     m_video_mutex;
 		std::vector<std::pair<std::string, ImgResult>> m_video_results;
 };

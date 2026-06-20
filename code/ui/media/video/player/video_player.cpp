@@ -1187,8 +1187,10 @@ void VideoPlayer::update_frames() {
 	assert(std::this_thread::get_id() == m_main_thread_id
 		&& "VideoPlayer::update_frames() must be called from the main thread");
 
-	if (m_hover_initialized)
-		m_hover->tick_idle(); // keep hover preview alive
+	if (m_hover_initialized) {
+		m_hover->tick_idle();          // keep hover preview alive
+		update_hover_space_hold_speed(); // Space pause / hold-to-fast-forward
+	}
 
 	for (auto &ep : m_entries) {
 		VideoEntry &e = *ep;
@@ -1283,6 +1285,11 @@ bool VideoPlayer::is_hover_previewing() const { return m_hover && m_hover->is_pr
 void VideoPlayer::seek_hover_preview(double seconds) {
 	if (m_hover)
 		m_hover->seek_relative(seconds);
+}
+
+void VideoPlayer::adjust_hover_volume(int delta) {
+	if (m_hover)
+		m_hover->adjust_volume(delta);
 }
 
 bool VideoPlayer::can_toggle_hwdec(std::string const &source) const {
@@ -1497,6 +1504,11 @@ void VideoPlayer::update_space_hold_speed() {
 	//   * hold (>180ms) -> play at hold_speed_multiplier, restore on release
 	// Read the live key state so the threshold is frame-accurate (independent of
 	// the OS key-repeat delay). WantTextInput keeps Space usable in text fields.
+	// The hover preview owns Space while its popup is up — "you control what you
+	// are looking at". Bail so the active window does not also react.
+	if (m_hover && m_hover->is_previewing())
+		return;
+
 	ImGuiIO const &io               = ImGui::GetIO();
 	bool const     space_down       = ImGui::IsKeyDown(ImGuiKey_Space) && !io.WantTextInput;
 	auto const     now              = std::chrono::steady_clock::now();
@@ -1535,6 +1547,45 @@ void VideoPlayer::update_space_hold_speed() {
 		}
 		m_space_active       = false;
 		m_space_accelerating = false;
+	}
+}
+
+void VideoPlayer::update_hover_space_hold_speed() {
+	// Mirrors update_space_hold_speed() but targets the hover preview. Runs only
+	// while the popup is actively playing; otherwise it resets and gets out of
+	// the way so the active-window FSM keeps Space.
+	if (!m_hover || !m_hover->is_previewing()) {
+		m_hover_space_active       = false;
+		m_hover_space_accelerating = false;
+		return;
+	}
+
+	ImGuiIO const &io               = ImGui::GetIO();
+	bool const     space_down       = ImGui::IsKeyDown(ImGuiKey_Space) && !io.WantTextInput;
+	auto const     now              = std::chrono::steady_clock::now();
+	constexpr auto k_hold_threshold = std::chrono::milliseconds(180);
+
+	if (space_down && !m_hover_space_active) {
+		m_hover_space_active       = true;
+		m_hover_space_accelerating = false;
+		m_hover_space_press_time   = now;
+	}
+
+	if (m_hover_space_active && space_down && !m_hover_space_accelerating
+		&& (now - m_hover_space_press_time) >= k_hold_threshold) {
+		m_hover_space_accelerating = true;
+		m_hover_space_saved_speed  = m_hover->speed();
+		m_hover->set_speed(static_cast<double>(VideoUiWindow::hold_speed_multiplier));
+	}
+
+	if (m_hover_space_active && !space_down) {
+		if (m_hover_space_accelerating) {
+			m_hover->set_speed(m_hover_space_saved_speed);
+		} else if ((now - m_hover_space_press_time) < k_hold_threshold) {
+			m_hover->toggle_pause();
+		}
+		m_hover_space_active       = false;
+		m_hover_space_accelerating = false;
 	}
 }
 

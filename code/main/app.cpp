@@ -61,29 +61,29 @@ bool App::Alloc() {
 	// GPU-dependent and created later in AppCoordinator::Setup(). PushGet is
 	// [[nodiscard]]; fold each non-null result into a flag so a failed allocation
 	// is caught here (App keeps no observers — the coordinator resolves its own).
-	bool subsystems_ok  = true;
-	subsystems_ok  = m_mem->Push<ImageViewerPanel>("Viewer") ;
-	subsystems_ok  = m_mem->Push<OpenImageDialogs>("OpenImageDialogs") ;
-	subsystems_ok  = m_mem->Push<BulkImageOpenQueue>("BulkImageOpen") ;
-	subsystems_ok  = m_mem->Push<VideoPlayer>("VideoPlayer") ;
-	subsystems_ok  = m_mem->Push<VideoPlayerPlacebo>("VideoPlayerPlacebo") ;
-	subsystems_ok  = m_mem->Push<VideoDownloader>("VideoDownloader") ;
-	subsystems_ok  = m_mem->Push<ConfigRuntime>("ConfigRuntime") ;
-	subsystems_ok  = m_mem->Push<HistoryPreview>("HistoryPreview") ;
-	subsystems_ok  = m_mem->Push<OpenedFilesWindow>("OpenedFiles") ;
-	subsystems_ok  = m_mem->Push<VideoContextMenu>("VideoContextMenu") ;
-	subsystems_ok  = m_mem->Push<FileBrowserContextMenu>("FileBrowserMenu") ;
-	subsystems_ok  = m_mem->Push<FileThumbnailCache>("ThumbCache") ;
-	subsystems_ok  = m_mem->Push<MetadataEditor>("MetadataEditor") ;
-	subsystems_ok  = m_mem->Push<MediaHistoryManager>("HistoryMgr") ;
-	subsystems_ok  = m_mem->Push<MediaLoadHandler>("LoadHandler") ;
-	subsystems_ok  = m_mem->Push<AppStateCoordinator>("AppState") ;
-	subsystems_ok  = m_mem->Push<ConsoleCommands>("Console") ;
+	bool subsystems_ok = true;
+	subsystems_ok      = m_mem->Push<ImageViewerPanel>("Viewer");
+	subsystems_ok      = m_mem->Push<OpenImageDialogs>("OpenImageDialogs");
+	subsystems_ok      = m_mem->Push<BulkImageOpenQueue>("BulkImageOpen");
+	subsystems_ok      = m_mem->Push<VideoPlayer>("VideoPlayer");
+	subsystems_ok      = m_mem->Push<VideoPlayerPlacebo>("VideoPlayerPlacebo");
+	subsystems_ok      = m_mem->Push<VideoDownloader>("VideoDownloader");
+	subsystems_ok      = m_mem->Push<ConfigRuntime>("ConfigRuntime");
+	subsystems_ok      = m_mem->Push<HistoryPreview>("HistoryPreview");
+	subsystems_ok      = m_mem->Push<OpenedFilesWindow>("OpenedFiles");
+	subsystems_ok      = m_mem->Push<VideoContextMenu>("VideoContextMenu");
+	subsystems_ok      = m_mem->Push<FileBrowserContextMenu>("FileBrowserMenu");
+	subsystems_ok      = m_mem->Push<FileThumbnailCache>("ThumbCache");
+	subsystems_ok      = m_mem->Push<MetadataEditor>("MetadataEditor");
+	subsystems_ok      = m_mem->Push<MediaHistoryManager>("HistoryMgr");
+	subsystems_ok      = m_mem->Push<MediaLoadHandler>("LoadHandler");
+	subsystems_ok      = m_mem->Push<AppStateCoordinator>("AppState");
+	subsystems_ok      = m_mem->Push<ConsoleCommands>("Console");
 
 	m_MenuBar = m_mem->PushGet<AppCoordinator>("MenuBar");
 
-	return subsystems_ok && m_Rt && m_State && m_Sdl && m_Vk && m_Imgui && m_FpsPlot && m_ThreadPanel && m_StyleEditor
-		&& m_MenuBar;
+	return subsystems_ok && m_Rt && m_State && m_Sdl && m_Vk && m_Imgui && m_FpsPlot
+		&& m_ThreadPanel && m_StyleEditor && m_MenuBar;
 }
 
 bool App::KickStart() {
@@ -110,7 +110,8 @@ bool App::KickStart() {
 		m_Vk->setup(extensions);
 	}
 
-	if (SDL_Vulkan_CreateSurface(m_Sdl->window, m_Vk->instance, m_Vk->allocator, &m_Rt->surface) == 0) {
+	if (SDL_Vulkan_CreateSurface(m_Sdl->window, m_Vk->instance, m_Vk->allocator, &m_Rt->surface)
+		== 0) {
 		std::printf("Failed to create Vulkan surface.\n");
 		return false;
 	}
@@ -217,8 +218,10 @@ bool App::KickStart() {
 	m_MenuBar->SetDownloadCacheDir(cache_dir / "video_cache");
 
 	m_Rt->clearColor = m_State->clear_color
-		? ImVec4(static_cast<float>(m_State->clear_color->r) / 255.0f, static_cast<float>(m_State->clear_color->g) / 255.0f,
-			  static_cast<float>(m_State->clear_color->b) / 255.0f, static_cast<float>(m_State->clear_color->a) / 255.0f)
+		? ImVec4(static_cast<float>(m_State->clear_color->r) / 255.0f,
+			  static_cast<float>(m_State->clear_color->g) / 255.0f,
+			  static_cast<float>(m_State->clear_color->b) / 255.0f,
+			  static_cast<float>(m_State->clear_color->a) / 255.0f)
 		: ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
 	return true;
@@ -227,25 +230,26 @@ bool App::KickStart() {
 void App::tick() {
 	while (!m_Rt->done) {
 		SDL_Event event;
+
+		// 1. PROCESSAMENTO DE EVENTOS DO SDL
 		while (SDL_PollEvent(&event)) {
 			m_MenuBar->HandleSdlEvent(event);
 			ImGui_ImplSDL3_ProcessEvent(&event);
-			ImGuiIO& io = ImGui::GetIO();
-			(void)io;
 
-			if (event.type == SDL_EVENT_QUIT)
-				m_Rt->done = true;
-			if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
-				&& event.window.windowID == SDL_GetWindowID(m_Sdl->window))
-				m_Rt->done = true;
+			// Captura de solicitação de fechamento
+			if ((event.type == SDL_EVENT_QUIT)
+				|| ((event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+					&& event.window.windowID == SDL_GetWindowID(m_Sdl->window)))) {
 
+				ImGui::OpenPopup("Confirm Exit");
+			}
+
+			// Lógica de arrastar janela (Shift + Botão Esquerdo)
 			if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
 				if (event.button.button == SDL_BUTTON_LEFT && (SDL_GetModState() & SDL_KMOD_SHIFT)) {
 					m_Rt->isDragging = true;
 					SDL_GetGlobalMouseState(&m_Rt->dragStartX, &m_Rt->dragStartY);
-
-					// Force ImGui to release active widgets so window dragging can take over.
-					ImGui::ClearActiveID();
+					ImGui::ClearActiveID(); // Libera o foco do ImGui para priorizar o OS
 				}
 			}
 
@@ -255,15 +259,13 @@ void App::tick() {
 			}
 
 			if (event.type == SDL_EVENT_MOUSE_MOTION && m_Rt->isDragging) {
-				float current_x;
-				float current_y;
+				float current_x, current_y;
 				SDL_GetGlobalMouseState(&current_x, &current_y);
 
 				float delta_x = current_x - m_Rt->dragStartX;
 				float delta_y = current_y - m_Rt->dragStartY;
 
-				int win_x;
-				int win_y;
+				int win_x, win_y;
 				SDL_GetWindowPosition(m_Sdl->window, &win_x, &win_y);
 
 				SDL_SetWindowPosition(m_Sdl->window, win_x + static_cast<int>(delta_x),
@@ -273,6 +275,7 @@ void App::tick() {
 				m_Rt->dragStartY = current_y;
 			}
 
+			// Atalhos globais
 			if (event.type == SDL_EVENT_KEY_DOWN) {
 				if (event.key.key == SDLK_F11) {
 					toggle_window_fullscreen(m_Sdl->window);
@@ -280,22 +283,26 @@ void App::tick() {
 			}
 		}
 
-		m_Rt->done |= m_MenuBar->request_quit;
-
+		// 2. OTIMIZAÇÃO DE MINIMIZAÇÃO
+		// Segurança: Só avança se a janela estiver visível, evitando quebras de frame no Vulkan
 		if (SDL_GetWindowFlags(m_Sdl->window) & SDL_WINDOW_MINIMIZED) {
 			SDL_Delay(10);
 			continue;
 		}
-		int fb_width;
-		int fb_height;
+
+		// 3. GERENCIAMENTO DA SWAPCHAIN (VULKAN RESIZE)
+		int fb_width, fb_height;
 		SDL_GetWindowSize(m_Sdl->window, &fb_width, &fb_height);
 		if (fb_width > 0 && fb_height > 0
 			&& (m_Vk->swap_chain_rebuild || m_Rt->wd->Width != fb_width
-				|| m_Rt->wd->Height != fb_height))
+				|| m_Rt->wd->Height != fb_height)) {
 			m_Vk->resize_window(m_Rt->wd, fb_width, fb_height);
+		}
 
+		// 4. INÍCIO DO FRAME DO IMGUI
 		m_Imgui->new_frame();
 
+		// Cálculo de Uptime e FPS
 		auto const   uptime_now = std::chrono::steady_clock::now();
 		double const uptime_seconds
 			= std::chrono::duration<double>(uptime_now - m_Rt->appStartTime).count();
@@ -306,10 +313,7 @@ void App::tick() {
 
 		m_FpsPlot->add_sample(ImGui::GetIO().Framerate);
 
-		m_MenuBar->Build();
-		m_FpsPlot->draw(uptime_seconds);
-		m_ThreadPanel->draw(&m_Rt->showThreadPanel);
-
+		// 5. CRIAÇÃO DO DOCKSPACE PRINCIPAL (Deve vir antes das demais janelas)
 		{
 			ImGuiViewport const* vp = ImGui::GetMainViewport();
 			ImGui::SetNextWindowPos(vp->WorkPos);
@@ -318,22 +322,53 @@ void App::tick() {
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
 			constexpr ImGuiWindowFlags dock_flags = ImGuiWindowFlags_NoTitleBar
 				| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
 				| ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus
 				| ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoBackground;
-			ImGui::Begin("UI", nullptr, dock_flags);
+
+			ImGui::Begin("UI_DockSpace_Window", nullptr, dock_flags);
 			ImGui::PopStyleVar(3);
 			ImGui::DockSpace(ImGui::GetID("UI"), ImVec2(0.0f, 0.0f),
 				ImGuiDockNodeFlags_PassthruCentralNode);
 			ImGui::End();
 		}
 
+		// 6. RENDERIZAÇÃO DOS ELEMENTOS DA UI
+		m_MenuBar->Build();
+		m_FpsPlot->draw(uptime_seconds);
+		m_ThreadPanel->draw(&m_Rt->showThreadPanel);
 		m_StyleEditor->Draw();
 
 		if (m_Rt->showDemoWindow)
 			ImGui::ShowDemoWindow(&m_Rt->showDemoWindow);
 
+		// MODAL DE CONFIRMAÇÃO DE SAÍDA
+		{
+			ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+			ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+			if (ImGui::BeginPopupModal("Confirm Exit", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+				ImGui::Text("Are you sure you want to quit?\n\n");
+				ImGui::Separator();
+
+				if (ImGui::Button("OK", ImVec2(120, 0))) {
+					m_Rt->done = true;
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::SameLine();
+
+				if (ImGui::Button("Cancelar", ImVec2(120, 0))) {
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::EndPopup();
+			}
+		}
+
+		// JANELA: Hello, world!
 		{
 			static float f       = 0.0f;
 			static int   counter = 0;
@@ -344,12 +379,14 @@ void App::tick() {
 				ImGui::SetNextWindowSize(
 					{m_State->hello_world_window.w, m_State->hello_world_window.h}, ImGuiCond_Once);
 			}
+
 			ImGui::Begin("Hello, world!");
 			{
 				ImVec2 pos                  = ImGui::GetWindowPos();
 				ImVec2 size                 = ImGui::GetWindowSize();
 				m_State->hello_world_window = {true, pos.x, pos.y, size.x, size.y};
 			}
+
 			ImGui::Text("This is some useful text.");
 			ImGui::Checkbox("Demo Window", &m_Rt->showDemoWindow);
 			ImGui::Checkbox("Another Window", &m_Rt->showAnotherWindow);
@@ -358,10 +395,13 @@ void App::tick() {
 
 			if (ImGui::Checkbox("VSync", &m_Rt->vsync))
 				m_Vk->set_vsync(m_Rt->wd, m_Rt->vsync);
+
 			ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
 			ImGui::ColorEdit3("clear color", &m_Rt->clearColor.x);
+
 			if (ImGui::Button("Button"))
 				counter++;
+
 			ImGui::SameLine();
 			ImGui::Text("counter = %d", counter);
 			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
@@ -370,6 +410,7 @@ void App::tick() {
 			ImGui::End();
 		}
 
+		// JANELA: Another Window
 		if (m_Rt->showAnotherWindow) {
 			if (m_State->another_window.valid) {
 				ImGui::SetNextWindowPos({m_State->another_window.x, m_State->another_window.y},
@@ -377,6 +418,7 @@ void App::tick() {
 				ImGui::SetNextWindowSize({m_State->another_window.w, m_State->another_window.h},
 					ImGuiCond_Once);
 			}
+
 			ImGui::Begin("Another Window", &m_Rt->showAnotherWindow);
 			{
 				ImVec2 pos              = ImGui::GetWindowPos();
@@ -389,13 +431,7 @@ void App::tick() {
 			ImGui::End();
 		}
 
-		ImGui::Begin("Input Text", &m_Rt->strTest);
-		{
-			static std::string dynamicString = "Hello World";
-			ImGui::InputText("Dynamic String Input", &dynamicString);
-			ImGui::Text("You entered: %s", dynamicString.c_str());
-		}
-		ImGui::End();
+		// 7. SUBMISSÃO DOS COMANDOS DE RENDERIZAÇÃO PARA A GPU (VULKAN BACKEND)
 		m_Imgui->render(m_Rt->wd, *m_Vk, m_Rt->clearColor);
 	}
 }
@@ -411,9 +447,10 @@ int App::destroy() {
 	m_State->show_demo_window    = m_Rt->showDemoWindow;
 	m_State->show_another_window = m_Rt->showAnotherWindow;
 	m_State->vsync               = m_Rt->vsync;
-	m_State->clear_color         = WindowStateToml::ColorToml(std::lround(m_Rt->clearColor.x * 255.0f + 0.5f),
-				std::lround(m_Rt->clearColor.y * 255.0f + 0.5f), std::lround(m_Rt->clearColor.z * 255.0f + 0.5f),
-				std::lround(m_Rt->clearColor.w * 255.0f + 0.5f));
+	m_State->clear_color = WindowStateToml::ColorToml(std::lround(m_Rt->clearColor.x * 255.0f + 0.5f),
+		std::lround(m_Rt->clearColor.y * 255.0f + 0.5f),
+		std::lround(m_Rt->clearColor.z * 255.0f + 0.5f),
+		std::lround(m_Rt->clearColor.w * 255.0f + 0.5f));
 
 	m_StyleEditor->ExportLayout(m_State);
 	m_MenuBar->ExportHistory(m_State);

@@ -183,6 +183,8 @@ add_executable(example_sdl3_vulkan
     code/ui/FileExplorer/file_browser_file_operations.cpp
     code/ui/FileExplorer/file_browser_thumbnail_context.cpp
     code/ui/FileExplorer/file_browser_thumbnail_context_thread.cpp
+    code/ui/FileExplorer/thumbnail_generator.cpp
+    code/ui/FileExplorer/thumbnail_reproducer.cpp
 
     code/ui/media/metadata_editor/metadata_editor.cpp
 
@@ -228,18 +230,18 @@ if(CMAKE_CONFIGURATION_TYPES)
     set_target_properties(example_sdl3_vulkan PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY_DEBUG          ${CMAKE_SOURCE_DIR}/build/debug
         RUNTIME_OUTPUT_DIRECTORY_RELEASE        ${CMAKE_SOURCE_DIR}/build/release
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/build/release-log
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/build/RELWITHDEBINFO
         # Per-config executable names so each build is identifiable on sight.
         OUTPUT_NAME_DEBUG          example_sdl3_vulkan_debug
         OUTPUT_NAME_RELEASE        example_sdl3_vulkan_release
-        OUTPUT_NAME_RELWITHDEBINFO example_sdl3_vulkan_release-log
+        OUTPUT_NAME_RELWITHDEBINFO example_sdl3_vulkan_RELWITHDEBINFO
     )
 
     add_custom_target(all_configs
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Debug
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Release
         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config RelWithDebInfo
-        COMMENT "Building all configs -> build/debug, build/release, build/release-log"
+        COMMENT "Building all configs -> build/debug, build/release, build/RELWITHDEBINFO"
         VERBATIM
     )
 endif()
@@ -317,6 +319,9 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<CONFIG:Debug>:-g>
     $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
     $<$<CONFIG:Debug>:-mno-omit-leaf-frame-pointer>
+    $<$<CONFIG:RelWithDebInfo>:-g>
+    $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>
+    $<$<CONFIG:RelWithDebInfo>:-mno-omit-leaf-frame-pointer>
 
     # Sanitizers (opt-in via -DENABLE_SANITIZERS=ON; Debug only). The two
     # -fsanitize= flags are kept separate — clang merges them, and a comma inside
@@ -324,6 +329,10 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=address>
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fno-sanitize-recover=undefined>
+
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=address>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=undefined>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fno-sanitize-recover=undefined>
 
     # Release (Clang only): aggressive optimisation + LTO + dead-code elimination
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-O3>
@@ -350,6 +359,9 @@ target_link_options(example_sdl3_vulkan PRIVATE
     # ASan/UBSan runtimes are linked into the executable.
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=address>
     $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:Debug>>:-fsanitize=undefined>
+
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=address>
+    $<$<AND:$<BOOL:${ENABLE_SANITIZERS}>,$<CONFIG:RelWithDebInfo>>:-fsanitize=undefined>
 
     # Release (Clang only): ThinLTO + strip unused sections
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-flto=thin>

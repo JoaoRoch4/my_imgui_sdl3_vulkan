@@ -1,9 +1,12 @@
 # Clangd configuration file
-# See https://clangd.llvm.org/config for more information.
+
+# See <https://clangd.llvm.org/config> for more information
 
 # Apply config conditionally (e.g. only for specific files)
-# If:
-#   PathMatch: .*\.h
+
+# If
+
+# PathMatch: .*\.h
 
 Diagnostics:
   UnusedIncludes: None
@@ -12,7 +15,8 @@ Style:
   QuotedHeaders: ["/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code/.*"]
 
 CompileFlags:
-  # Add flags to the compile command
+
+# Add flags to the compile command
 
   Add:
     - -I/home/joao/vscode/my_imgui/Project_sdl3_vulkan/code
@@ -82,19 +86,30 @@ CompileFlags:
     - -DIMGUI_FONTS_DIR="/home/joao/vscode/my_imgui/Project_sdl3_vulkan/external/imgui-1.92.8-docking/misc/fonts"
   Compiler: clang++ # Change argv[0] of compile flags to `clang++`
 
-  # Use the CMake-generated database under build/all/ (Ninja Multi-Config emits a
-  # single compile_commands.json there). clangd now resolves each .cpp to its exact
-  # build command; headers infer flags from a sibling translation unit. The Add
-  # block above remains a fallback for files not present in the database.
+# Use the CMake-generated database under build/all/ (Ninja Multi-Config emits a
+
+# single compile_commands.json there). clangd now resolves each .cpp to its exact
+
+# build command; headers infer flags from a sibling translation unit. The Add
+
+# block above remains a fallback for files not present in the database
+
   CompilationDatabase: build/all
 
-  # Strip the precompiled-header injection that target_precompile_headers() bakes
-  # into every command:
-  #   -Winvalid-pch -Xclang -include-pch -Xclang <…/cmake_pch.hxx.pch>
-  #                 -Xclang -include     -Xclang <…/cmake_pch.hxx>
-  # clangd builds its own preamble and cannot load CMake's .pch (compiler-fingerprint
-  # mismatch) — left in, it errors on every file. All four -Xclang tokens in these
-  # commands are PCH-only, and the glob nukes both the .pch and .hxx path arguments.
+# Strip the precompiled-header injection that target_precompile_headers() bakes
+
+# into every command
+
+# -Winvalid-pch -Xclang -include-pch -Xclang <…/cmake_pch.hxx.pch>
+
+# -Xclang -include     -Xclang <…/cmake_pch.hxx>
+
+# clangd builds its own preamble and cannot load CMake's .pch (compiler-fingerprint
+
+# mismatch) — left in, it errors on every file. All four -Xclang tokens in these
+
+# commands are PCH-only, and the glob nukes both the .pch and .hxx path arguments
+
   Remove:
     - -Winvalid-pch
     - -Xclang
