@@ -101,7 +101,10 @@ public:
 
   /// Forward an SDL event to subsystems that need it (e.g. multimedia keys).
   /// Call from the main event loop before ImGui_ImplSDL3_ProcessEvent.
-  void HandleSdlEvent(const SDL_Event &event);
+  /// Returns true when the event was consumed and must NOT be handed to ImGui
+  /// (e.g. arrow keys driving the hover preview, so they don't move the file
+  /// browser selection underneath the popup).
+  [[nodiscard]] bool HandleSdlEvent(const SDL_Event &event);
 
   /// Unload all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
   void Shutdown();

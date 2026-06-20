@@ -233,8 +233,12 @@ void App::tick() {
 
 		// 1. PROCESSAMENTO DE EVENTOS DO SDL
 		while (SDL_PollEvent(&event)) {
-			m_MenuBar->HandleSdlEvent(event);
-			ImGui_ImplSDL3_ProcessEvent(&event);
+			// When HandleSdlEvent consumes a key (e.g. arrows driving the hover
+			// preview), withhold it from ImGui so the file-browser selection
+			// doesn't move underneath the popup.
+			bool const consumed = m_MenuBar->HandleSdlEvent(event);
+			if (!consumed)
+				ImGui_ImplSDL3_ProcessEvent(&event);
 
 			ImGuiIO& io = ImGui::GetIO();
 			(void)io;

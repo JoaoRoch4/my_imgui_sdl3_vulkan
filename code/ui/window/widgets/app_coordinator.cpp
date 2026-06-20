@@ -564,51 +564,78 @@ void AppCoordinator::SetThumbDir(std::filesystem::path const &dir) {
 
 void AppCoordinator::SetDownloadCacheDir(std::filesystem::path const &dir) { m_app_state->set_download_cache_dir(dir); }
 
-void AppCoordinator::HandleSdlEvent(SDL_Event const &event) {
+bool AppCoordinator::HandleSdlEvent(SDL_Event const &event) {
 	if (event.type != SDL_EVENT_KEY_DOWN)
-		return;
+		return false;
 
 	SDL_Keycode const key = event.key.key;
 
-	// Space (tap = play/pause, hold = accelerate) is handled per-frame in
-	// VideoPlayer::update_space_hold_speed() so the hold threshold is frame-accurate
-	// rather than tied to the OS key-repeat delay.
+	// The file-explorer hover-preview popup, while actively playing, owns the arrow
+	// keys: Left/Right seek and Up/Down change its volume. These helpers route to
+	// whichever player owns the preview (the placebo player forwards to its inner
+	// software hover player). When the popup owns a key we swallow the event so
+	// ImGui's Selectable navigation can't move the file-browser selection — that
+	// was the "arrow keys select another file instead of seeking" bug.
+	auto const hover_previewing = [this]() -> bool {
+		if (m_use_video_player_placebo && m_video_player_placebo)
+			return m_video_player_placebo->is_hover_previewing();
+		return m_video_player && m_video_player->is_hover_previewing();
+	};
+	auto const seek_hover = [this](double d) {
+		if (m_use_video_player_placebo && m_video_player_placebo)
+			m_video_player_placebo->seek_hover_preview(d);
+		else if (m_video_player)
+			m_video_player->seek_hover_preview(d);
+	};
+	auto const adjust_hover_vol = [this](int d) {
+		if (m_use_video_player_placebo && m_video_player_placebo)
+			m_video_player_placebo->adjust_hover_volume(d);
+		else if (m_video_player)
+			m_video_player->adjust_hover_volume(d);
+	};
+
+	// Space (tap = play/pause, hold = fast-forward) is handled per-frame in
+	// VideoPlayer::update_space_hold_speed() / update_hover_space_hold_speed() so the
+	// hold threshold is frame-accurate rather than tied to the OS key-repeat delay.
+	// We deliberately do NOT consume Space here so ImGui keeps its live key state
+	// for those FSMs; Space does not move the file-browser selection anyway.
 
 	// Left/Right arrows seek by the configurable step. Same WantTextInput guard so
-	// they still move the caret inside text fields. The hover-preview popup takes
-	// precedence while it is showing — you seek what you are looking at; otherwise
-	// the seek goes to the active open video.
+	// they still move the caret inside text fields.
 	if ((key == SDLK_LEFT || key == SDLK_RIGHT) && !ImGui::GetIO().WantTextInput) {
 		double const step  = m_config_runtime ? static_cast<double>(m_config_runtime->SeekStepSeconds()) : 5.0;
 		double const delta = (key == SDLK_RIGHT) ? step : -step;
 
-		if (m_use_video_player_placebo && m_video_player_placebo) {
-			if (m_video_player_placebo->is_hover_previewing())
-				m_video_player_placebo->seek_hover_preview(delta);
-		} else if (m_video_player) {
-			if (m_video_player->is_hover_previewing())
-				m_video_player->seek_hover_preview(delta);
-			else
-				m_video_player->seek_active_video(delta);
+		if (hover_previewing()) {
+			seek_hover(delta);
+			return true; // swallow: keep the file-browser selection put
 		}
-		return;
+		if (!m_use_video_player_placebo && m_video_player)
+			m_video_player->seek_active_video(delta);
+		return false;
 	}
 
-	// Up/Down adjust volume, C toggles mute, L toggles loop on the active video.
+	// Up/Down adjust volume — hover preview first (and swallow so vertical list
+	// navigation doesn't move the selection), else the active open video.
 	if ((key == SDLK_UP || key == SDLK_DOWN) && !ImGui::GetIO().WantTextInput) {
+		int const delta = (key == SDLK_UP) ? 5 : -5;
+		if (hover_previewing()) {
+			adjust_hover_vol(delta);
+			return true; // swallow: keep the file-browser selection put
+		}
 		if (!m_use_video_player_placebo && m_video_player)
-			m_video_player->adjust_active_volume(key == SDLK_UP ? 5 : -5);
-		return;
+			m_video_player->adjust_active_volume(delta);
+		return false;
 	}
 	if (key == SDLK_C && !ImGui::GetIO().WantTextInput) {
 		if (!m_use_video_player_placebo && m_video_player)
 			m_video_player->handle_media_key(SDLK_MUTE);
-		return;
+		return false;
 	}
 	if (key == SDLK_L && !ImGui::GetIO().WantTextInput) {
 		if (!m_use_video_player_placebo && m_video_player)
 			m_video_player->toggle_active_loop();
-		return;
+		return false;
 	}
 
 	switch (key) {
@@ -630,6 +657,7 @@ void AppCoordinator::HandleSdlEvent(SDL_Event const &event) {
 	default:
 		break;
 	}
+	return false;
 }
 
 // ============================================================================

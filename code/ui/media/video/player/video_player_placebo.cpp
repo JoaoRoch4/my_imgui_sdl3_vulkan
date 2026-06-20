@@ -612,6 +612,11 @@ void VideoPlayerPlacebo::seek_hover_preview(double seconds) {
     m_hover_player->seek_hover_preview(seconds);
 }
 
+void VideoPlayerPlacebo::adjust_hover_volume(int delta) {
+  if (m_hover_player)
+    m_hover_player->adjust_hover_volume(delta);
+}
+
 bool VideoPlayerPlacebo::save_hover_frame(const std::filesystem::path &path) {
   if (m_hover_player)
     return m_hover_player->save_hover_frame(path);
