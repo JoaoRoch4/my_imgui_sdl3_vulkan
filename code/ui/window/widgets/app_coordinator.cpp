@@ -35,6 +35,7 @@
 
 #include "file_browser_ui.hpp"
 #include "file_thumbnail_cache.hpp"
+#include "image_job_system.hpp"
 #include "imgui_console.hpp"
 #include "metadata_editor.hpp"
 #include "vulkan_emoji_atlas.hpp"
@@ -460,6 +461,12 @@ ImGui::FileBrowser &AppCoordinator::open_file_explorer() {
 	if (auto *existing = fb_ptr())
 		return *existing; // already open — idempotent
 
+	// Start the parallel image engine here, not at app boot: the file-browser
+	// thumbnail pipeline is its only consumer, so opening the explorer is the
+	// first moment the worker pool is needed. start() is a no-op if already
+	// running, so reopening costs nothing.
+	img::ImageJobSystem::instance().start();
+
 	// Heap-allocate a brand-new browser via the registry. Constructor flags match the
 	// old static. Everything below re-establishes the per-instance configuration that
 	// a fresh object needs, so each open is a clean start with fresh worker threads.
@@ -509,6 +516,12 @@ void AppCoordinator::close_file_explorer() {
 	// Release runs ~FileBrowser now: m_thumbnails + m_scanner destruct, joining the
 	// video worker(s) and the scanner jthread. A later open creates a genuinely fresh one.
 	MemoryManagement::Get().Release<ImGui::FileBrowser>();
+
+	// The browser was the only consumer of the image engine and is now gone, so
+	// stop the worker pool too — symmetric with open_file_explorer(). Done after
+	// Release so no in-flight thumbnail job outlives the queue. A later reopen
+	// restarts it.
+	img::ImageJobSystem::instance().shutdown();
 }
 	
 void AppCoordinator::SetMediaPolicy(bool allow_video, bool allow_image) {

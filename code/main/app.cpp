@@ -93,9 +93,10 @@ bool App::KickStart() {
 
 	m_Rt->appStartTime = std::chrono::steady_clock::now();
 
-	// Start the parallel image engine (decode/resize/encode worker pool wired to
-	// ThreadOverwatch) for the whole session; shut it down in destroy().
-	img::ImageJobSystem::instance().start();
+	// The parallel image engine (decode/resize/encode worker pool) is started
+	// lazily by AppCoordinator::open_file_explorer() — its only consumer is the
+	// file-browser thumbnail pipeline — so the worker threads don't spin up at
+	// boot. destroy() still calls shutdown() as a safety net (no-op if unstarted).
 
 	if (!m_Sdl->init("Dear ImGui SDL3+Vulkan example", 1280, 800))
 		return false;
