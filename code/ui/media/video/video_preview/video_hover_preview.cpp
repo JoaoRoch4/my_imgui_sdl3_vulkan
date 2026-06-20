@@ -408,7 +408,8 @@ void VideoHoverPreview::tick_idle() {
         m_last_load_time.time_since_epoch().count() != 0 &&
         (now - m_last_load_time) >= loading_restart_timeout &&
         can_restart_now) {
-        _Debug("loading timeout (>1s) -> restarting hover thread");
+        _Debug("loading stuck (>{}ms, no first frame) -> restarting hover thread",
+               loading_restart_timeout.count());
         restart_hover_thread();
         return;
     }
@@ -419,7 +420,8 @@ void VideoHoverPreview::tick_idle() {
         (now - m_last_load_time) >= no_frame_restart_timeout &&
         m_waiting.load(std::memory_order_acquire) &&
         can_restart_now) {
-        _Debug("no-frame timeout -> restarting hover thread");
+        _Debug("no-frame timeout (>{}ms while hovered) -> restarting hover thread",
+               no_frame_restart_timeout.count());
         restart_hover_thread();
         return;
     }

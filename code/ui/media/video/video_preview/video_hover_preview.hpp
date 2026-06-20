@@ -24,14 +24,23 @@ public:
     /// Kill the worker thread when no hover requests arrive for this interval.
     static constexpr std::chrono::milliseconds idle_thread_timeout{100};
 
-    /// If preview loading stays stuck longer than this, restart hover thread.
-    static constexpr std::chrono::milliseconds loading_restart_timeout{100};
+    /// If preview loading stays stuck longer than this, restart the hover thread.
+    /// MUST exceed worst-case first-frame latency. Internet sources resolve via
+    /// yt-dlp and buffer over the network, which routinely takes several seconds;
+    /// a short value here makes the watchdog kill the in-progress load every
+    /// cooldown and reallocate the worker thread + mpv cache/demuxer buffers in a
+    /// tight loop (the "internet video allocation loop"), so the source never
+    /// finishes loading. Genuine *thread* hangs are recovered independently by
+    /// ManagedThread's 5 s RestartOnTimeout overwatch — this is only the
+    /// "source not progressing" backstop, so it can afford to be generous.
+    static constexpr std::chrono::milliseconds loading_restart_timeout{15000};
 
     /// Prevent rapid restart loops when a source is persistently broken.
-    static constexpr std::chrono::milliseconds loading_restart_cooldown{200};
+    static constexpr std::chrono::milliseconds loading_restart_cooldown{1000};
 
-    /// If a hovered/playing source has no decoded frame for too long, force recovery.
-    static constexpr std::chrono::milliseconds no_frame_restart_timeout{100};
+    /// If a hovered/playing source has no decoded frame for too long, force
+    /// recovery. Same network-latency reasoning as loading_restart_timeout.
+    static constexpr std::chrono::milliseconds no_frame_restart_timeout{15000};
 
     VideoHoverPreview();
     ~VideoHoverPreview();
