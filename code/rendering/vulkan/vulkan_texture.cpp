@@ -134,6 +134,129 @@ bool VulkanTexture::upload(const img::ImageBuffer &buf, vulkan_context &vk) {
     return upload_pixels(buf.data.data(), buf.width, buf.height, vk);
 }
 
+bool VulkanTexture::upload_bc1(std::span<std::byte const> blocks, int w, int h, vulkan_context &vk) {
+    if (w <= 0 || h <= 0)
+        return false;
+    const auto bx = static_cast<std::size_t>((w + 3) / 4);
+    const auto by = static_cast<std::size_t>((h + 3) / 4);
+    if (blocks.size() != bx * by * 8u)
+        return false;
+
+    width  = w;
+    height = h;
+    const auto image_size = static_cast<VkDeviceSize>(blocks.size());
+
+    // 1. Compressed image (extent is texel dims; the driver maps to 4x4 blocks).
+    {
+        VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        info.imageType     = VK_IMAGE_TYPE_2D;
+        info.format        = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+        info.extent        = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
+        info.mipLevels     = 1;
+        info.arrayLayers   = 1;
+        info.samples       = VK_SAMPLE_COUNT_1_BIT;
+        info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        info.usage         = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        if (vkCreateImage(vk.device, &info, vk.allocator, &m_image) != VK_SUCCESS)
+            return false;
+
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(vk.device, m_image, &req);
+        VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize  = req.size;
+        alloc.memoryTypeIndex = find_memory_type(vk.physical_device, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (alloc.memoryTypeIndex == 0xFFFFFFFFu)
+            return false;
+        vulkan_context::check_result(vkAllocateMemory(vk.device, &alloc, vk.allocator, &m_image_memory));
+        vkBindImageMemory(vk.device, m_image, m_image_memory, 0);
+    }
+
+    // 2. View (format must match the compressed image) + ImGui registration.
+    {
+        VkImageViewCreateInfo v_info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        v_info.image            = m_image;
+        v_info.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        v_info.format           = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+        v_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCreateImageView(vk.device, &v_info, vk.allocator, &m_image_view);
+    }
+    m_descriptor_set = ImGui_ImplVulkan_AddTexture(m_image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    // 3. Staging buffer holds the raw BC1 blocks.
+    VkBuffer       staging_buf;
+    VkDeviceMemory staging_mem;
+    {
+        VkBufferCreateInfo b_info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        b_info.size  = image_size;
+        b_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        vkCreateBuffer(vk.device, &b_info, vk.allocator, &staging_buf);
+
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(vk.device, staging_buf, &req);
+        VkMemoryAllocateInfo a_info = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        a_info.allocationSize  = req.size;
+        a_info.memoryTypeIndex = find_memory_type(vk.physical_device, req.memoryTypeBits,
+                                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkAllocateMemory(vk.device, &a_info, vk.allocator, &staging_mem);
+        vkBindBufferMemory(vk.device, staging_buf, staging_mem, 0);
+
+        void *map_ptr;
+        vkMapMemory(vk.device, staging_mem, 0, image_size, 0, &map_ptr);
+        std::memcpy(map_ptr, blocks.data(), static_cast<size_t>(image_size));
+        vkUnmapMemory(vk.device, staging_mem);
+    }
+
+    // 4. Transfer (same barriers as upload_pixels; copy extent is texel dims).
+    {
+        VkCommandBufferAllocateInfo c_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        c_info.commandPool        = vk.main_window_data.Frames[static_cast<int>(vk.main_window_data.FrameIndex)].CommandPool;
+        c_info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        c_info.commandBufferCount = 1;
+        VkCommandBuffer cmd;
+        vkAllocateCommandBuffers(vk.device, &c_info, &cmd);
+        VkCommandBufferBeginInfo b_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        b_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &b_info);
+
+        VkImageMemoryBarrier barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.image            = m_image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        VkBufferImageCopy region = {};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent      = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
+        vkCmdCopyBufferToImage(cmd, staging_buf, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        barrier.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        vkEndCommandBuffer(cmd);
+
+        VkFence           fence;
+        VkFenceCreateInfo f_info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        vkCreateFence(vk.device, &f_info, vk.allocator, &fence);
+        VkSubmitInfo s_info = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        s_info.commandBufferCount = 1;
+        s_info.pCommandBuffers    = &cmd;
+        vk.queue_submit(1, &s_info, fence);
+        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(vk.device, fence, vk.allocator);
+        vkFreeCommandBuffers(vk.device, c_info.commandPool, 1, &cmd);
+    }
+
+    vkDestroyBuffer(vk.device, staging_buf, vk.allocator);
+    vkFreeMemory(vk.device, staging_mem, vk.allocator);
+    return true;
+}
+
 bool VulkanTexture::upload_pixels(const unsigned char *pixels, int w, int h, vulkan_context &vk) {
     constexpr int k_channels = 4;
     if (pixels == nullptr || w <= 0 || h <= 0)

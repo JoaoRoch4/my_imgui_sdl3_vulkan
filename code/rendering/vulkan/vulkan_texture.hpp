@@ -31,6 +31,11 @@ class VulkanTexture {
 		// Lets the render thread consume buffers produced by ImageJobSystem. False on failure.
 		bool upload(img::ImageBuffer const& buf, vulkan_context& vk);
 
+		// Upload already-compressed BC1/DXT1 blocks into a VK_FORMAT_BC1_RGBA_UNORM_BLOCK
+		// image (no decode — the GPU samples the compressed data directly). blocks.size()
+		// must equal ceil(w/4)*ceil(h/4)*8. False on size mismatch or any Vulkan failure.
+		bool upload_bc1(std::span<std::byte const> blocks, int w, int h, vulkan_context& vk);
+
 		// Free all GPU resources. Must be called before ImGui_ImplVulkan_Shutdown.
 		void unload(vulkan_context& vk);
 

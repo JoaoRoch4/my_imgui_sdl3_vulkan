@@ -29,6 +29,11 @@ class vulkan_context {
 	/// The libplacebo zero-copy video path is only attempted when this is set.
 	bool placebo_features_enabled = false;
 
+	/// True when the device supports BC (S3TC/DXT) block-compressed textures, i.e.
+	/// the textureCompressionBC feature was present and enabled. The BC1 thumbnail
+	/// cache backend is only used when this is set; otherwise it falls back to PNG.
+	bool bc_textures_enabled = false;
+
 	void setup(std::vector<const char*> instance_extensions);
 	void setup_window(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int width, int height) const;
 	void set_vsync(ImGui_ImplVulkanH_Window* wd, bool vsync);

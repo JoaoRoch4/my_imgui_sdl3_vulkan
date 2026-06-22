@@ -222,12 +222,24 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		features_query.pNext                            = &vk12_supported;
 		vkGetPhysicalDeviceFeatures2(physical_device, &features_query);
 
+		// Base features to enable, chained via VkPhysicalDeviceFeatures2.pNext
+		// (pEnabledFeatures MUST stay null when using the Features2 chain). BC block-
+		// compressed textures back the BC1 thumbnail cache; enable only if supported.
+		bc_textures_enabled = features_query.features.textureCompressionBC == VK_TRUE;
+		VkPhysicalDeviceFeatures2 features_enable = {};
+		features_enable.sType                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		if (bc_textures_enabled) {
+			features_enable.features.textureCompressionBC = VK_TRUE;
+			APP_DEBUG_LOG("[vulkan_context] textureCompressionBC enabled (BC1 thumbnails available)");
+		} else {
+			APP_DEBUG_LOG("[vulkan_context] textureCompressionBC unavailable — BC1 thumbnails disabled");
+		}
+
 		VkPhysicalDeviceVulkan12Features vk12_enable = {};
 		vk12_enable.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 		if (vk12_supported.hostQueryReset && vk12_supported.timelineSemaphore) {
 			vk12_enable.hostQueryReset    = VK_TRUE;
 			vk12_enable.timelineSemaphore = VK_TRUE;
-			create_info.pNext             = &vk12_enable; // pEnabledFeatures must stay null
 			placebo_features_enabled      = true;
 			APP_DEBUG_LOG(
 				"[vulkan_context] libplacebo features enabled "
@@ -237,6 +249,8 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 				"[vulkan_context] libplacebo features unavailable — "
 				"zero-copy video path disabled");
 		}
+		features_enable.pNext = &vk12_enable; // chain vk12 features after base features
+		create_info.pNext     = &features_enable; // pEnabledFeatures must stay null
 
 		err = vkCreateDevice(physical_device, &create_info, allocator, &device);
 		check_result(err);
