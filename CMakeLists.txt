@@ -180,6 +180,7 @@ add_executable(example_sdl3_vulkan
     code/ui/FileExplorer/file_browser_thread.cpp
     code/ui/FileExplorer/file_browser_context_menu.cpp
     code/ui/FileExplorer/file_thumbnail_cache.cpp
+    code/ui/FileExplorer/thumbnail_blob_cache.cpp
     code/ui/FileExplorer/file_browser_file_operations_core.cpp
     code/ui/FileExplorer/file_browser_file_operations.cpp
     code/ui/FileExplorer/file_browser_thumbnail_context.cpp
@@ -562,3 +563,42 @@ target_link_libraries(image_job_tests PRIVATE
 )
 set_property(TARGET image_job_tests APPEND PROPERTY LINK_DEPENDS "${_ffmpeg_test_rsp}" "${_ffthumb_test_a}")
 add_test(NAME image_job_tests COMMAND image_job_tests)
+
+# ── ThumbnailBlobCache tests (thumbnail_blob_tests) ──────────────────────────────
+# The blob cache logic is pure std, but thumbnail_blob_cache.cpp leads with the
+# project PCH (app convention), so this target must compile that PCH too — same
+# recipe as image_job_tests: app include dirs (genexp) + vendored header dirs for
+# the SDL/Vulkan/mpv/libplacebo headers pch.hpp pulls, and the GUI libs linked for
+# their header paths only (no objects referenced). Run with:
+#   cmake --build build/all --config Debug --target thumbnail_blob_tests
+#   ./build/all/Debug/thumbnail_blob_tests
+add_executable(thumbnail_blob_tests
+    tests/test_main.cpp
+    tests/thumbnail_blob_cache_test.cpp
+    code/ui/FileExplorer/thumbnail_blob_cache.cpp
+)
+target_include_directories(thumbnail_blob_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/code
+    ${CMAKE_SOURCE_DIR}/code/ui/FileExplorer
+)
+target_include_directories(thumbnail_blob_tests SYSTEM PRIVATE
+    $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
+    ${CMAKE_SOURCE_DIR}/external/doctest
+    ${CMAKE_SOURCE_DIR}/external/SDL/include
+    ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
+    ${CMAKE_SOURCE_DIR}/external/mpv/include
+    ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
+    ${_ffmpeg_test_inc}
+    ${_ffthumb_test_inc}
+)
+target_precompile_headers(thumbnail_blob_tests PRIVATE code/pch/pch.hpp)
+target_compile_options(thumbnail_blob_tests PRIVATE "-Wno-#warnings")
+target_link_libraries(thumbnail_blob_tests PRIVATE
+    imgui                       # header paths only (imgui.h, pulled by pch)
+    implot                      # header paths only (implot.h)
+    reflectcpp::reflectcpp      # header paths only (rfl.hpp)
+    CURL::libcurl               # header paths only (curl/curl.h)
+    tag                         # header paths only (taglib/*) — from-source TagLib
+    stdc++exp                   # std::stacktrace (pulled transitively by pch)
+)
+add_test(NAME thumbnail_blob_tests COMMAND thumbnail_blob_tests)
