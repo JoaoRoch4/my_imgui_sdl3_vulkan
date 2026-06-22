@@ -1,7 +1,9 @@
 #include "image_ops.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
+#include <cstddef>
 #include <fstream>
 #include <vector>
 
@@ -18,6 +20,9 @@ extern "C" {
 #include <libffmpegthumbnailer/videothumbnailerc.h>
 
 #include <stb_image_resize2.h>
+// Declaration-only: STB_DXT_IMPLEMENTATION is compiled in the standalone `stb`
+// lib (thirdparty/stb/CMakeLists.txt), same pattern as stb_image_write above.
+#include <stb_dxt.h>
 
 namespace img::ops {
 
@@ -353,6 +358,41 @@ std::expected<bool, ImageError> encode_png(ImageBuffer const& src, std::filesyst
 	if (!encode_success)
 		return std::unexpected(ImageError::EncodeFailed);
 	return true;
+}
+
+std::expected<std::vector<std::byte>, ImageError> encode_bc1(ImageBuffer const &src) {
+	if (!src.valid() || src.channels != 4)
+		return std::unexpected(ImageError::EncodeFailed);
+
+	const int W  = src.width;
+	const int H  = src.height;
+	const int bx = (W + 3) / 4;
+	const int by = (H + 3) / 4;
+
+	std::vector<std::byte> out(bc1_size(W, H));
+	std::size_t            out_off = 0;
+
+	std::array<unsigned char, 64> block{}; // 4x4 RGBA, edge-replicated for partial blocks
+	for (int byi = 0; byi < by; ++byi) {
+		for (int bxi = 0; bxi < bx; ++bxi) {
+			for (int ry = 0; ry < 4; ++ry) {
+				const int sy = std::min(byi * 4 + ry, H - 1); // clamp/replicate edge
+				for (int rx = 0; rx < 4; ++rx) {
+					const int         sx    = std::min(bxi * 4 + rx, W - 1);
+					const std::size_t src_i = (static_cast<std::size_t>(sy) * W + sx) * 4u;
+					const std::size_t dst_i = (static_cast<std::size_t>(ry) * 4 + rx) * 4u;
+					block[dst_i + 0]        = src.data[src_i + 0];
+					block[dst_i + 1]        = src.data[src_i + 1];
+					block[dst_i + 2]        = src.data[src_i + 2];
+					block[dst_i + 3]        = 255; // BC1 ignores alpha; keep opaque
+				}
+			}
+			stb_compress_dxt_block(std::bit_cast<unsigned char *>(out.data() + out_off), block.data(),
+				0 /*no alpha -> DXT1, 8 bytes*/, STB_DXT_HIGHQUAL);
+			out_off += 8;
+		}
+	}
+	return out;
 }
 
 } // namespace img::ops

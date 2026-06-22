@@ -2,9 +2,11 @@
 
 #include "image_buffer.hpp"
 #include "image_types.hpp"
+#include <cstddef>
 #include <expected>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 // Synchronous, thread-free image operations wrapping stb + libwebp. These are pure
 // functions with no scheduling, no Vulkan and no project-PCH dependency, so they can
@@ -49,5 +51,18 @@ resize_parallel(const ImageBuffer &src, int dst_w, int dst_h, int max_splits,
 // Encode an RGBA/RGB buffer to a PNG file (stb_image_write).
 [[nodiscard]] std::expected<bool, ImageError>
 encode_png(const ImageBuffer &src, const std::filesystem::path &out);
+
+// Byte length of BC1/DXT1 data for a w*h image: 8 bytes per 4x4 block.
+[[nodiscard]] constexpr std::size_t bc1_size(int w, int h) {
+    const auto bx = static_cast<std::size_t>((w + 3) / 4);
+    const auto by = static_cast<std::size_t>((h + 3) / 4);
+    return bx * by * 8u;
+}
+
+// Encode an RGBA8 buffer (channels == 4) to BC1/DXT1 blocks (8 bytes/block, no
+// alpha). Returns exactly bc1_size(width, height) bytes. Alpha is ignored by
+// BC1: callers wanting opaque letterbox must bake the padding colour first.
+[[nodiscard]] std::expected<std::vector<std::byte>, ImageError>
+encode_bc1(const ImageBuffer &src);
 
 } // namespace img::ops
