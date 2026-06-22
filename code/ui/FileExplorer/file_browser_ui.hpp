@@ -145,7 +145,7 @@ class FileBrowser {
 
 	// Attach the Vulkan context + on-disk thumbnail cache dir, enabling the browser-
 	// owned async thumbnail engine. Call once (render thread) after construction.
-	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir);
+	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format = "bc1");
 	// Flush all cached thumbnails (in-memory + on-disk PNGs); regenerated on demand.
 	void ClearThumbnailCache();
 	// Drop one file's cached thumbnail so it regenerates on the next get().

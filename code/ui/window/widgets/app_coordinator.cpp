@@ -499,7 +499,7 @@ ImGui::FileBrowser &AppCoordinator::open_file_explorer() {
 	// Start the async thumbnail engine (fresh scanner + video worker threads), then
 	// restore the persisted layout (directory, sort, view, thumbnail sizes).
 	if (m_vk && !m_explorer_thumb_dir.empty())
-		fb->Setup(m_vk, m_explorer_thumb_dir);
+		fb->Setup(m_vk, m_explorer_thumb_dir, m_config_runtime->ThumbnailFormat());
 	apply_file_explorer_layout(*fb, *MemoryManagement::GetInstance<WindowStateToml>());
 	fb->Open();
 	return *fb;

@@ -50,6 +50,7 @@ ConfigRuntime::ConfigRuntime()
     , m_on_video_playback_changed {nullptr}
     , m_pending_vsync_enabled {WindowStateToml {}.vsync}
     , m_on_vsync_changed {nullptr}
+    , m_pending_thumbnail_format {WindowStateToml {}.thumbnail_format}
     , m_on_restart_all_threads {nullptr} { }
 
 // Returns true if the value changed.
@@ -126,6 +127,8 @@ void ConfigRuntime::SetVsyncChangedCallback(std::function<void(bool)> cb) { m_on
 
 bool ConfigRuntime::VsyncEnabled() const { return m_pending_vsync_enabled; }
 
+std::string ConfigRuntime::ThumbnailFormat() const { return m_pending_thumbnail_format; }
+
 void ConfigRuntime::SetVsyncEnabled(bool enabled) {
     m_pending_vsync_enabled = enabled;
     if (m_on_vsync_changed)
@@ -187,6 +190,8 @@ void ConfigRuntime::ApplyLayout(const WindowStateToml& state) {
     m_pending_vsync_enabled = state.vsync;
     if (m_on_vsync_changed)
 	m_on_vsync_changed(m_pending_vsync_enabled);
+
+    m_pending_thumbnail_format = state.thumbnail_format;
 }
 
 void ConfigRuntime::ExportLayout(WindowStateToml* state) const {
@@ -207,4 +212,5 @@ void ConfigRuntime::ExportLayout(WindowStateToml* state) const {
     state->global_hwdec_enabled			     = mode_uses_hwdec(m_pending_global_playback_mode);
     state->global_loop_enabled			     = m_pending_global_loop_enabled;
     state->vsync				     = m_pending_vsync_enabled;
+    state->thumbnail_format			     = m_pending_thumbnail_format;
 }

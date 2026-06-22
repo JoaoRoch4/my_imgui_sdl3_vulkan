@@ -4,6 +4,7 @@
 
 #include "image_buffer.hpp"
 #include "image_types.hpp"
+#include "thumbnail_blob_cache.hpp" // BC1 backend: single-blob store + index
 #include "thumbnail_reproducer.hpp" // owns the nvdec-copy mpv worker; pulls in the thread header
 
 class vulkan_context;
@@ -31,7 +32,11 @@ class FileBrowserThumbnailContext {
 		FileBrowserThumbnailContext(FileBrowserThumbnailContext const &)            = delete;
 		FileBrowserThumbnailContext &operator=(FileBrowserThumbnailContext const &) = delete;
 
-		void               setup(vulkan_context *vk, std::filesystem::path thumb_dir);
+		// @p thumbnail_format selects storage: "bc1" (GPU block-compressed single-blob,
+		// default) or "png" (per-file fallback). bc1 auto-falls-back to png when the
+		// device lacks textureCompressionBC.
+		void               setup(vulkan_context *vk, std::filesystem::path thumb_dir,
+		                         std::string thumbnail_format = "bc1");
 		void               shutdown();
 		[[nodiscard]] bool is_setup() const noexcept { return m_setup; }
 
@@ -86,7 +91,11 @@ class FileBrowserThumbnailContext {
 		// Failed      -> generation failed; do not retry
 		enum class State { Queued, Generating, PixelsReady, Ready, Cached, Failed };
 
-		using ImgResult = std::expected<img::ImageBuffer, img::ImageError>;
+		// Storage backend resolved at setup().
+		enum class Backend { Png, Bc1 };
+
+		using ImgResult  = std::expected<img::ImageBuffer, img::ImageError>;
+		using Bc1Result  = std::expected<std::vector<std::byte>, img::ImageError>;
 
 		struct Entry {
 				State                          state = State::Queued;
@@ -103,6 +112,13 @@ class FileBrowserThumbnailContext {
 				bool                           have_pixels = false;
 				std::unique_ptr<VulkanTexture> texture;
 				std::uint64_t                  last_used = 0; // frame index of last get() — for LRU
+				// BC1 backend: blocks delivered by the pool job / blob lookup, uploaded via
+				// upload_bc1. have_bc1 mirrors have_pixels; from_blob skips the re-store.
+				std::future<Bc1Result>         bc1_future;
+				std::vector<std::byte>         bc1_blocks;
+				bool                           have_bc1   = false;
+				bool                           from_blob  = false;
+				std::uint64_t                  blob_key   = 0;
 		};
 
 		struct Retire {
@@ -133,6 +149,9 @@ class FileBrowserThumbnailContext {
 		vulkan_context       *m_vk = nullptr;
 		std::filesystem::path m_thumb_dir;
 		bool                  m_setup = false;
+
+		Backend            m_backend = Backend::Png; // resolved in setup()
+		ThumbnailBlobCache m_blob;                   // BC1 backend store (single blob + index)
 
 		std::unordered_map<std::string, Entry, StringHash, std::equal_to<>> m_entries; // render-thread only
 		std::vector<Retire>                                                 m_retire;

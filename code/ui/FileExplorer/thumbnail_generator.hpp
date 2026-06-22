@@ -22,4 +22,13 @@ class ThumbnailGenerator {
 		// w x h, persist as PNG at out_png (best-effort), and return the letterboxed RGBA.
 		[[nodiscard]] static Result generate(std::filesystem::path const &source, bool is_video,
 			std::filesystem::path const &out_png, int w, int h);
+
+		using Bc1Result = std::expected<std::vector<std::byte>, img::ImageError>;
+
+		// BC1 backend cache-miss engine: decode + letterbox to w x h exactly like
+		// generate(), but encode the result to BC1/DXT1 blocks (img::ops::encode_bc1)
+		// and return them instead of persisting a PNG. The blob cache owns persistence.
+		// Letterbox padding becomes opaque black (BC1 has no alpha). Runs on the pool.
+		[[nodiscard]] static Bc1Result generate_bc1(std::filesystem::path const &source, bool is_video,
+			int w, int h);
 };

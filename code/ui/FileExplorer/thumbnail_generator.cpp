@@ -68,3 +68,18 @@ ThumbnailGenerator::Result ThumbnailGenerator::generate(std::filesystem::path co
 
 	return rz;
 }
+
+ThumbnailGenerator::Bc1Result ThumbnailGenerator::generate_bc1(std::filesystem::path const &source, bool is_video,
+	int w, int h) {
+	// Same decode + letterbox as generate(), but produce BC1 blocks (no PNG). The
+	// transparent letterbox padding encodes as opaque black since BC1 carries no alpha.
+	auto dec = is_video ? img::ops::decode_video_thumbnail(source, w, 4) : fbthumb::decode_stb(source, 4);
+	if (!dec)
+		return std::unexpected(dec.error());
+
+	auto rz = letterbox_fit(*dec, w, h);
+	if (!rz)
+		return std::unexpected(rz.error());
+
+	return img::ops::encode_bc1(*rz);
+}

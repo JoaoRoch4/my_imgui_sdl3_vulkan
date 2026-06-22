@@ -139,6 +139,10 @@ struct WindowStateToml {
   bool show_file_explorer_window = false;
   bool show_console_window = false;
   bool vsync = true;
+  // Thumbnail storage backend: "bc1" (GPU block-compressed, ~8:1, default) or
+  // "png" (portable fallback). bc1 auto-falls-back to png when the GPU lacks
+  // textureCompressionBC. Applied at file-browser setup (next run after a change).
+  std::string thumbnail_format = "bc1";
   int video_resume_persist_min_duration_seconds = 30;
   bool hover_preview_enabled = true;
   int  hover_preview_delay_ms = 800;

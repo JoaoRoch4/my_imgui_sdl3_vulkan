@@ -71,6 +71,10 @@ class ConfigRuntime {
 		/// Returns the current pending VSync state.
 		[[nodiscard]] bool VsyncEnabled() const;
 
+		/// Current thumbnail storage backend ("bc1" | "png"). Read at file-browser
+		/// setup; changes take effect on the next run.
+		[[nodiscard]] std::string ThumbnailFormat() const;
+
 		/// Toggle VSync programmatically (fires the VSync changed callback).
 		void SetVsyncEnabled(bool enabled);
 
@@ -105,5 +109,6 @@ class ConfigRuntime {
 		std::function<void(int, bool)> m_on_video_playback_changed;
 		bool                           m_pending_vsync_enabled;
 		std::function<void(bool)>      m_on_vsync_changed;
+		std::string                    m_pending_thumbnail_format;
 		std::function<void()>          m_on_restart_all_threads;
 };

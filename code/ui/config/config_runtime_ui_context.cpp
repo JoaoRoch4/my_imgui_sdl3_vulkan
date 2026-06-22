@@ -104,6 +104,19 @@ void ConfigRuntimeUiContext::DrawUi(ConfigRuntime *cfg) {
 		ImGui::SameLine();
 		ImGui::TextDisabled("Same behavior as Hello, world checkbox");
 
+		// Thumbnail storage backend. Applied at file-browser setup, so a change
+		// takes effect on the next run (or after clearing the thumbnail cache).
+		{
+			constexpr std::array<char const*, 2> k_formats = {"bc1", "png"};
+			int current = (cfg->m_pending_thumbnail_format == "png") ? 1 : 0;
+			if (ImGui::Combo("Thumbnail format##thumb_format", &current, k_formats.data(),
+					static_cast<int>(k_formats.size()))) {
+				cfg->m_pending_thumbnail_format = k_formats[static_cast<std::size_t>(current)];
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("bc1 = GPU block-compressed (~8x smaller); applies next run");
+		}
+
 		if (playback_changed && cfg->m_on_video_playback_changed) {
 			cfg->m_on_video_playback_changed(cfg->m_pending_global_playback_mode, cfg->m_pending_global_loop_enabled);
 		}

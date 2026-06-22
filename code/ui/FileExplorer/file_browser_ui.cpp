@@ -992,8 +992,8 @@ void ImGui::FileBrowser::SetPreviewEnabled(bool enabled) noexcept { previewEnabl
 
 bool ImGui::FileBrowser::IsPreviewEnabled() const noexcept { return previewEnabled_; }
 
-void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir) {
-	m_thumbnails.setup(vk, std::move(thumb_dir));
+void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format) {
+	m_thumbnails.setup(vk, std::move(thumb_dir), std::move(thumbnail_format));
 }
 
 void ImGui::FileBrowser::ClearThumbnailCache() { m_thumbnails.clear(); }

@@ -2,9 +2,11 @@
 
 #include "file_browser_thumbnail_context.hpp"
 
+#include "core/log/debug_log.hpp" // APP_DEBUG_LOG
 #include "image_job_system.hpp"
+#include "image_ops.hpp" // img::ops::encode_bc1 (mpv video fallback in bc1 mode)
 #include "thumbnail_generator.hpp"
-#include "vulkan_texture.hpp"
+#include "vulkan_texture.hpp" // pulls vulkan_context.hpp (bc_textures_enabled)
 
 
 
@@ -98,13 +100,27 @@ std::string FileBrowserThumbnailContext::make_key(std::filesystem::path const &p
 	return path.lexically_normal().string();
 }
 
-void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::path thumb_dir) {
+void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::path thumb_dir,
+	std::string thumbnail_format) {
 	m_vk        = vk;
 	m_thumb_dir = std::move(thumb_dir);
 	m_setup     = true;
 	std::error_code ec;
 	std::filesystem::create_directories(m_thumb_dir, ec);
 	THUMB_LOG("setup thumb_dir={} vk={}", m_thumb_dir.string(), static_cast<void const *>(vk));
+
+	// Resolve the storage backend: bc1 only when requested AND the device supports BC
+	// block-compressed textures; otherwise fall back to the portable per-file PNG path.
+	const bool want_bc1 = (thumbnail_format == "bc1");
+	m_backend = (want_bc1 && vk && vk->bc_textures_enabled) ? Backend::Bc1 : Backend::Png;
+	if (m_backend == Backend::Bc1) {
+		constexpr std::uint64_t k_cap_bytes = 256ull * 1024ull * 1024ull; // ~256 MB live cap
+		m_blob.open(m_thumb_dir / "bc1", k_cap_bytes);
+		APP_DEBUG_LOG("[thumbnail_context] backend=bc1 (GPU block-compressed blob)");
+	} else {
+		APP_DEBUG_LOG("[thumbnail_context] backend=png (format='{}', bc_supported={})", thumbnail_format,
+			vk ? vk->bc_textures_enabled : false);
+	}
 
 	// Start the Reproducer's nvdec-copy mpv worker pool (sized to match our thumbnails). It
 	// stays idle unless a video generate fails and poll_entry routes a re-derive to it.
@@ -122,6 +138,9 @@ void FileBrowserThumbnailContext::shutdown() {
 
 	m_reproducer.shutdown(); // stop + join the mpv (nvdec-copy) worker pool
 	img::ImageJobSystem::instance().clear_pending(); // drop queued image jobs
+
+	if (m_backend == Backend::Bc1)
+		m_blob.close(); // flush the blob index to disk
 
 	if (m_vk) {
 		for (auto &[k, e] : m_entries)
@@ -160,6 +179,19 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	// Both entry points are static and thread-safe, so the job captures no `this`. A fresh
 	// VIDEO generate that fails is retried on the Reproducer's mpv (nvdec-copy) worker by
 	// poll_entry (gated by Entry::source_is_video / tried_mpv).
+
+	// BC1 backend: no PNG. The pool job decodes + letterboxes + encodes to BC1 blocks; the
+	// blob (checked in get()) is the persistence layer, so there is no reload branch here.
+	if (m_backend == Backend::Bc1) {
+		e.bc1_future = img::ImageJobSystem::instance().submit(
+			[file, decode_as_video]() -> Bc1Result {
+				return ThumbnailGenerator::generate_bc1(file, decode_as_video, k_thumb_w, k_thumb_h);
+			},
+			img::Priority::Normal);
+		e.state = State::Generating;
+		return;
+	}
+
 	e.img_future = img::ImageJobSystem::instance().submit(
 		[file, out = e.png_path, decode_as_video]() -> ImgResult {
 			std::error_code ec;
@@ -247,9 +279,22 @@ void FileBrowserThumbnailContext::begin_frame() {
 		if (it == m_entries.end())
 			continue;
 		if (res && res->valid()) {
-			it->second.pixels      = std::move(*res);
-			it->second.have_pixels = true;
-			it->second.state       = State::PixelsReady;
+			if (m_backend == Backend::Bc1) {
+				// mpv fallback delivered RGBA; encode to BC1 here (rare path) so the
+				// upload + blob store go through the same upload_bc1 chokepoint.
+				if (auto enc = img::ops::encode_bc1(*res); enc && !enc->empty()) {
+					it->second.bc1_blocks = std::move(*enc);
+					it->second.have_bc1   = true;
+					it->second.from_blob  = false;
+					it->second.state      = State::PixelsReady;
+				} else {
+					it->second.state = State::Failed;
+				}
+			} else {
+				it->second.pixels      = std::move(*res);
+				it->second.have_pixels = true;
+				it->second.state       = State::PixelsReady;
+			}
 		} else {
 			it->second.state = State::Failed;
 		}
@@ -276,9 +321,41 @@ ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
 		}
 	}
 
+	// BC1 backend: the pool job delivers blocks (not RGBA) via bc1_future.
+	if (e.state == State::Generating && !e.is_video && e.bc1_future.valid()) {
+		if (e.bc1_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+			Bc1Result res = e.bc1_future.get();
+			if (res && !res->empty()) {
+				e.bc1_blocks = std::move(*res);
+				e.have_bc1   = true;
+				e.from_blob  = false;
+				e.state      = State::PixelsReady;
+			} else {
+				e.state = State::Failed;
+			}
+		}
+	}
+
 	// Upload at most k_max_uploads_per_frame textures per frame so a fresh grid of
 	// ready thumbnails can't stall a single frame.
-	if (e.state == State::PixelsReady && e.have_pixels && m_uploads_this_frame < k_max_uploads_per_frame) {
+	if (e.state == State::PixelsReady && m_backend == Backend::Bc1 && e.have_bc1
+		&& m_uploads_this_frame < k_max_uploads_per_frame) {
+		auto tex = std::make_unique<VulkanTexture>();
+		if (tex->upload_bc1(e.bc1_blocks, k_thumb_w, k_thumb_h, *m_vk)) {
+			// Persist to the blob on first upload (a blob hit is already stored).
+			if (!e.from_blob)
+				m_blob.store(e.blob_key, e.bc1_blocks, k_thumb_w, k_thumb_h);
+			e.texture = std::move(tex);
+			e.state   = State::Ready;
+			++m_uploads_this_frame;
+		} else {
+			e.state = State::Failed;
+		}
+		e.bc1_blocks.clear();
+		e.bc1_blocks.shrink_to_fit();
+		e.have_bc1 = false;
+	} else if (e.state == State::PixelsReady && m_backend == Backend::Png && e.have_pixels
+		&& m_uploads_this_frame < k_max_uploads_per_frame) {
 		THUMB_LOG("upload pixels [{}]", px_summary(e.pixels));
 		auto tex = std::make_unique<VulkanTexture>();
 		if (tex->upload(e.pixels, *m_vk)) {
@@ -327,24 +404,43 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 	//             it. This is always a cheap PNG decode — NEVER a source regeneration, so
 	//             a big folder converges to "fully generated" instead of thrashing mpv.
 	if (e.state == State::Queued || e.state == State::Cached) {
-		std::string const &stored_key = it->first; // stable key string owned by the map
-		if (e.png_path.empty())
-			e.png_path = png_for(stored_key);
+		std::filesystem::path const file = dir / name; // joined only on a (re)submit
 
-		std::error_code             ec;
-		bool const                  have_png = std::filesystem::exists(e.png_path, ec) && !ec;
-		std::filesystem::path const file     = dir / name; // joined only on a (re)submit
+		if (m_backend == Backend::Bc1) {
+			// Blob backend: a hit (incl. Cached re-display) is a cheap blob read -> upload_bc1,
+			// NEVER a source regeneration. A miss decodes + encodes on the pool (submit_image).
+			if (e.blob_key == 0)
+				e.blob_key = ThumbnailBlobCache::make_key(file);
+			if (auto stored = m_blob.lookup(e.blob_key)) {
+				e.bc1_blocks = std::move(stored->blocks);
+				e.have_bc1   = true;
+				e.from_blob  = true;
+				e.state      = State::PixelsReady;
+			} else {
+				e.is_video        = false;
+				e.source_is_video = is_video; // fresh video may fall back to mpv on decode failure
+				e.from_blob       = false;
+				submit_image(file, e, is_video);
+			}
+		} else {
+			std::string const &stored_key = it->first; // stable key string owned by the map
+			if (e.png_path.empty())
+				e.png_path = png_for(stored_key);
 
-		THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW", stored_key,
-			is_video, have_png, e.png_path.filename().string());
-		// Both source kinds decode on the ImageJobSystem pool and deliver via e.img_future, so
-		// e.is_video stays false (poll_entry only polls the future when is_video == false, else
-		// the decoded pixels are never picked up and the thumb stays blank). e.source_is_video
-		// records the REAL source kind so a failed video generate can fall back to mpv below.
-		e.is_video                   = false;
-		bool const generate_as_video = is_video && !have_png;
-		e.source_is_video            = generate_as_video;
-		submit_image(file, e, generate_as_video);
+			std::error_code ec;
+			bool const      have_png = std::filesystem::exists(e.png_path, ec) && !ec;
+
+			THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW",
+				stored_key, is_video, have_png, e.png_path.filename().string());
+			// Both source kinds decode on the ImageJobSystem pool and deliver via e.img_future, so
+			// e.is_video stays false (poll_entry only polls the future when is_video == false, else
+			// the decoded pixels are never picked up and the thumb stays blank). e.source_is_video
+			// records the REAL source kind so a failed video generate can fall back to mpv below.
+			e.is_video                   = false;
+			bool const generate_as_video = is_video && !have_png;
+			e.source_is_video            = generate_as_video;
+			submit_image(file, e, generate_as_video);
+		}
 	}
 
 	ImTextureID const id = poll_entry(e);
@@ -370,7 +466,9 @@ void FileBrowserThumbnailContext::evict(std::filesystem::path const &path) {
 		return;
 	if (it->second.texture)
 		m_retire.push_back({std::move(it->second.texture), k_retire_frames});
-	if (!it->second.png_path.empty()) {
+	if (m_backend == Backend::Bc1) {
+		m_blob.evict(it->second.blob_key ? it->second.blob_key : ThumbnailBlobCache::make_key(path));
+	} else if (!it->second.png_path.empty()) {
 		std::error_code ec;
 		std::filesystem::remove(it->second.png_path, ec);
 	}
@@ -386,8 +484,12 @@ void FileBrowserThumbnailContext::clear() {
 	for (auto &[k, e] : m_entries) {
 		if (e.texture)
 			m_retire.push_back({std::move(e.texture), k_retire_frames});
-		if (!e.png_path.empty())
+		if (m_backend == Backend::Png && !e.png_path.empty())
 			std::filesystem::remove(e.png_path, ec);
 	}
 	m_entries.clear();
+
+	// BC1 backend: wipe the whole blob + index in one shot.
+	if (m_backend == Backend::Bc1)
+		m_blob.clear();
 }
