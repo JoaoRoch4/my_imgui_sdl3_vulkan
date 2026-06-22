@@ -249,7 +249,7 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 		// Reserve a chunk of VRAM up front to keep memory headroom predictable
 		// for this application workload. Best-effort only: failure is logged.
-		constexpr VkDeviceSize k_vram_reserve_size = static_cast<VkDeviceSize>(1024ULL * 1024ULL * 1024ULL);
+		constexpr VkDeviceSize k_vram_reserve_size = static_cast<VkDeviceSize>(1024ULL * 1024ULL);
 
 		VkBufferCreateInfo reserve_buffer_info = {};
 		reserve_buffer_info.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;

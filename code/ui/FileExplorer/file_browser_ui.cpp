@@ -447,7 +447,7 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				bool const  isGrid = (viewMode_ == ViewMode::Grid);
 				ImVec2&     sz     = isGrid ? gridThumbnailSize_ : thumbnailSize_;
 				// Maintain 16:9 aspect ratio; clamp to a sensible range.
-				float       newW   = std::clamp(sz.x * factor, isGrid ? 64.0f : 24.0f, isGrid ? 512.0f : 128.0f);
+				float       newW   = std::clamp(sz.x * factor, isGrid ? 64.0f : 24.0f, isGrid ? 512.0f*2 : 128.0f);
 				sz                 = ImVec2(newW, std::round(newW * (9.0f / 16.0f)));
 			}
 		}

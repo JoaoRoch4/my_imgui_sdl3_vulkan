@@ -3,9 +3,13 @@
 
 class ManagedThread;
 
-/// Downloads online video/audio URLs to a local disk cache by shelling out to
-/// yt-dlp (handles YouTube, Vimeo, Twitch, etc., and muxes separate DASH
-/// video+audio tracks into one playable file).
+/// Downloads online video/audio URLs to a local disk cache. Each job runs a
+/// three-stage fallback cascade, stopping at the first success:
+///   1. the system yt-dlp binary (handles YouTube, Vimeo, Twitch, … and muxes
+///      separate DASH video+audio tracks into one playable file);
+///   2. scripts/video_download.py, running the vendored (newer) yt-dlp;
+///   3. a plain curl direct fetch, for authenticated direct-media / CDN-redirect
+///      links that yt-dlp's generic extractor rejects.
 ///
 /// One background jthread drains a FIFO queue of pending jobs.
 /// Cache filenames are stable FNV-1a hashes of the URL — a given URL is never
@@ -67,11 +71,27 @@ private:
 
     [[nodiscard]] std::filesystem::path cache_path_for(const std::string &url) const;
 
-    /// Download url to target by running yt-dlp. Deletes partial file on failure.
+    /// Absolute path to the python fallback downloader (scripts/video_download.py
+    /// at the repo root, derived from the cache dir). Empty if not found there.
+    [[nodiscard]] std::filesystem::path python_fallback_script() const;
+
+    /// Download url to target via a three-stage cascade, stopping at the first
+    /// success: (1) the system yt-dlp binary, (2) scripts/video_download.py
+    /// running the vendored (newer) yt-dlp, (3) a plain curl direct fetch.
+    /// Deletes the partial file on failure of each attempt.
     [[nodiscard]] bool download(const std::string &url,
                                const std::filesystem::path &target,
                                const std::stop_token &st,
                                ManagedThread &self);
+
+    /// Run a child process (argv NULL-terminated), capturing its stdout+stderr
+    /// into `tail` for diagnostics while polling `st` (SIGTERM on stop) and
+    /// heart-beating the watchdog. Returns the exit code, or -1 if the process
+    /// could not be spawned/reaped.
+    [[nodiscard]] int run_child(const char *const *argv,
+                                const std::stop_token &st,
+                                ManagedThread &self,
+                                std::string &tail);
 
     /// yt-dlp -f format string (quality/codec policy — see .cpp).
     [[nodiscard]] static std::string ytdl_format();

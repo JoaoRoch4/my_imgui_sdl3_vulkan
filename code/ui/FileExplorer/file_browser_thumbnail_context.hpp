@@ -66,8 +66,8 @@ class FileBrowserThumbnailContext {
 		// scan-time precompute can build it off the render hot path.
 		[[nodiscard]] static std::string make_key(std::filesystem::path const &path);
 
-		static constexpr int k_thumb_w               = 320;
-		static constexpr int k_thumb_h               = 180;
+		static constexpr int k_thumb_w               = 640;
+		static constexpr int k_thumb_h               = 480;
 		static constexpr int k_max_uploads_per_frame = 4;
 		static constexpr int k_retire_frames         = 3;
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are

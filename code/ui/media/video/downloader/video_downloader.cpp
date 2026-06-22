@@ -4,6 +4,14 @@
 #include "core/log/debug_log.hpp"
 #include "managed_thread.hpp"
 
+namespace {
+// Browser User-Agent for the curl fallback — some CDNs (e.g. the boomio
+// redirect target) gate direct fetches on a non-curl User-Agent.
+constexpr const char *kFallbackUserAgent =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36";
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -22,6 +30,17 @@ std::filesystem::path VideoDownloader::cache_path_for(const std::string &url) co
     std::snprintf(hex, sizeof(hex), "%016llx",
                   static_cast<unsigned long long>(fnv1a(url)));
     return m_cache_dir / (std::string(hex) + ".mp4");
+}
+
+std::filesystem::path VideoDownloader::python_fallback_script() const {
+    if (m_cache_dir.empty())
+        return {};
+    // m_cache_dir == <repo>/build/cache/video_cache, so the repo root is three
+    // parents up; the fallback script lives at <repo>/scripts/video_download.py.
+    const auto repo_root = m_cache_dir.parent_path().parent_path().parent_path();
+    auto       script    = repo_root / "scripts" / "video_download.py";
+    std::error_code ec;
+    return std::filesystem::exists(script, ec) ? script : std::filesystem::path{};
 }
 
 // ---------------------------------------------------------------------------
@@ -192,58 +211,42 @@ bool VideoDownloader::download_succeeded(int exit_code,
     return !ec && size > 0;
 }
 
-bool VideoDownloader::download(const std::string &url,
-                               const std::filesystem::path &target,
+int VideoDownloader::run_child(const char *const *argv,
                                const std::stop_token &st,
-                               ManagedThread &self) {
-    // Run yt-dlp directly. It downloads AND muxes separate DASH video/audio tracks
-    // into one playable file — something mpv's --stream-dump cannot do: ytdl_hook
-    // hands mpv an edl:// pseudo-stream (no raw bytes), so stream-dump silently
-    // wrote 0-byte files. See systematic-debugging trace 2026-06-20.
-    std::error_code ec;
-    std::filesystem::remove(target, ec); // clear any stale 0-byte remnant
-
-    // Pipe captures yt-dlp's stdout+stderr so failures are logged (not swallowed)
-    // and so the parent has something to poll while keeping the watchdog alive.
+                               ManagedThread &self,
+                               std::string &tail) {
+    // Pipe captures the child's stdout+stderr so failures are logged (not
+    // swallowed) and so the parent has something to poll while keeping the
+    // watchdog alive.
     int pipefd[2];
     if (::pipe(pipefd) != 0) {
         APP_DEBUG_LOG("[VideoDownloader] pipe() failed: {}", std::strerror(errno));
-        return false;
+        return -1;
     }
-
-    const std::string fmt = ytdl_format();
-    const std::string out = target.string();
-    APP_DEBUG_LOG("[VideoDownloader] download start: {} -> {}", url, out);
 
     const pid_t pid = ::fork();
     if (pid < 0) {
         ::close(pipefd[0]);
         ::close(pipefd[1]);
         APP_DEBUG_LOG("[VideoDownloader] fork() failed: {}", std::strerror(errno));
-        return false;
+        return -1;
     }
 
     if (pid == 0) {
-        // Child: redirect stdout+stderr into the pipe, then exec yt-dlp.
+        // Child: redirect stdout+stderr into the pipe, then exec.
         ::dup2(pipefd[1], STDOUT_FILENO);
         ::dup2(pipefd[1], STDERR_FILENO);
         ::close(pipefd[0]);
         ::close(pipefd[1]);
-        const char *argv[] = {"yt-dlp", "--no-warnings", "--no-playlist",
-                              "--merge-output-format", "mp4",
-                              "-f", fmt.c_str(),
-                              "-o", out.c_str(),
-                              "--", url.c_str(), nullptr};
-        ::execvp("yt-dlp", const_cast<char *const *>(argv));
-        _exit(127); // exec failed — yt-dlp not on PATH
+        ::execvp(argv[0], const_cast<char *const *>(argv));
+        _exit(127); // exec failed — tool not on PATH
     }
 
     // Parent.
     ::close(pipefd[1]);
     m_current_pid.store(pid, std::memory_order_release);
 
-    std::string tail;       // keep the last slice of output for failure diagnostics
-    bool        termed = false;
+    bool termed = false;
     for (;;) {
         if (st.stop_requested() && !termed) {
             ::kill(pid, SIGTERM);
@@ -271,18 +274,104 @@ bool VideoDownloader::download(const std::string &url,
 
         m_current_pid.store(-1, std::memory_order_release);
         ::close(pipefd[0]);
-
-        const int  code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-        const bool ok   = download_succeeded(code, target) && !st.stop_requested();
-        if (!ok) {
-            std::filesystem::remove(target, ec);
-            APP_DEBUG_LOG("[VideoDownloader] download FAILED (exit={}): {}\n{}", code,
-                          url, tail);
-        } else {
-            APP_DEBUG_LOG("[VideoDownloader] download OK: {}", out);
-        }
-        return ok;
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
+}
+
+bool VideoDownloader::download(const std::string &url,
+                               const std::filesystem::path &target,
+                               const std::stop_token &st,
+                               ManagedThread &self) {
+    std::error_code ec;
+    std::filesystem::remove(target, ec); // clear any stale 0-byte remnant
+
+    const std::string fmt = ytdl_format();
+    const std::string out = target.string();
+
+    // --- Attempt 1: yt-dlp ---------------------------------------------------
+    // yt-dlp downloads AND muxes separate DASH/HLS video+audio tracks into one
+    // playable file — something mpv's --stream-dump cannot do: ytdl_hook hands
+    // mpv an edl:// pseudo-stream (no raw bytes), so stream-dump silently wrote
+    // 0-byte files. See systematic-debugging trace 2026-06-20.
+    //
+    // --compat-options allow-unsafe-ext disables yt-dlp's unsafe-extension guard
+    // (GHSA-79w7-vh3h-8g4j), which otherwise aborts when a CDN streams video via
+    // a script path — e.g. .../remote_control.php → yt-dlp derives ext='php' and
+    // refuses the only format. Our explicit -o pins the on-disk name to
+    // <hash>.mp4 regardless (so the flag's usual risk is neutralised), and
+    // --remux-video mp4 guarantees an mp4 container. See trace 2026-06-21.
+    APP_DEBUG_LOG("[VideoDownloader] download start (yt-dlp): {} -> {}", url, out);
+    {
+        const char *argv[] = {"yt-dlp", "--no-warnings", "--no-playlist",
+                              "--compat-options", "allow-unsafe-ext",
+                              "--merge-output-format", "mp4",
+                              "--remux-video", "mp4",
+                              "-f", fmt.c_str(),
+                              "-o", out.c_str(),
+                              "--", url.c_str(), nullptr};
+        std::string tail;
+        const int   code = run_child(argv, st, self, tail);
+        if (download_succeeded(code, target) && !st.stop_requested()) {
+            APP_DEBUG_LOG("[VideoDownloader] download OK (yt-dlp): {}", out);
+            return true;
+        }
+        std::filesystem::remove(target, ec);
+        APP_DEBUG_LOG("[VideoDownloader] yt-dlp FAILED (exit={}): {}\n{}", code, url, tail);
+    }
+
+    if (st.stop_requested())
+        return false;
+
+    // --- Attempt 2: vendored yt-dlp via python (newer extractors) -----------
+    // The distro's yt-dlp binary can lag the vendored external/yt-dlp checkout,
+    // which may carry extractor fixes the binary lacks. scripts/video_download.py
+    // imports that newer yt_dlp (with the unsafe-extension guard disabled) and
+    // writes the canonical <hash>.mp4. Skipped if the script can't be located.
+    if (const auto script = python_fallback_script(); !script.empty()) {
+        APP_DEBUG_LOG("[VideoDownloader] yt-dlp failed; python fallback: {} -> {}", url, out);
+        const std::string py = script.string();
+        const char *argv[] = {"python3", py.c_str(),
+                              url.c_str(), out.c_str(), fmt.c_str(), nullptr};
+        std::string tail;
+        const int   code = run_child(argv, st, self, tail);
+        if (download_succeeded(code, target) && !st.stop_requested()) {
+            APP_DEBUG_LOG("[VideoDownloader] download OK (python): {}", out);
+            return true;
+        }
+        std::filesystem::remove(target, ec);
+        APP_DEBUG_LOG("[VideoDownloader] python fallback FAILED (exit={}): {}\n{}", code,
+                      url, tail);
+    } else {
+        APP_DEBUG_LOG("[VideoDownloader] python fallback script not found; skipping");
+    }
+
+    if (st.stop_requested())
+        return false;
+
+    // --- Attempt 3: curl direct download (last resort) ----------------------
+    // For authenticated direct-media links (get_file / CDN redirects) with no
+    // real extractor, curl follows the redirect and writes the bytes regardless
+    // of the URL path. No muxing — but these links are always single
+    // self-contained files, so that's fine. --fail rejects HTTP error pages; a
+    // browser User-Agent satisfies CDNs that gate non-browser clients.
+    APP_DEBUG_LOG("[VideoDownloader] curl fallback: {} -> {}", url, out);
+    {
+        const char *argv[] = {"curl", "-L", "--fail", "--silent", "--show-error",
+                              "--connect-timeout", "30",
+                              "-A", kFallbackUserAgent,
+                              "-o", out.c_str(),
+                              "--", url.c_str(), nullptr};
+        std::string tail;
+        const int   code = run_child(argv, st, self, tail);
+        if (download_succeeded(code, target) && !st.stop_requested()) {
+            APP_DEBUG_LOG("[VideoDownloader] download OK (curl): {}", out);
+            return true;
+        }
+        std::filesystem::remove(target, ec);
+        APP_DEBUG_LOG("[VideoDownloader] curl FAILED (exit={}): {}\n{}", code, url, tail);
+    }
+
+    return false;
 }
 
 // ---------------------------------------------------------------------------

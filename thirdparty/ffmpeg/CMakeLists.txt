@@ -32,9 +32,21 @@ foreach(cfg IN LISTS _ffmpeg_cfgs)
                             --enable-static --disable-shared --enable-pic
                             --pkg-config-flags=--static
                             --enable-gpl --enable-version3
+                            # Online features: gnutls gives FFmpeg a TLS backend, which
+                            # auto-enables the https/tls protocols (and tls-over rtmps,
+                            # etc.). Without ANY TLS backend FFmpeg cannot open https://
+                            # URLs at all ("Protocol not found"), so mpv stream playback
+                            # of internet videos fails with reason=4 and the app is forced
+                            # to fully download every clip first. gnutls is GPLv3-clean, so
+                            # it needs no --enable-nonfree (unlike openssl + --enable-gpl).
+                            # --enable-network is on by default; stated explicitly here so
+                            # the "online" intent is obvious. The static .pc records
+                            # -lgnutls in Libs.private (via --pkg-config-flags=--static),
+                            # so the app's mpv link line picks gnutls up transitively.
+                            --enable-network --enable-gnutls
                             --disable-programs --disable-doc --disable-htmlpages
                             --disable-manpages --disable-podpages --disable-txtpages
-                            ${_ff_flags} 
+                            ${_ff_flags}
         # Build AND install in the BUILD step. BUILD_BYPRODUCTS attach to the build
         # step, but the install-tree .so files below are created by `make install`;
         # with a separate INSTALL step nothing forces install to run before the app

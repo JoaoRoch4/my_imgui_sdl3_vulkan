@@ -43,3 +43,5 @@ perf.data.perfparser
 todo.txt
 Abandoned Asylum/*
 out/*
+example_sdl3_vulkan_release
+example_sdl3_vulkan_RELWITHDEBINFO

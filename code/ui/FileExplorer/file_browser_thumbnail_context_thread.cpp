@@ -18,7 +18,7 @@
 #include "thread_overwatch.hpp"
 
 FileBrowserThumbnailThread::FileBrowserThumbnailThread()
-	: k_thumb_w(320), k_thumb_h(120), k_worker_count(std::thread::hardware_concurrency()) {};
+	: k_thumb_w(640), k_thumb_h(480), k_worker_count(std::thread::hardware_concurrency()) {};
 FileBrowserThumbnailThread::~FileBrowserThumbnailThread() { shutdown(); }
 
 void FileBrowserThumbnailThread::start(DoneFn on_done) {
