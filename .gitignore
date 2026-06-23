@@ -54,4 +54,3 @@ thirdparty/*/*
 !thirdparty/*/*.cmake
 !thirdparty/*/*.ini
 !thirdparty/*/*.patch
-code/rendering/vulkan/shaders/bc1_encode.comp

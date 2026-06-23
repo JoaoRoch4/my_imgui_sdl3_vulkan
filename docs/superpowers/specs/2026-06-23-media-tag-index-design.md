@@ -26,7 +26,7 @@ on-disk state: an in-app live path and a standalone batch indexer executable.
 
 ## 3. Component architecture
 
-```
+```text
 libmediaindex  (NEW static lib — Vulkan-free, PCH-free; links into exe + app + tests)
 ├─ MediaIndexDb     SQLite owner: schema, files/tags/file_tags/FTS/blob_directory.
 │                   WAL mode. All queries + upserts. Single C++ wrapper over the
@@ -74,11 +74,10 @@ CREATE TABLE files (
   file_mtime    INTEGER,
   score         INTEGER,                     -- XMP:Rating / booru score
   duration_ms   INTEGER,                     -- 0 for stills
-  codec         TEXT,
-  gps_lat_e7    INTEGER, gps_lon_e7 INTEGER, -- 0 = none
+  -- (gps + codec are NOT promoted; they live in meta_full, details panel only)
   -- thumbnail blob reference:
   blob_offset   INTEGER, blob_length INTEGER, thumb_w INTEGER, thumb_h INTEGER,
-  meta_full     BLOB,                        -- full exiftool/ffprobe JSON (zstd?) for the details panel
+  meta_full     BLOB,                        -- full exiftool/ffprobe JSON, zstd-compressed (details panel)
   UNIQUE(sig_size, sig_head, sig_tail)
 );
 CREATE INDEX files_score   ON files(score);
@@ -106,14 +105,14 @@ CREATE INDEX file_tags_tag ON file_tags(tag_id);
 CREATE VIRTUAL TABLE tags_fts USING fts5(text, content='');
 ```
 
-**MetaHeader (the promotion decision — needs your sign-off in review):** the
-`files` columns above (`src_w/h`, `capture_unix`, `file_mtime`, `score`,
-`duration_ms`, `codec`, `gps_*`) are the promoted, queryable fields. Everything
-else lives in `meta_full` and is parsed only when the details panel opens. Adding
-a promoted column later = a re-index pass, so this list is the load-bearing
-schema choice.
+**MetaHeader (resolved):** the `files` columns above (`src_w/h`, `capture_unix`,
+`file_mtime`, `score`, `duration_ms`) are the promoted, queryable fields. `gps`
+and `codec` are intentionally NOT promoted — they live in `meta_full` (details
+panel only). Adding a promoted column later = a re-index pass, so this list is
+the load-bearing schema choice.
 
 **Core query shapes:**
+
 - *Include A AND B, exclude C:* intersect `file_tags` on the include tag-ids,
   `NOT IN` the exclude tag-ids; `ORDER BY score|capture_unix|sig_size`.
 - *Autocomplete with counts:* `tags_fts MATCH 'foo*'` joined to a
@@ -173,8 +172,8 @@ schema choice.
   grouping, sort orders; upsert idempotency on re-ingest.
 - `BlobArena`: offset allocation, LRU eviction, compaction correctness,
   two-process append safety (WAL).
-- End-to-end: `media-indexer` over a fixtures dir → assert DB rows + arena bytes
-  + a sample query result. Standalone target (no Vulkan/PCH), like
+- End-to-end: `media-indexer` over a fixtures dir, asserting DB rows, arena
+  bytes, and a sample query result. Standalone target (no Vulkan/PCH), like
   `image_tests` / `thumbnail_blob_tests`.
 
 ## 9. Build / dependencies
@@ -182,21 +181,21 @@ schema choice.
 - New static lib target **`libmediaindex`** (PCH-free, std-only — mirrors the
   image core so it links into standalone test + CLI targets).
 - New executable target **`media-indexer`**.
-- **SQLite**: vendor the amalgamation under `thirdparty/sqlite/` (single .c, the
-  repo's vendoring convention) — compiled with FTS5 enabled.
-- **xxhash**: vendor (single header) for the content signature.
+- **SQLite**: via **vcpkg** — `sqlite3[fts5]` (FTS5 feature is required for
+  autocomplete), consumed as `find_package(unofficial-sqlite3 CONFIG REQUIRED)`
+  → `unofficial::sqlite3::sqlite3`. vcpkg is manifest-off here, so install into
+  the global tree: `vcpkg install sqlite3[fts5]`.
+- **xxhash**: via **vcpkg** — `find_package(xxHash CONFIG REQUIRED)` →
+  `xxHash::xxhash`, for the content signature.
+- **zstd**: already linked via the media stack — reused to compress `meta_full`.
 - exiftool: system binary, or the repo's `external/exiftool` fallback;
   ffprobe: the existing static FFmpeg.
 
-## 10. Open questions for review
+## 10. Resolved decisions (from review)
 
-1. **MetaHeader promoted-field list** (§4) — confirm the column set; this is the
-   one-way-door schema decision.
-2. **SQLite sourcing** — amalgamation under `thirdparty/sqlite/` (recommended) vs
-   system `libsqlite3`.
-3. **`meta_full` compression** — store raw JSON or zstd it (you already link
-   zstd via the media stack).
-4. **`bc1_encode.comp` tracking** — the GPU encoder's shader is currently
-   `.gitignore`d; confirm intended (embedded SPIR-V header generated elsewhere?)
-   or it should be tracked for clean-clone GPU builds.
-```
+1. **MetaHeader promoted fields** — `src_w/h`, `capture_unix`, `file_mtime`,
+   `score`, `duration_ms`. `gps` and `codec` dropped to `meta_full`.
+2. **SQLite + xxhash sourcing** — via vcpkg (§9), not hand-vendored.
+3. **`meta_full` compression** — zstd-compressed JSON.
+4. **`bc1_encode.comp`** — removed from `.gitignore`; tracked for clean-clone
+   GPU builds.
