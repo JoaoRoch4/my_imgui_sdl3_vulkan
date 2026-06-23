@@ -6,7 +6,8 @@
 #include "image_job_system.hpp"
 #include "image_ops.hpp" // img::ops::encode_bc1 (mpv video fallback in bc1 mode)
 #include "thumbnail_generator.hpp"
-#include "vulkan_texture.hpp" // pulls vulkan_context.hpp (bc_textures_enabled)
+#include "vulkan_bc1_encoder.hpp" // GPU BC1 encoder singleton (setup/shutdown/pump)
+#include "vulkan_texture.hpp"     // pulls vulkan_context.hpp (bc_textures_enabled)
 
 
 
@@ -129,6 +130,15 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 			on_video_done(key, std::move(rgba), ok);
 		},
 		k_thumb_w, k_thumb_h);
+
+	// GPU BC1 encoder: setup once (best-effort). If it fails — missing extension,
+	// out-of-memory, etc. — is_ready() stays false and the worker path silently
+	// falls back to CPU encode. We only need it when the storage backend is BC1;
+	// firing it up under PNG would waste a few descriptor sets.
+	if (vk && m_backend == Backend::Bc1) {
+		if (!VulkanBc1Encoder::instance().setup(*vk))
+			APP_DEBUG_LOG("[thumbnail_context] bc1 GPU encoder unavailable — CPU fallback only");
+	}
 }
 
 void FileBrowserThumbnailContext::shutdown() {
@@ -138,6 +148,8 @@ void FileBrowserThumbnailContext::shutdown() {
 
 	m_reproducer.shutdown(); // stop + join the mpv (nvdec-copy) worker pool
 	img::ImageJobSystem::instance().clear_pending(); // drop queued image jobs
+	if (m_vk)
+		VulkanBc1Encoder::instance().shutdown(*m_vk); // tear down GPU encoder (no-op if not setup)
 
 	if (m_backend == Backend::Bc1)
 		m_blob.close(); // flush the blob index to disk
@@ -256,6 +268,11 @@ void FileBrowserThumbnailContext::begin_frame() {
 		return;
 	++m_frame;
 	m_uploads_this_frame = 0;
+
+	// GPU BC1 encoder: drain completed dispatches from prior frames and start a
+	// new batch of any pending submissions. Cheap when the encoder is idle.
+	if (m_vk)
+		VulkanBc1Encoder::instance().pump_once(*m_vk);
 
 	// Tick the retire queue; free textures that have aged out (GPU no longer sampling).
 	for (auto it = m_retire.begin(); it != m_retire.end();) {

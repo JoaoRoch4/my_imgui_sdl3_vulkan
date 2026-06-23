@@ -4,8 +4,11 @@
 
 #include <cstring> // std::memcpy
 
+#include "debug_log.hpp"          // APP_DEBUG_LOG — fallback notice
+#include "image_job_system.hpp"   // ImageJobSystem::encode_bc1 (pool-fanned CPU)
 #include "image_ops.hpp"
 #include "thumbnail_image_io.hpp"
+#include "vulkan_bc1_encoder.hpp" // VulkanBc1Encoder::instance().submit() (GPU, batched)
 
 namespace {
 
@@ -81,5 +84,22 @@ ThumbnailGenerator::Bc1Result ThumbnailGenerator::generate_bc1(std::filesystem::
 	if (!rz)
 		return std::unexpected(rz.error());
 
-	return img::ops::encode_bc1(*rz);
+	// Backend policy is fixed by file type:
+	//   * VIDEO thumbnails go to the GPU encoder.  Per-thumb decode (ffmpegthumbnailer
+	//     seek + frame) costs 40-200 ms, so the GPU's ~1 ms round-trip is in the noise
+	//     and batched dispatch amortizes well across a folder of videos.
+	//   * IMAGE thumbnails go to the pool-fanned CPU encoder.  stb decode is fast
+	//     enough that the GPU round-trip would dominate; CPU + JobQueue::parallel_for
+	//     wins on per-thumb wall-clock.
+	// GPU is best-effort: if not ready at scan time, video falls back to CPU here too.
+	if (is_video && VulkanBc1Encoder::instance().is_ready()) {
+		// Move into submit; the encoder owns the RGBA from this point. On submission
+		// failure (in-flight cap, OOM) the future already holds the error; the
+		// thumbnail engine marks the entry Failed and will retry on next eviction.
+		auto fut = VulkanBc1Encoder::instance().submit(std::move(*rz));
+		return fut.get();
+	}
+	// Pool-fanned CPU: we're already on an ImageJobSystem worker; parallel_for's
+	// calling-thread-helps protocol keeps the nested fan-out deadlock-free.
+	return img::ImageJobSystem::instance().encode_bc1(*rz);
 }

@@ -45,3 +45,13 @@ Abandoned Asylum/*
 out/*
 example_sdl3_vulkan_release
 example_sdl3_vulkan_RELWITHDEBINFO
+# Vendored libs build in-source (esp. FFmpeg: config.h, libav*/, binaries).
+# Ignore everything two levels deep, but keep the thin per-lib ExternalProject
+# glue (CMakeLists + meson/cmake/patch helpers) tracked so a clean clone builds.
+# The top-level thirdparty/README.md (one level) is unaffected.
+thirdparty/*/*
+!thirdparty/*/CMakeLists.txt
+!thirdparty/*/*.cmake
+!thirdparty/*/*.ini
+!thirdparty/*/*.patch
+code/rendering/vulkan/shaders/bc1_encode.comp

@@ -4,6 +4,7 @@
 
 #include "Image_viewer_panel.hpp"
 #include "config_runtime.hpp"
+#include "file_browser_ui.hpp"
 #include "video_hover_preview.hpp"
 #include "video_playback_mode.hpp"
 #include "video_seek_preview.hpp"
@@ -128,6 +129,60 @@ void ConfigRuntimeUiContext::DrawUi(ConfigRuntime *cfg) {
 		}
 		ImGui::SameLine();
 		ImGui::TextDisabled("Restart hover preview + reload all open videos");
+	}
+
+	// File Explorer thumbnail sizes — three knobs, one per ViewMode. The provider
+	// returns null while the explorer is closed; we still draw the section but
+	// disable the controls so users see the feature exists.
+	if (ImGui::CollapsingHeader("File Explorer Thumbnail Size", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::FileBrowser* fb = cfg->m_fb_provider ? cfg->m_fb_provider() : nullptr;
+		ImGui::BeginDisabled(fb == nullptr);
+
+		// Cache reads behind the disable so the disabled-state UI still has sane values.
+		ImVec2 listSz    = fb ? fb->GetThumbnailSize()        : ImVec2 {64.0f, 36.0f};
+		ImVec2 gridSz    = fb ? fb->GetGridThumbnailSize()    : ImVec2 {160.0f, 90.0f};
+		ImVec2 masonrySz = fb ? fb->GetMasonryThumbnailSize() : ImVec2 {200.0f, 200.0f};
+
+		ImGui::SetNextItemWidth(220.0f);
+		if (ImGui::DragFloat2("List thumb (w, h)##fe_list_thumb", &listSz.x, 1.0f, 24.0f, 256.0f, "%.0f px") && fb) {
+			listSz.x = std::clamp(listSz.x, 24.0f, 256.0f);
+			listSz.y = std::clamp(listSz.y, 24.0f, 256.0f);
+			fb->SetThumbnailSize(listSz);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("Inline rows in list view");
+
+		ImGui::SetNextItemWidth(220.0f);
+		if (ImGui::DragFloat2("Grid thumb (w, h)##fe_grid_thumb", &gridSz.x, 1.0f, 64.0f, 1024.0f, "%.0f px") && fb) {
+			gridSz.x = std::clamp(gridSz.x, 64.0f, 1024.0f);
+			gridSz.y = std::clamp(gridSz.y, 64.0f, 1024.0f);
+			fb->SetGridThumbnailSize(gridSz);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("Uniform cells in grid view");
+
+		ImGui::SetNextItemWidth(160.0f);
+		if (ImGui::DragFloat("Masonry column width##fe_masonry_col", &masonrySz.x, 1.0f, 80.0f, 480.0f, "%.0f px") && fb) {
+			masonrySz.x = std::clamp(masonrySz.x, 80.0f, 480.0f);
+			fb->SetMasonryThumbnailSize(masonrySz);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("Used as a max column-width hint when columns = 0");
+
+		int masonryCols = fb ? fb->GetMasonryColumns() : 0;
+		ImGui::SetNextItemWidth(160.0f);
+		// SliderInt with format string so 0 shows as "auto" instead of "0".
+		char const* col_fmt = (masonryCols == 0) ? "auto" : "%d";
+		if (ImGui::SliderInt("Masonry columns##fe_masonry_cols", &masonryCols, 0, 12, col_fmt) && fb) {
+			masonryCols = std::clamp(masonryCols, 0, 12);
+			fb->SetMasonryColumns(masonryCols);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("0 = auto (driven by column-width hint above)");
+
+		ImGui::EndDisabled();
+		if (fb == nullptr)
+			ImGui::TextDisabled("Open the File Explorer to edit these.");
 	}
 
 	if (ImGui::CollapsingHeader("Thumbnail Cache", ImGuiTreeNodeFlags_DefaultOpen)) {

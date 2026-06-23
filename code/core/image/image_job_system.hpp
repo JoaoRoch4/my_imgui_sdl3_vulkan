@@ -62,6 +62,14 @@ class ImageJobSystem {
 		[[nodiscard]] std::future<std::expected<bool, ImageError>>
 		encode_png(ImageBuffer src, std::filesystem::path out, Priority p = Priority::Normal);
 
+		// Synchronous, pool-fanned BC1 encode. Each 4x4 block is independent, so the
+		// per-image work is split across `worker_count()` helpers via the JobQueue's
+		// nesting-safe parallel_for (the calling thread is itself a helper, so the
+		// nested fan-out cannot deadlock — see job_queue.hpp). Output bytes are
+		// identical to img::ops::encode_bc1(src). Intended to be invoked from inside
+		// a pool job (e.g. ThumbnailGenerator::generate_bc1).
+		[[nodiscard]] std::expected<std::vector<std::byte>, ImageError> encode_bc1(ImageBuffer const &src);
+
 		// Drop queued (not-yet-started) jobs — e.g. when navigating away from a folder.
 		void clear_pending();
 

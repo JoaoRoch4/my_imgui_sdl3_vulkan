@@ -416,9 +416,16 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		ToolTip("Show or hide file thumbnails");
 		if (showThumbnails_) {
 			SameLine();
-			if (SmallButton(viewMode_ == ViewMode::List ? "Grid" : "List"))
-				viewMode_ = (viewMode_ == ViewMode::List) ? ViewMode::Grid : ViewMode::List;
-			ToolTip("Toggle grid / list view");
+			// 3-state cycle: List → Grid → Masonry → List. Label shows the NEXT mode.
+			char const* nextLabel = (viewMode_ == ViewMode::List) ? "Grid"
+				: (viewMode_ == ViewMode::Grid)                   ? "Masonry"
+								  : "List";
+			if (SmallButton(nextLabel)) {
+				viewMode_ = (viewMode_ == ViewMode::List) ? ViewMode::Grid
+					: (viewMode_ == ViewMode::Grid)     ? ViewMode::Masonry
+									  : ViewMode::List;
+			}
+			ToolTip("Cycle list / grid / masonry view");
 		}
 	}
 
@@ -444,11 +451,25 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 			float const wheel = GetIO().MouseWheel;
 			if (wheel != 0.0f) {
 				float const factor = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
-				bool const  isGrid = (viewMode_ == ViewMode::Grid);
-				ImVec2&     sz     = isGrid ? gridThumbnailSize_ : thumbnailSize_;
-				// Maintain 16:9 aspect ratio; clamp to a sensible range.
-				float       newW   = std::clamp(sz.x * factor, isGrid ? 64.0f : 24.0f, isGrid ? 512.0f*2 : 128.0f);
-				sz                 = ImVec2(newW, std::round(newW * (9.0f / 16.0f)));
+				// Per-mode clamp envelope (min, max) + size-field selector.
+				float   minW    = 24.0f;
+				float   maxW    = 128.0f;
+				ImVec2* sz      = &thumbnailSize_;
+				bool    keepAr  = true; // false for masonry — only column width matters
+				if (viewMode_ == ViewMode::Grid) {
+					minW = 64.0f;
+					maxW = 1024.0f;
+					sz   = &gridThumbnailSize_;
+				} else if (viewMode_ == ViewMode::Masonry) {
+					minW   = 80.0f;
+					maxW   = 480.0f;
+					sz     = &masonryThumbnailSize_;
+					keepAr = false;
+				}
+				float const newW = std::clamp(sz->x * factor, minW, maxW);
+				sz->x            = newW;
+				if (keepAr)
+					sz->y = std::round(newW * (9.0f / 16.0f));
 			}
 		}
 
@@ -471,7 +492,20 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
 		};
 
-		bool const useGridView = (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
+		bool const useGridView    = (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
+		bool const useMasonryView = (viewMode_ == ViewMode::Masonry) && m_thumbnails.is_setup() && showThumbnails_;
+
+		// Per-record aspect ratio used by the masonry view (width / height of
+		// the cell). Images carry their native (w, h) from scan time
+		// (file_browser_thread.cpp stbi_info pass); videos and unknowns keep the
+		// fixed 16:9 fallback so layout stays predictable. Clamped to a sane
+		// range to keep ultra-tall panoramas/portraits from overflowing the
+		// child region.
+		auto const aspect_for = [](FileRecord const& rsc) -> float {
+			if (rsc.source_w > 0 && rsc.source_h > 0)
+				return static_cast<float>(rsc.source_w) / static_cast<float>(rsc.source_h);
+			return 16.0f / 9.0f;
+		};
 
 		// ── Grid view ──────────────────────────────────────────────────────────
 		if (useGridView) {
@@ -593,8 +627,158 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 			}
 		}
 
+		// ── Masonry view ──────────────────────────────────────────────────────
+		// Column-balanced packing: every cell is sized to `colW × colW / aspect`
+		// and placed in the column with the smallest current Y. The thumbnail
+		// engine itself produces letterboxed images; the masonry layout is
+		// independent of the texture's storage aspect (we just stretch into the
+		// cell — letterbox bars in the texture render inside the cell, no global
+		// row gaps appear between cells).
+		if (useMasonryView) {
+			float const  availW   = GetContentRegionAvail().x;
+			float const  spacingX = GetStyle().ItemSpacing.x;
+			float const  spacingY = GetStyle().ItemSpacing.y;
+			float const  desiredW = std::max(80.0f, masonryThumbnailSize_.x);
+			// Column count: a non-zero masonryColumns_ forces an exact value
+			// (driven by the run-config slider); 0 picks automatically using
+			// desiredW as a *maximum* per-column width hint.  The ceil-based
+			// auto-pick ensures a wide window gets multiple narrower columns
+			// rather than one giant column that dwarfs the visible region.
+			int const    cols     = (masonryColumns_ > 0)
+				? std::max(1, masonryColumns_)
+				: std::max(1, static_cast<int>(std::ceil((availW + spacingX) / (desiredW + spacingX))));
+			// Distribute leftover slack evenly so the rightmost column hugs the edge.
+			float const  colW     = std::floor((availW - static_cast<float>(cols - 1) * spacingX) / static_cast<float>(cols));
+
+			// Anchor of the masonry region (top-left of the BeginChild content).
+			ImVec2 const origin = GetCursorPos();
+			std::vector<float> colY(static_cast<std::size_t>(cols), 0.0f);
+
+			for (unsigned int rscIdx = 0; rscIdx < fileRecords_.size(); ++rscIdx) {
+				auto const& rsc = fileRecords_[rscIdx];
+				if (!rsc.isDir && shouldHideRegularFiles)
+					continue;
+				if (!rsc.isDir && !IsExtensionMatched(rsc.extension))
+					continue;
+				if (!rsc.isDir && !isMediaMatched(rsc.extension))
+					continue;
+				if (!rsc.isDir && !tagFilter_.empty()
+					&& std::find(rsc.tags.begin(), rsc.tags.end(), tagFilter_) == rsc.tags.end())
+					continue;
+				if (!rsc.name.empty() && rsc.name.c_str()[0] == '$')
+					continue;
+				if (!lowerSearch.empty()) {
+					if (ToLower(u8StrToStr(rsc.name.u8string())).find(lowerSearch) == std::string::npos)
+						continue;
+				}
+
+				// Pick the shortest column for this cell (ties: leftmost — std::min_element).
+				auto const  colIt   = std::min_element(colY.begin(), colY.end());
+				int const   col     = static_cast<int>(std::distance(colY.begin(), colIt));
+				float const aspect  = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
+				float const cellW   = colW;
+				float const cellH   = std::round(cellW / aspect);
+				float const labelH  = GetTextLineHeightWithSpacing();
+				float const slotH   = cellH + labelH + spacingY;
+
+				ImVec2 const slotPos {origin.x + static_cast<float>(col) * (colW + spacingX),
+					origin.y + colY[static_cast<std::size_t>(col)]};
+				SetCursorPos(slotPos);
+				PushID(static_cast<int>(rscIdx));
+
+				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+
+				if (rsc.isDir) {
+					Dummy({cellW, cellH});
+				} else {
+					ImTextureID const thumb = rsc.thumbKey.empty()
+						? ImTextureID(0)
+						: m_thumbnails.get(rsc.thumbKey, currentDirectory_, rsc.name, rsc.isVideoThumb);
+					if (thumb)
+						Image(thumb, {cellW, cellH});
+					else
+						Dummy({cellW, cellH});
+				}
+
+				bool const hovered = IsItemHovered(ImGuiHoveredFlags_None);
+
+				if (hovered && IsMouseClicked(ImGuiMouseButton_Left)) {
+					bool const wantDir   = (flags_ & ImGuiFileBrowserFlags_SelectDirectory) != 0;
+					bool const canSelect = rsc.name != ".." && rsc.isDir == wantDir;
+					if (canSelect) {
+						bool const multiSel = (flags_ & ImGuiFileBrowserFlags_MultipleSelection) != 0
+							&& IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+						bool const ctrlHeld   = GetIO().KeyCtrl;
+						bool const shiftHeld  = GetIO().KeyShift;
+						bool const alreadySel = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+						if (multiSel && ctrlHeld) {
+							if (alreadySel)
+								selectedFilenames_.erase(rsc.name);
+							else {
+								selectedFilenames_.insert(rsc.name);
+								rangeSelectionStart_ = static_cast<unsigned int>(rscIdx);
+							}
+						} else if (multiSel && shiftHeld && rangeSelectionStart_ < fileRecords_.size()) {
+							unsigned int const first
+								= (std::min)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
+							unsigned int const last
+								= (std::max)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
+							selectedFilenames_.clear();
+							for (unsigned int i = first; i <= last; ++i) {
+								if (fileRecords_[i].isDir != wantDir)
+									continue;
+								selectedFilenames_.insert(fileRecords_[i].name);
+							}
+						} else {
+							selectedFilenames_   = {rsc.name};
+							rangeSelectionStart_ = static_cast<unsigned int>(rscIdx);
+						}
+					}
+				}
+				if (IsMouseDoubleClicked(ImGuiMouseButton_Left) && hovered) {
+					if (rsc.isDir) {
+						shouldSetNewDir = true;
+						newDir
+							= (rsc.name != "..") ? (currentDirectory_ / rsc.name) : currentDirectory_.parent_path();
+					} else if (!(flags_ & ImGuiFileBrowserFlags_SelectDirectory)) {
+						selectedFilenames_ = {rsc.name};
+						isOk_              = true;
+						if (!keepOpen_)
+							closeContainer();
+					}
+				}
+				if (previewEnabled_ && hoverFileCallback_ && !rsc.isDir && hovered)
+					hoverFileCallback_(currentDirectory_ / rsc.name);
+				if (!rsc.isDir) {
+					auto const fullPath = currentDirectory_ / rsc.name;
+					if (contextMenuCallback_)
+						contextMenuCallback_(fullPath);
+				}
+
+				if (selected) {
+					ImVec2 const p0 = GetItemRectMin();
+					ImVec2 const p1 = GetItemRectMax();
+					GetWindowDrawList()->AddRect(p0, p1, GetColorU32(ImGuiCol_ButtonHovered), 2.0f);
+				}
+
+				// Place the label tight under the thumbnail.
+				SetCursorPos({slotPos.x, slotPos.y + cellH});
+				PushTextWrapPos(slotPos.x + cellW);
+				TextUnformatted(rsc.showName.c_str());
+				PopTextWrapPos();
+				PopID();
+
+				colY[static_cast<std::size_t>(col)] += slotH;
+			}
+
+			// Reserve the full masonry height so the scrollbar matches what was drawn.
+			float const totalH = colY.empty() ? 0.0f : *std::max_element(colY.begin(), colY.end());
+			SetCursorPos({origin.x, origin.y + totalH});
+			Dummy({1.0f, 1.0f});
+		}
+
 		// ── List view ──────────────────────────────────────────────────────────
-		if (!useGridView) {
+		if (!useGridView && !useMasonryView) {
 			for (unsigned int rscIndex = 0; rscIndex < fileRecords_.size(); ++rscIndex) {
 				auto const& rsc = fileRecords_[rscIndex];
 				if (!rsc.isDir && shouldHideRegularFiles) {
@@ -1011,6 +1195,14 @@ void ImGui::FileBrowser::SetViewMode(ViewMode mode) noexcept { viewMode_ = mode;
 ImGui::FileBrowser::ViewMode ImGui::FileBrowser::GetViewMode() const noexcept { return viewMode_; }
 
 void ImGui::FileBrowser::SetGridThumbnailSize(ImVec2 size) noexcept { gridThumbnailSize_ = size; }
+
+void ImGui::FileBrowser::SetMasonryThumbnailSize(ImVec2 size) noexcept { masonryThumbnailSize_ = size; }
+
+ImVec2 ImGui::FileBrowser::GetMasonryThumbnailSize() const noexcept { return masonryThumbnailSize_; }
+
+void ImGui::FileBrowser::SetMasonryColumns(int columns) noexcept { masonryColumns_ = std::max(0, columns); }
+
+int ImGui::FileBrowser::GetMasonryColumns() const noexcept { return masonryColumns_; }
 
 ImVec2 ImGui::FileBrowser::GetGridThumbnailSize() const noexcept { return gridThumbnailSize_; }
 

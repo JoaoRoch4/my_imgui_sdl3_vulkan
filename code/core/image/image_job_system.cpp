@@ -111,4 +111,27 @@ ImageJobSystem::encode_png(ImageBuffer src, std::filesystem::path out, Priority 
         p);
 }
 
+std::expected<std::vector<std::byte>, ImageError> ImageJobSystem::encode_bc1(ImageBuffer const &src) {
+    const unsigned hint = m_worker_count.load(std::memory_order_relaxed);
+
+    // For very small images (3-row block-grid or smaller) or single-worker pools,
+    // fall through to the sequential path — fan-out overhead beats the savings.
+    const int by = (src.height + 3) / 4;
+    if (by <= 1 || hint <= 1)
+        return ops::encode_bc1(src);
+
+    const ops::SplitExecutor exec =
+        [this, hint](int total, const std::function<void(int)> &run) {
+            m_queue.parallel_for(
+                0, total, 1,
+                [&run](int lo, int hi) {
+                    for (int i = lo; i < hi; ++i) run(i);
+                },
+                hint);
+        };
+    // max_splits caps at worker_count: more workers than we have cores wastes
+    // scheduling overhead. parallel_for's calling-thread helper keeps us nest-safe.
+    return ops::encode_bc1_parallel(src, static_cast<int>(hint), exec);
+}
+
 } // namespace img

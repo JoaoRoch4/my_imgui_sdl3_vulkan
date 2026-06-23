@@ -25,6 +25,14 @@ struct FileRecord {
 	/// Empty key => not thumbnailable (skip the thumbnail engine entirely for this row).
 	std::string			thumbKey;
 	bool				isVideoThumb = false;
+
+	/// Source media dimensions in pixels. Filled at scan time via stbi_info (cheap
+	/// header-only read) for IMAGES; videos leave these at 0 because the equivalent
+	/// libavformat probe is too costly to run on every file during a fresh scan. The
+	/// masonry view consumes this to size cells by native aspect; everything else is
+	/// indifferent. Both 0 = "unknown, assume 16:9 for layout".
+	int 				source_w = 0;
+	int 				source_h = 0;
 };
 
 /// Background directory scanner for the file browser.

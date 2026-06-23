@@ -4,6 +4,10 @@
 
 #include "window_state_toml.hpp"
 
+namespace ImGui {
+class FileBrowser;
+}
+
 /// Runtime configuration model.
 /// Owns the settings that can be changed while the application is running
 /// (preview sizes, hover/playback options, cache actions) and the callbacks
@@ -81,6 +85,12 @@ class ConfigRuntime {
 		/// Register a callback invoked when "Restart All Threads" is clicked.
 		void SetRestartAllThreadsCallback(std::function<void()> cb);
 
+		/// Register a provider that returns the live FileBrowser (or nullptr when
+		/// the file explorer is closed). Lets the Runtime Config window drive
+		/// the per-mode thumbnail sizes directly. The provider is invoked each
+		/// frame the section is visible — keep it cheap and null-safe.
+		void SetFileBrowserProvider(std::function<ImGui::FileBrowser*()> provider);
+
 		/// Draw a labelled DragFloat2 + preset buttons. Returns true if size changed.
 		bool DrawPreviewSizeControl(char const* title, char const* drag_id, ImVec2& size);
 
@@ -111,4 +121,5 @@ class ConfigRuntime {
 		std::function<void(bool)>      m_on_vsync_changed;
 		std::string                    m_pending_thumbnail_format;
 		std::function<void()>          m_on_restart_all_threads;
+		std::function<ImGui::FileBrowser*()> m_fb_provider;
 };

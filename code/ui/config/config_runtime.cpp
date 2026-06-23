@@ -137,6 +137,10 @@ void ConfigRuntime::SetVsyncEnabled(bool enabled) {
 
 void ConfigRuntime::SetRestartAllThreadsCallback(std::function<void()> cb) { m_on_restart_all_threads = std::move(cb); }
 
+void ConfigRuntime::SetFileBrowserProvider(std::function<ImGui::FileBrowser*()> provider) {
+    m_fb_provider = std::move(provider);
+}
+
 int ConfigRuntime::VideoResumeThresholdSeconds() const { return m_applied_video_resume_threshold_seconds; }
 
 float ConfigRuntime::HoldSpeedMultiplier() const { return m_pending_hold_speed_multiplier; }

@@ -151,13 +151,17 @@ struct WindowStateToml {
   int file_explorer_sort_mode = 0;
   bool file_explorer_sort_ascending = true; // true=ascending, false=descending
   std::vector<std::string> file_explorer_recent_directories;
-  int  file_explorer_view_mode      = 0; // 0=List, 1=Grid
+  int  file_explorer_view_mode      = 0; // 0=List, 1=Grid, 2=Masonry
   int  file_explorer_media_filter   = 0; // 0=All, 1=Videos, 2=Images
   bool file_explorer_preview        = true;
   bool file_explorer_show_thumbnails = true;
   bool file_explorer_keep_open      = false;
   std::optional<Vec2Toml> file_explorer_thumb_size;
   std::optional<Vec2Toml> file_explorer_grid_thumb_size;
+  // Masonry column width is in .x; .y is unused (cell height comes from aspect).
+  std::optional<Vec2Toml> file_explorer_masonry_thumb_size;
+  // Forced masonry column count (0 = auto-pick from masonry_thumb_size.x).
+  int                     file_explorer_masonry_columns = 0;
   bool global_hwdec_enabled = false;
   int global_video_playback_mode = -1; // -1=derive from global_hwdec_enabled, else 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo
   bool global_loop_enabled = false;

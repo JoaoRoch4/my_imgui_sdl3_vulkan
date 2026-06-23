@@ -10,6 +10,11 @@
 
 #include <cstdint>
 
+// Header-only image-dimension probe used during scan to feed the masonry view its
+// per-record aspect ratio.  stb_image's stbi_info reads only the file header — no
+// decode — so it's cheap enough to run on every image during a scan.
+#include <stb_image.h>
+
 namespace {
 
 /// File birth (creation) time in nanoseconds since the Unix epoch, via statx's
@@ -196,6 +201,28 @@ std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::
 			rcd.lastWriteTime = {};
 		    rcd.creationTime = creation_time_ns(p.path());
 		    read_xdg_tags(p.path(), rcd.tags);
+
+		    // Native source dimensions for the masonry layout.  Only call
+		    // stbi_info() on extensions it actually understands — videos and
+		    // other formats leave source_w/h at 0 so the masonry renderer
+		    // falls back to its default 16:9 cell aspect for those.
+		    std::string ext_lc = rcd.extension.string();
+		    for (char& c : ext_lc)
+			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		    const bool is_stb_image = ext_lc == ".jpg" || ext_lc == ".jpeg" ||
+					      ext_lc == ".png" || ext_lc == ".bmp" ||
+					      ext_lc == ".gif" || ext_lc == ".tga" ||
+					      ext_lc == ".psd" || ext_lc == ".hdr" ||
+					      ext_lc == ".pic" || ext_lc == ".pnm" ||
+					      ext_lc == ".ppm" || ext_lc == ".pgm";
+		    if (is_stb_image) {
+			int sw = 0, sh = 0, sc = 0;
+			if (stbi_info(p.path().string().c_str(), &sw, &sh, &sc) == 1 &&
+			    sw > 0 && sh > 0) {
+			    rcd.source_w = sw;
+			    rcd.source_h = sh;
+			}
+		    }
 		}
 	    } catch (...) {
 		if (!job.skip_errors) {

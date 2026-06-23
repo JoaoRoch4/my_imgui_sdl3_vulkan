@@ -158,14 +158,25 @@ class FileBrowser {
 	void		     SetThumbnailSize(ImVec2 size) noexcept;
 	[[nodiscard]] ImVec2 GetThumbnailSize() const noexcept;
 
-	// View mode: list (with optional inline thumbnails) or grid.
-	enum class ViewMode { List, Grid };
+	// View mode: list (with optional inline thumbnails), uniform grid, or
+	// Pinterest-style masonry (fixed column width, native aspect-ratio cells).
+	enum class ViewMode { List, Grid, Masonry };
 	void		       SetViewMode(ViewMode mode) noexcept;
 	[[nodiscard]] ViewMode GetViewMode() const noexcept;
 
 	// Override the grid-cell thumbnail size (default 160×90).
 	void		     SetGridThumbnailSize(ImVec2 size) noexcept;
 	[[nodiscard]] ImVec2 GetGridThumbnailSize() const noexcept;
+
+	// Override the masonry column width (default 200 px). The y component is
+	// unused — masonry cell heights are derived from each thumbnail's aspect.
+	void		     SetMasonryThumbnailSize(ImVec2 size) noexcept;
+	[[nodiscard]] ImVec2 GetMasonryThumbnailSize() const noexcept;
+
+	// Force the masonry view to use exactly N columns. 0 = auto-pick from
+	// MasonryThumbnailSize().x as a max-column-width hint (the previous behaviour).
+	void               SetMasonryColumns(int columns) noexcept;
+	[[nodiscard]] int  GetMasonryColumns() const noexcept;
 
 	// Show/hide thumbnails entirely (inline list thumbnails and grid view).
 	// Has no visible effect unless a thumbnail provider is set.
@@ -296,6 +307,12 @@ class FileBrowser {
 	FileBrowserThumbnailContext				 m_thumbnails; // browser-owned async thumbnail engine
 	ImVec2							 thumbnailSize_	    = {64.0f, 36.0f};
 	ImVec2							 gridThumbnailSize_ = {160.0f, 90.0f};
+	// Only .x (column width) is consumed; per-cell height comes from the
+	// thumbnail's own aspect ratio (16:9 fallback when unknown).
+	ImVec2							 masonryThumbnailSize_ = {200.0f, 200.0f};
+	// 0 = auto column count (derived from masonryThumbnailSize_.x as a soft cap),
+	// otherwise force exactly N columns. Persisted in window_state.toml.
+	int 						 masonryColumns_   = 0;
 	ViewMode						 viewMode_	    = ViewMode::List;
 	SortField						 sortField_	    = SortField::Name;
 	bool				   sortAscending_ = true; // direction applied to sortField_

@@ -65,4 +65,12 @@ encode_png(const ImageBuffer &src, const std::filesystem::path &out);
 [[nodiscard]] std::expected<std::vector<std::byte>, ImageError>
 encode_bc1(const ImageBuffer &src);
 
+// Multithread-capable BC1 encode. Identical bytes to encode_bc1(src) regardless
+// of `max_splits` (each 4x4 block is encoded independently; per-worker output
+// slices are disjoint, so no synchronization is required). ImageJobSystem
+// injects a pool-backed executor; tests inject a sequential one.
+[[nodiscard]] std::expected<std::vector<std::byte>, ImageError>
+encode_bc1_parallel(const ImageBuffer &src, int max_splits,
+                    const SplitExecutor &exec);
+
 } // namespace img::ops

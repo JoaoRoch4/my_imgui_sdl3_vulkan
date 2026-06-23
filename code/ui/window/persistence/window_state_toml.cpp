@@ -94,7 +94,7 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Recently accessed folders used by File Explorer combo "
            "(newest first).";
   if (key == "file_explorer_view_mode")
-    return "# File Explorer view mode: 0=List, 1=Grid.";
+    return "# File Explorer view mode: 0=List, 1=Grid, 2=Masonry.";
   if (key == "file_explorer_media_filter")
     return "# File Explorer media filter: 0=All, 1=Videos, 2=Images.";
   if (key == "file_explorer_preview")
@@ -107,6 +107,10 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Inline-list thumbnail size in File Explorer (px).";
   if (key == "file_explorer_grid_thumb_size")
     return "# Grid thumbnail size in File Explorer (px).";
+  if (key == "file_explorer_masonry_thumb_size")
+    return "# Masonry column width in File Explorer (px); y is unused.";
+  if (key == "file_explorer_masonry_columns")
+    return "# Forced masonry column count (0 = auto-pick from masonry_thumb_size.x).";
   if (key == "global_video_playback_mode")
     return "# Global video playback mode: 0=SW MPV, 1=NVDEC MPV, 2=NVDEC "
            "libplacebo.";

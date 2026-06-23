@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
+
 # ── vcpkg ─────────────────────────────────────────────────────────────────────
 # Disable manifest mode so vcpkg doesn't auto-install during configure.
 # Toolchain defaults to the global vcpkg install; can be overridden via -D.
@@ -14,7 +15,6 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-linux")
 
 # ── Project ───────────────────────────────────────────────────────────────────
 project(example_sdl3_vulkan CXX)
-
 # Per-library build glue lives under thirdparty/<lib>/; shared helpers below.
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(ProfilableTreatment)
@@ -84,7 +84,6 @@ pkg_check_modules(GL REQUIRED gl)
 pkg_check_modules(FONTCONFIG REQUIRED fontconfig)
 # vcpkg / system CMake packages with no vendored source.
 find_package(reflectcpp CONFIG REQUIRED)
-find_package(WebP CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 # NOTE: SDL3, Vulkan (loader), mpv, libplacebo, taglib — and stb/imgui/implot —
 # are now compiled from source; see the thirdparty/<lib> subdirectories below.
@@ -95,15 +94,20 @@ find_package(CURL REQUIRED)
 # thirdparty/<lib>/. Order matters — SDL3 / Vulkan-Loader / taglib define targets
 # that imgui links; FFmpeg is built before mpv (mpv consumes it). Foreign
 # (autotools/meson) builds are wrapped as ExternalProjects inside their folder.
+# libplacebo is processed BEFORE ffmpeg: FFmpeg's vf_libplacebo filter compiles
+# against libplacebo's headers (pl_log_create_<PL_API_VER>), so it must see OUR
+# install tree (PLACEBO_PKGCONFIG_DIR_<cfg> + libplacebo_ep_<cfg> target) — else
+# configure resolves the system libplacebo and the API version diverges at link.
 add_subdirectory(thirdparty/sdl3)
 add_subdirectory(thirdparty/vulkan-loader)
+add_subdirectory(thirdparty//WebP)
 add_subdirectory(thirdparty/taglib)
 add_subdirectory(thirdparty/imgui)
 add_subdirectory(thirdparty/implot)
 add_subdirectory(thirdparty/stb)
+add_subdirectory(thirdparty/libplacebo)
 add_subdirectory(thirdparty/ffmpeg)
 add_subdirectory(thirdparty/ffmpegthumbnailer)   # static, against our FFmpeg 8.0
-add_subdirectory(thirdparty/libplacebo)
 add_subdirectory(thirdparty/mpv)
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -129,6 +133,7 @@ add_executable(example_sdl3_vulkan
     code/rendering/vulkan/vulkan_context.cpp
     code/rendering/vulkan/vulkan_upload_context.cpp
     code/rendering/vulkan/vulkan_texture.cpp
+    code/rendering/vulkan/vulkan_bc1_encoder.cpp
 
     # UI — top-level window widgets
     code/ui/window/widgets/main_menu_bar.cpp
@@ -215,6 +220,33 @@ add_executable(example_sdl3_vulkan
     code/core/Memory_management.hpp
 )
 
+# ── Compute shader compilation (BC1 GPU encoder) ──────────────────────────────
+# Drives bc1_encode.comp -> SPIR-V -> C++ header (uint32_t array) via
+# glslangValidator's --vn switch. The header is dropped into a generated
+# include directory the executable picks up; no runtime shader-file lookup,
+# no external xxd/python script. Recompiles whenever the .comp source changes.
+find_program(GLSLANG_VALIDATOR glslangValidator REQUIRED
+    DOC "GLSL -> SPIR-V compiler used to embed BC1 encoder shader")
+
+set(_bc1_comp_src "${CMAKE_CURRENT_SOURCE_DIR}/code/rendering/vulkan/shaders/bc1_encode.comp")
+set(_bc1_gen_dir  "${CMAKE_BINARY_DIR}/generated/shaders")
+set(_bc1_gen_hpp  "${_bc1_gen_dir}/bc1_encode_spv.hpp")
+
+file(MAKE_DIRECTORY "${_bc1_gen_dir}")
+add_custom_command(
+    OUTPUT  "${_bc1_gen_hpp}"
+    COMMAND ${GLSLANG_VALIDATOR} -V "${_bc1_comp_src}"
+            --vn bc1_encode_spv
+            -o "${_bc1_gen_hpp}"
+    DEPENDS "${_bc1_comp_src}"
+    COMMENT "Compiling BC1 compute shader -> ${_bc1_gen_hpp}"
+    VERBATIM
+)
+add_custom_target(bc1_shader DEPENDS "${_bc1_gen_hpp}")
+
+# Link the executable to the shader header (build dependency + include path).
+# The dependency is added below, after add_executable runs.
+
 # ── Multi-config output layout + "build everything" target ────────────────────
 # The `all` preset uses Ninja Multi-Config: a single configure dir (build/all)
 # builds every configuration. Send each config's *executable* to its own result
@@ -265,7 +297,9 @@ target_precompile_headers(example_sdl3_vulkan PRIVATE
 
 # ── Include directories ───────────────────────────────────────────────────────
 # Project-owned headers — warnings enabled.
+add_dependencies(example_sdl3_vulkan bc1_shader)
 target_include_directories(example_sdl3_vulkan PRIVATE
+    ${_bc1_gen_dir}                                       # bc1_encode_spv.hpp (compiled shader)
     ${CMAKE_CURRENT_SOURCE_DIR}/code
     ${CMAKE_CURRENT_SOURCE_DIR}/code/main
     ${CMAKE_CURRENT_SOURCE_DIR}/code/Args
@@ -307,7 +341,6 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
     ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
     ${FONTCONFIG_INCLUDE_DIRS}
-    ${WEBP_INCLUDE_DIR}
     ${EGL_INCLUDE_DIRS}
     ${GL_INCLUDE_DIRS}
 )
@@ -414,7 +447,7 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     ${PLUTOSVG_LIBRARIES}
     ${FONTCONFIG_LIBRARIES}   # FcFontMatch / FcPatternCreate — see load_fonts() discovery
     reflectcpp::reflectcpp
-    WebP::webp
+    WebP::webp    
     CURL::libcurl
     tag                # from-source TagLib         (thirdparty/taglib)
     mpv::mpv           # from-source libmpv          (thirdparty/mpv)
@@ -492,7 +525,7 @@ target_include_directories(image_tests PRIVATE
 # <ciso646> include) stay out of our build; our own test warnings remain visible.
 target_include_directories(image_tests SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/external/doctest
-    ${WEBP_INCLUDE_DIR}
+    WebP::webp    
     ${_ffmpeg_test_inc}    # our FFmpeg 8.0 headers (not the /usr/local shadow install)
     ${_ffthumb_test_inc}   # <libffmpegthumbnailer/...>
 )
@@ -544,6 +577,7 @@ target_include_directories(image_job_tests SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
     ${CMAKE_SOURCE_DIR}/external/mpv/include
     ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
+    ${CMAKE_SOURCE_DIR}/external/libwebp/src/
     ${_ffmpeg_test_inc}
     ${_ffthumb_test_inc}
 )

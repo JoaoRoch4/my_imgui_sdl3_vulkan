@@ -181,3 +181,28 @@ TEST_CASE("encode_bc1 rejects a non-RGBA buffer") {
     rgb.data.assign(static_cast<std::size_t>(4) * 4 * 3, 0);
     CHECK_FALSE(ops::encode_bc1(rgb).has_value());
 }
+
+TEST_CASE("encode_bc1_parallel matches encode_bc1 byte-for-byte regardless of split count") {
+    // Real thumbnail size — exercises edge-replication on the non-multiple-of-4 right edge.
+    const ImageBuffer src    = make_gradient(317, 181); // odd dims stress block boundaries
+    const auto        single = ops::encode_bc1(src);
+    REQUIRE(single.has_value());
+
+    for (const int max_splits : {1, 2, 3, 5, 8, 16, 46}) {
+        CAPTURE(max_splits);
+        const auto multi = ops::encode_bc1_parallel(src, max_splits, sequential_exec);
+        REQUIRE(multi.has_value());
+        REQUIRE(multi->size() == single->size());
+        CHECK(*multi == *single); // bit-exact, regardless of split count
+    }
+}
+
+TEST_CASE("encode_bc1_parallel rejects invalid args") {
+    const ImageBuffer src = make_gradient(8, 8);
+    CHECK_FALSE(ops::encode_bc1_parallel(src, 0, sequential_exec).has_value());
+    const ImageBuffer empty;
+    CHECK_FALSE(ops::encode_bc1_parallel(empty, 4, sequential_exec).has_value());
+    ImageBuffer rgb; rgb.width = 4; rgb.height = 4; rgb.channels = 3;
+    rgb.data.assign(static_cast<std::size_t>(4) * 4 * 3, 0);
+    CHECK_FALSE(ops::encode_bc1_parallel(rgb, 4, sequential_exec).has_value());
+}

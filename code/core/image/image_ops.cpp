@@ -360,20 +360,18 @@ std::expected<bool, ImageError> encode_png(ImageBuffer const& src, std::filesyst
 	return true;
 }
 
-std::expected<std::vector<std::byte>, ImageError> encode_bc1(ImageBuffer const &src) {
-	if (!src.valid() || src.channels != 4)
-		return std::unexpected(ImageError::EncodeFailed);
+namespace {
 
+// Encode the block-row range [by_lo, by_hi) of `src` into `out`. The full output
+// must be pre-sized to bc1_size(src.width, src.height); each worker writes to
+// disjoint 8-byte slices, so no synchronization is required.
+void encode_bc1_rows(ImageBuffer const &src, int by_lo, int by_hi, std::vector<std::byte> &out) {
 	const int W  = src.width;
 	const int H  = src.height;
 	const int bx = (W + 3) / 4;
-	const int by = (H + 3) / 4;
-
-	std::vector<std::byte> out(bc1_size(W, H));
-	std::size_t            out_off = 0;
 
 	std::array<unsigned char, 64> block{}; // 4x4 RGBA, edge-replicated for partial blocks
-	for (int byi = 0; byi < by; ++byi) {
+	for (int byi = by_lo; byi < by_hi; ++byi) {
 		for (int bxi = 0; bxi < bx; ++bxi) {
 			for (int ry = 0; ry < 4; ++ry) {
 				const int sy = std::min(byi * 4 + ry, H - 1); // clamp/replicate edge
@@ -387,11 +385,49 @@ std::expected<std::vector<std::byte>, ImageError> encode_bc1(ImageBuffer const &
 					block[dst_i + 3]        = 255; // BC1 ignores alpha; keep opaque
 				}
 			}
+			const std::size_t out_off
+				= (static_cast<std::size_t>(byi) * static_cast<std::size_t>(bx) + static_cast<std::size_t>(bxi)) * 8u;
 			stb_compress_dxt_block(std::bit_cast<unsigned char *>(out.data() + out_off), block.data(),
 				0 /*no alpha -> DXT1, 8 bytes*/, STB_DXT_HIGHQUAL);
-			out_off += 8;
 		}
 	}
+}
+
+} // namespace
+
+std::expected<std::vector<std::byte>, ImageError> encode_bc1(ImageBuffer const &src) {
+	if (!src.valid() || src.channels != 4)
+		return std::unexpected(ImageError::EncodeFailed);
+
+	const int              by = (src.height + 3) / 4;
+	std::vector<std::byte> out(bc1_size(src.width, src.height));
+	encode_bc1_rows(src, 0, by, out);
+	return out;
+}
+
+std::expected<std::vector<std::byte>, ImageError>
+encode_bc1_parallel(ImageBuffer const &src, int max_splits, SplitExecutor const &exec) {
+	if (!src.valid() || src.channels != 4 || max_splits < 1)
+		return std::unexpected(ImageError::EncodeFailed);
+
+	const int              by = (src.height + 3) / 4;
+	std::vector<std::byte> out(bc1_size(src.width, src.height));
+
+	// Each worker takes a contiguous range of block-rows. Splits cap at `by`
+	// because there is no point spawning more workers than there are rows.
+	const int splits = std::min(max_splits, by);
+	if (splits <= 1) {
+		encode_bc1_rows(src, 0, by, out);
+		return out;
+	}
+
+	const int rows_per_split = (by + splits - 1) / splits; // ceil
+	exec(splits, [&](int i) {
+		const int lo = i * rows_per_split;
+		const int hi = std::min(by, lo + rows_per_split);
+		if (lo < hi)
+			encode_bc1_rows(src, lo, hi, out);
+	});
 	return out;
 }
 

@@ -431,6 +431,10 @@ void AppCoordinator::apply_file_explorer_layout(ImGui::FileBrowser &fb, WindowSt
 		fb.SetThumbnailSize(ImVec2 {state.file_explorer_thumb_size->x, state.file_explorer_thumb_size->y});
 	if (state.file_explorer_grid_thumb_size)
 		fb.SetGridThumbnailSize(ImVec2 {state.file_explorer_grid_thumb_size->x, state.file_explorer_grid_thumb_size->y});
+	if (state.file_explorer_masonry_thumb_size)
+		fb.SetMasonryThumbnailSize(
+			ImVec2 {state.file_explorer_masonry_thumb_size->x, state.file_explorer_masonry_thumb_size->y});
+	fb.SetMasonryColumns(state.file_explorer_masonry_columns);
 	if (!state.file_explorer_last_directory.empty())
 		fb.SetDirectory(state.file_explorer_last_directory);
 }
@@ -452,6 +456,11 @@ void AppCoordinator::export_file_explorer_layout(ImGui::FileBrowser &fb, WindowS
 		ImVec2 const gs                      = fb.GetGridThumbnailSize();
 		state->file_explorer_grid_thumb_size = WindowStateToml::Vec2Toml {gs.x, gs.y};
 	}
+	{
+		ImVec2 const ms                         = fb.GetMasonryThumbnailSize();
+		state->file_explorer_masonry_thumb_size = WindowStateToml::Vec2Toml {ms.x, ms.y};
+	}
+	state->file_explorer_masonry_columns = fb.GetMasonryColumns();
 	state->file_explorer_recent_directories.clear();
 	for (auto const &dir : fb.GetRecentDirectories())
 		state->file_explorer_recent_directories.push_back(dir.string());
@@ -550,6 +559,11 @@ void AppCoordinator::SetThumbDir(std::filesystem::path const &dir) {
 			if (auto *fb = fb_ptr())
 				fb->ClearThumbnailCache();
 		});
+
+		// Lets the Runtime Config window read/write the per-view thumb sizes on
+		// the live browser. Returns nullptr while the explorer is closed; the
+		// config UI disables the controls in that case.
+		m_config_runtime->SetFileBrowserProvider([]() -> ImGui::FileBrowser * { return fb_ptr(); });
 
 		// Context-menu extras run from the browser's own context menu, so the
 		// browser is alive here; null-guarded anyway for safety.

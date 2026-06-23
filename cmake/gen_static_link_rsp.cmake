@@ -108,6 +108,38 @@ foreach(_t IN LISTS _tokens)
     list(APPEND _clean "${_t}")
   endif()
 endforeach()
+
+# Pass 3 — glslang's SPIRV-Tools dependency. Fedora builds libglslang.a with the
+# optimizer enabled, so SpvTools.cpp references spvtools::* and the spv* C API.
+# But glslang.pc declares an empty Requires: and Libs: only `-lglslang -lOSDependent`,
+# so pkg-config --static (via libplacebo) pulls glslang's archives yet never emits
+# SPIRV-Tools — link fails with undefined spvContextCreate / spvtools::Optimizer::*.
+# When glslang is in the set, append SPIRV-Tools(-opt). Fedora's spirv-tools-devel is
+# shared-only (no .a), so these resolve to the system .so just like -lvulkan / shaderc;
+# the whole list is wrapped in --start-group below, so append order is irrelevant.
+set(_has_glslang FALSE)
+foreach(_t IN LISTS _clean)
+  if(_t MATCHES "glslang")
+    set(_has_glslang TRUE)
+    break()
+  endif()
+endforeach()
+if(_has_glslang)
+  foreach(_spv SPIRV-Tools-opt SPIRV-Tools)
+    set(_present FALSE)
+    foreach(_t IN LISTS _clean)
+      if(_t MATCHES "${_spv}(\\.|$)")
+        set(_present TRUE)
+        break()
+      endif()
+    endforeach()
+    if(NOT _present)
+      _resolve_l("${_spv}" _r)
+      list(APPEND _clean "${_r}")
+    endif()
+  endforeach()
+endif()
+
 list(JOIN _clean " " _joined)
 
 # Emit a RUNPATH for any -L dir that holds shared libs and is NOT a default loader
