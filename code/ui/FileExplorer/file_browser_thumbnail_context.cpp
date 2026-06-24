@@ -63,7 +63,8 @@ bool is_image_ext(std::filesystem::path const &p) {
 	std::string const e = lower_ext(p);
 	// .gif is decoded as a still (first frame) via decode_file/libav, which ignores
 	// seek failures — unlike ffmpegthumbnailer's seek, which fails on most GIFs.
-	return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif";
+	return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif" || e == ".avif"
+		|| e == ".heic" || e == ".heif";
 }
 
 bool is_video_ext(std::filesystem::path const &p) {
@@ -86,7 +87,8 @@ FileBrowserThumbnailContext::Classification FileBrowserThumbnailContext::classif
 	// is_video_ext each re-allocating the lowered extension (the old per-frame cost).
 	std::string const e = lower_ext(path);
 	Classification    c;
-	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp"|| e == ".gif") {
+	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif" || e == ".avif" || e == ".heic"
+		|| e == ".heif") {
 		c.thumbnailable = true;
 	} else if (e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v" || e == ".wmv"
 		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv"
@@ -102,7 +104,7 @@ std::string FileBrowserThumbnailContext::make_key(std::filesystem::path const &p
 }
 
 void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::path thumb_dir,
-	std::string thumbnail_format) {
+	std::string thumbnail_format, std::string image_tier, std::string video_tier) {
 	m_vk        = vk;
 	m_thumb_dir = std::move(thumb_dir);
 	m_setup     = true;
@@ -110,17 +112,65 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 	std::filesystem::create_directories(m_thumb_dir, ec);
 	THUMB_LOG("setup thumb_dir={} vk={}", m_thumb_dir.string(), static_cast<void const *>(vk));
 
-	// Resolve the storage backend: bc1 only when requested AND the device supports BC
-	// block-compressed textures; otherwise fall back to the portable per-file PNG path.
+	// VIDEO quality tier -> BC1 letterbox resolution. Higher tier = sharper (more VRAM/disk).
+	if (video_tier == "original")
+		m_thumb_w = 1280, m_thumb_h = 720;
+	else if (video_tier == "high")
+		m_thumb_w = 854, m_thumb_h = 480;
+	else if (video_tier == "low")
+		m_thumb_w = 426, m_thumb_h = 240;
+	else // "medium" (default)
+		m_thumb_w = k_thumb_w_default, m_thumb_h = k_thumb_h_default;
+
+	// Resolve the storage backend. "bc1" enables the hybrid policy: VIDEO thumbs are
+	// BC1 block-compressed into a shared blob, while IMAGE thumbs decode to lossless RGBA
+	// with no disk cache (BC1 bands too hard on flat-shaded art; see Entry::use_bc1). It
+	// requires device BC support; otherwise everything falls back to the portable PNG path.
 	const bool want_bc1 = (thumbnail_format == "bc1");
 	m_backend = (want_bc1 && vk && vk->bc_textures_enabled) ? Backend::Bc1 : Backend::Png;
 	if (m_backend == Backend::Bc1) {
 		constexpr std::uint64_t k_cap_bytes = 256ull * 1024ull * 1024ull; // ~256 MB live cap
-		m_blob.open(m_thumb_dir / "bc1", k_cap_bytes);
-		APP_DEBUG_LOG("[thumbnail_context] backend=bc1 (GPU block-compressed blob)");
+		// Per-resolution blob dir so changing the video tier never reads stale-sized blocks
+		// (old-resolution blobs simply become unused rather than corrupting an upload).
+		std::string const blob_dir = "bc1_" + std::to_string(m_thumb_w) + "x" + std::to_string(m_thumb_h);
+		m_blob.open(m_thumb_dir / blob_dir, k_cap_bytes);
+		APP_DEBUG_LOG("[thumbnail_context] backend=bc1 hybrid; video tier={} ({}x{})", video_tier, m_thumb_w,
+			m_thumb_h);
 	} else {
 		APP_DEBUG_LOG("[thumbnail_context] backend=png (format='{}', bc_supported={})", thumbnail_format,
 			vk ? vk->bc_textures_enabled : false);
+	}
+
+	// Auto-size the image-decode resolution cap from available VRAM: more memory -> allow
+	// larger native-resolution image thumbnails before the long-edge clamp kicks in. The
+	// query is best-effort (VK_EXT_memory_budget live budget, else the device-local heap
+	// size); a 0 result keeps the default. Tiers, not a formula, so the value is predictable.
+	if (vk) {
+		VkDeviceSize const avail = vk->available_vram_bytes();
+		double const       gib   = static_cast<double>(avail) / (1024.0 * 1024.0 * 1024.0);
+		if (avail == 0)
+			m_image_max_edge = k_image_max_edge_default;
+		else if (gib < 1.5)
+			m_image_max_edge = 1024;
+		else if (gib < 3.0)
+			m_image_max_edge = 1536;
+		else if (gib < 6.0)
+			m_image_max_edge = 2048;
+		else if (gib < 12.0)
+			m_image_max_edge = 3072;
+		else
+			m_image_max_edge = 4096;
+		// IMAGE quality tier caps the VRAM-auto value (images stay lossless RGBA — compressing
+		// them is the banding we deliberately avoid; resolution is the quality/VRAM lever).
+		if (image_tier == "high")
+			m_image_max_edge = std::min(m_image_max_edge, 2048);
+		else if (image_tier == "medium")
+			m_image_max_edge = std::min(m_image_max_edge, 1280);
+		else if (image_tier == "low")
+			m_image_max_edge = std::min(m_image_max_edge, 768);
+		// "original" keeps the full VRAM-auto cap.
+		APP_DEBUG_LOG("[thumbnail_context] image tier={} -> max_edge={} (VRAM ~{:.2f} GiB, budget_ext={})",
+			image_tier, m_image_max_edge, gib, vk->memory_budget_enabled);
 	}
 
 	// Start the Reproducer's nvdec-copy mpv worker pool (sized to match our thumbnails). It
@@ -129,7 +179,7 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 		[this](std::string const &key, std::vector<std::uint8_t> rgba, bool ok) {
 			on_video_done(key, std::move(rgba), ok);
 		},
-		k_thumb_w, k_thumb_h);
+		m_thumb_w, m_thumb_h);
 
 	// GPU BC1 encoder: setup once (best-effort). If it fails — missing extension,
 	// out-of-memory, etc. — is_ready() stays false and the worker path silently
@@ -192,36 +242,49 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	// VIDEO generate that fails is retried on the Reproducer's mpv (nvdec-copy) worker by
 	// poll_entry (gated by Entry::source_is_video / tried_mpv).
 
-	// BC1 backend: no PNG. The pool job decodes + letterboxes + encodes to BC1 blocks; the
-	// blob (checked in get()) is the persistence layer, so there is no reload branch here.
-	if (m_backend == Backend::Bc1) {
+	// BC1 route (video only): no PNG. The pool job decodes + letterboxes + encodes to BC1
+	// blocks; the blob (checked in get()) is the persistence layer, so no reload branch here.
+	// Copy the (member) video resolution into locals so the worker lambdas capture by value
+	// and never touch `this` off-thread.
+	int const tw = m_thumb_w;
+	int const th = m_thumb_h;
+	if (e.use_bc1) {
 		e.bc1_future = img::ImageJobSystem::instance().submit(
-			[file, decode_as_video]() -> Bc1Result {
-				return ThumbnailGenerator::generate_bc1(file, decode_as_video, k_thumb_w, k_thumb_h);
+			[file, decode_as_video, tw, th]() -> Bc1Result {
+				return ThumbnailGenerator::generate_bc1(file, decode_as_video, tw, th);
 			},
 			img::Priority::Normal);
 		e.state = State::Generating;
 		return;
 	}
 
-	e.img_future = img::ImageJobSystem::instance().submit(
-		[file, out = e.png_path, decode_as_video]() -> ImgResult {
-			std::error_code ec;
-			if (std::filesystem::exists(out, ec) && !ec)
-				return ThumbnailReproducer::reload(out);
-			return ThumbnailGenerator::generate(file, decode_as_video, out, k_thumb_w, k_thumb_h);
-		},
-		img::Priority::Normal);
+	// RGBA route, two sub-cases distinguished by png_path:
+	//   * IMAGE (png_path empty, no cache) -> decode at NATIVE resolution, no letterbox, no
+	//     persist. Full quality, identical to the hover preview.
+	//   * VIDEO no-BC fallback (png_path set) -> reload the cached PNG, else letterbox-generate
+	//     into m_thumb_w x m_thumb_h and persist, exactly as before.
+	bool const full_image = e.png_path.empty();
+	int const  max_edge   = m_image_max_edge;
+	e.img_future          = img::ImageJobSystem::instance().submit(
+        [file, out = e.png_path, decode_as_video, full_image, max_edge, tw, th]() -> ImgResult {
+            if (full_image)
+                return ThumbnailGenerator::generate_image_full(file, max_edge);
+            std::error_code ec;
+            if (!out.empty() && std::filesystem::exists(out, ec) && !ec)
+                return ThumbnailReproducer::reload(out);
+            return ThumbnailGenerator::generate(file, decode_as_video, out, tw, th);
+        },
+        img::Priority::Normal);
 	e.state = State::Generating;
 }
 
 void FileBrowserThumbnailContext::on_video_done(std::string const &key, std::vector<std::uint8_t> rgba, bool ok) {
 	THUMB_LOG("video_done key={} ok={} bytes={}", key, ok, rgba.size());
 	ImgResult res = std::unexpected(img::ImageError::DecodeFailed);
-	if (ok && rgba.size() == static_cast<std::size_t>(k_thumb_w) * k_thumb_h * 4) {
+	if (ok && rgba.size() == static_cast<std::size_t>(m_thumb_w) * m_thumb_h * 4) {
 		img::ImageBuffer b;
-		b.width    = k_thumb_w;
-		b.height   = k_thumb_h;
+		b.width    = m_thumb_w;
+		b.height   = m_thumb_h;
 		b.channels = 4;
 		b.data     = std::move(rgba);
 		res        = std::move(b);
@@ -296,7 +359,7 @@ void FileBrowserThumbnailContext::begin_frame() {
 		if (it == m_entries.end())
 			continue;
 		if (res && res->valid()) {
-			if (m_backend == Backend::Bc1) {
+			if (it->second.use_bc1) {
 				// mpv fallback delivered RGBA; encode to BC1 here (rare path) so the
 				// upload + blob store go through the same upload_bc1 chokepoint.
 				if (auto enc = img::ops::encode_bc1(*res); enc && !enc->empty()) {
@@ -355,13 +418,13 @@ ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
 
 	// Upload at most k_max_uploads_per_frame textures per frame so a fresh grid of
 	// ready thumbnails can't stall a single frame.
-	if (e.state == State::PixelsReady && m_backend == Backend::Bc1 && e.have_bc1
+	if (e.state == State::PixelsReady && e.use_bc1 && e.have_bc1
 		&& m_uploads_this_frame < k_max_uploads_per_frame) {
 		auto tex = std::make_unique<VulkanTexture>();
-		if (tex->upload_bc1(e.bc1_blocks, k_thumb_w, k_thumb_h, *m_vk)) {
+		if (tex->upload_bc1(e.bc1_blocks, m_thumb_w, m_thumb_h, *m_vk)) {
 			// Persist to the blob on first upload (a blob hit is already stored).
 			if (!e.from_blob)
-				m_blob.store(e.blob_key, e.bc1_blocks, k_thumb_w, k_thumb_h);
+				m_blob.store(e.blob_key, e.bc1_blocks, m_thumb_w, m_thumb_h);
 			e.texture = std::move(tex);
 			e.state   = State::Ready;
 			++m_uploads_this_frame;
@@ -371,7 +434,7 @@ ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
 		e.bc1_blocks.clear();
 		e.bc1_blocks.shrink_to_fit();
 		e.have_bc1 = false;
-	} else if (e.state == State::PixelsReady && m_backend == Backend::Png && e.have_pixels
+	} else if (e.state == State::PixelsReady && !e.use_bc1 && e.have_pixels
 		&& m_uploads_this_frame < k_max_uploads_per_frame) {
 		THUMB_LOG("upload pixels [{}]", px_summary(e.pixels));
 		auto tex = std::make_unique<VulkanTexture>();
@@ -423,7 +486,11 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 	if (e.state == State::Queued || e.state == State::Cached) {
 		std::filesystem::path const file = dir / name; // joined only on a (re)submit
 
-		if (m_backend == Backend::Bc1) {
+		// Per-entry storage route: BC1 (blob) only for VIDEO when the device supports BC;
+		// images always take the lossless RGBA route (no banding, no disk cache).
+		e.use_bc1 = (m_backend == Backend::Bc1) && is_video;
+
+		if (e.use_bc1) {
 			// Blob backend: a hit (incl. Cached re-display) is a cheap blob read -> upload_bc1,
 			// NEVER a source regeneration. A miss decodes + encodes on the pool (submit_image).
 			if (e.blob_key == 0)
@@ -440,15 +507,23 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 				submit_image(file, e, is_video);
 			}
 		} else {
-			std::string const &stored_key = it->first; // stable key string owned by the map
-			if (e.png_path.empty())
-				e.png_path = png_for(stored_key);
-
-			std::error_code ec;
-			bool const      have_png = std::filesystem::exists(e.png_path, ec) && !ec;
+			// RGBA route. Disk PNG cache is reserved for VIDEO in the no-BC fallback (decode is
+			// expensive); IMAGES are never cached — png_path stays empty so submit_image decodes
+			// from source and generate() skips the PNG write.
+			bool const cache_to_disk = is_video; // images: no thumbnail cache
+			bool       have_png      = false;
+			if (cache_to_disk) {
+				std::string const &stored_key = it->first; // stable key string owned by the map
+				if (e.png_path.empty())
+					e.png_path = png_for(stored_key);
+				std::error_code ec;
+				have_png = std::filesystem::exists(e.png_path, ec) && !ec;
+			} else {
+				e.png_path.clear();
+			}
 
 			THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW",
-				stored_key, is_video, have_png, e.png_path.filename().string());
+				it->first, is_video, have_png, e.png_path.filename().string());
 			// Both source kinds decode on the ImageJobSystem pool and deliver via e.img_future, so
 			// e.is_video stays false (poll_entry only polls the future when is_video == false, else
 			// the decoded pixels are never picked up and the thumb stays blank). e.source_is_video
@@ -483,12 +558,13 @@ void FileBrowserThumbnailContext::evict(std::filesystem::path const &path) {
 		return;
 	if (it->second.texture)
 		m_retire.push_back({std::move(it->second.texture), k_retire_frames});
-	if (m_backend == Backend::Bc1) {
+	if (it->second.use_bc1) {
 		m_blob.evict(it->second.blob_key ? it->second.blob_key : ThumbnailBlobCache::make_key(path));
 	} else if (!it->second.png_path.empty()) {
 		std::error_code ec;
 		std::filesystem::remove(it->second.png_path, ec);
 	}
+	// Images keep neither a blob nor a PNG (no cache), so there is nothing else to remove.
 	m_entries.erase(it);
 }
 
@@ -501,12 +577,29 @@ void FileBrowserThumbnailContext::clear() {
 	for (auto &[k, e] : m_entries) {
 		if (e.texture)
 			m_retire.push_back({std::move(e.texture), k_retire_frames});
-		if (m_backend == Backend::Png && !e.png_path.empty())
+		// png_path is set only for cached entries (no-BC video fallback); empty for images.
+		if (!e.png_path.empty())
 			std::filesystem::remove(e.png_path, ec);
 	}
 	m_entries.clear();
 
-	// BC1 backend: wipe the whole blob + index in one shot.
+	// BC1 video blob: wipe the whole blob + index in one shot (no-op when never opened).
 	if (m_backend == Backend::Bc1)
 		m_blob.clear();
+}
+
+void FileBrowserThumbnailContext::release_textures() {
+	if (!m_setup)
+		return;
+	// Directory switch: free the previous folder's GPU textures so VRAM doesn't accumulate
+	// across navigation. Full-res RGBA image thumbnails are large, so a folder of them left
+	// live until the LRU cap could pin hundreds of MB. Unlike clear(), this keeps the on-disk
+	// caches (video BC1 blob / PNG) — only the in-memory entries + live textures are dropped,
+	// so re-entering a folder re-decodes images (cheap) and reloads video thumbs from the blob.
+	m_reproducer.clear_pending();                    // abandon in-flight decodes for the old dir
+	img::ImageJobSystem::instance().clear_pending();
+	for (auto &[k, e] : m_entries)
+		if (e.texture)
+			m_retire.push_back({std::move(e.texture), k_retire_frames}); // free after GPU drains
+	m_entries.clear();
 }

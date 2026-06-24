@@ -34,6 +34,16 @@ class vulkan_context {
 	/// cache backend is only used when this is set; otherwise it falls back to PNG.
 	bool bc_textures_enabled = false;
 
+	/// True when VK_EXT_memory_budget was enabled on the device, so available_vram_bytes()
+	/// can report the live per-process budget instead of the static heap size.
+	bool memory_budget_enabled = false;
+
+	/// Best-effort largest device-local (VRAM) heap's currently-available bytes. Uses the
+	/// VK_EXT_memory_budget live budget when present (accounts for other apps' usage),
+	/// else the static heap size. Returns 0 if it cannot be determined. Used to auto-size
+	/// the thumbnail image-decode resolution cap.
+	[[nodiscard]] VkDeviceSize available_vram_bytes() const;
+
 	void setup(std::vector<const char*> instance_extensions);
 	void setup_window(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int width, int height) const;
 	void set_vsync(ImGui_ImplVulkanH_Window* wd, bool vsync);

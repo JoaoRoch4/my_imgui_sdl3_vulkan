@@ -4,6 +4,8 @@
 
 #include "managed_thread.hpp"
 
+#include "image_ops.hpp" // img::ops::probe_dimensions — AVIF/HEIF size (stbi_info can't)
+
 #include <fcntl.h>     // AT_FDCWD
 #include <sys/stat.h>  // statx, STATX_BTIME
 #include <sys/xattr.h>
@@ -215,12 +217,20 @@ std::vector<FileRecord> FileBrowserScanner::scan(const Request& job, const std::
 					      ext_lc == ".psd" || ext_lc == ".hdr" ||
 					      ext_lc == ".pic" || ext_lc == ".pnm" ||
 					      ext_lc == ".ppm" || ext_lc == ".pgm";
+		    const bool is_ffmpeg_image = ext_lc == ".avif" || ext_lc == ".heic" || ext_lc == ".heif";
 		    if (is_stb_image) {
 			int sw = 0, sh = 0, sc = 0;
 			if (stbi_info(p.path().string().c_str(), &sw, &sh, &sc) == 1 &&
 			    sw > 0 && sh > 0) {
 			    rcd.source_w = sw;
 			    rcd.source_h = sh;
+			}
+		    } else if (is_ffmpeg_image) {
+			// stbi_info can't parse AVIF/HEIF; probe the header via FFmpeg so the
+			// masonry view sizes the cell to the true aspect, not the 16:9 fallback.
+			if (auto const d = img::ops::probe_dimensions(p.path())) {
+			    rcd.source_w = d->first;
+			    rcd.source_h = d->second;
 			}
 		    }
 		}

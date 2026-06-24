@@ -50,6 +50,29 @@ namespace {
 
 } // namespace
 
+std::optional<std::pair<int, int>> probe_dimensions(std::filesystem::path const& file) {
+	std::error_code ec;
+	if (!std::filesystem::exists(file, ec) || ec)
+		return std::nullopt;
+
+	AVFormatContext* format_ctx = nullptr;
+	if (avformat_open_input(&format_ctx, file.string().c_str(), nullptr, nullptr) < 0)
+		return std::nullopt;
+
+	std::optional<std::pair<int, int>> dims;
+	if (avformat_find_stream_info(format_ctx, nullptr) >= 0) {
+		for (unsigned int i = 0; i < format_ctx->nb_streams; ++i) {
+			AVCodecParameters const* par = format_ctx->streams[i]->codecpar;
+			if (par->codec_type == AVMEDIA_TYPE_VIDEO && par->width > 0 && par->height > 0) {
+				dims = std::pair{par->width, par->height};
+				break;
+			}
+		}
+	}
+	avformat_close_input(&format_ctx);
+	return dims;
+}
+
 std::expected<ImageBuffer, ImageError> decode_file(std::filesystem::path const& file, int desired_channels) {
 	std::error_code ec;
 	if (!std::filesystem::exists(file, ec) || ec)

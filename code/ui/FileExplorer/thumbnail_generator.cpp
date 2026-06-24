@@ -48,13 +48,26 @@ std::expected<img::ImageBuffer, img::ImageError> letterbox_fit(img::ImageBuffer 
 	return out;
 }
 
+// Decode a still IMAGE source. AVIF/HEIF carry an AV1/HEVC payload that stb cannot decode,
+// so route them through FFmpeg (img::ops::decode_file); every other format takes the fast,
+// seek-free stb path.
+std::expected<img::ImageBuffer, img::ImageError> decode_still(std::filesystem::path const &src) {
+	std::string ext = src.extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+		return static_cast<char>(std::tolower(c));
+	});
+	if (ext == ".avif" || ext == ".heic" || ext == ".heif")
+		return img::ops::decode_file(src, 4);
+	return fbthumb::decode_stb(src, 4);
+}
+
 } // namespace
 
 ThumbnailGenerator::Result ThumbnailGenerator::generate(std::filesystem::path const &source, bool is_video,
 	std::filesystem::path const &out_png, int w, int h) {
 	// Source decode: video -> ffmpegthumbnailer (smart non-black frame, workaround_bugs for
-	// odd/seek-resistant streams); image/gif -> stb (first frame, no seek).
-	auto dec = is_video ? img::ops::decode_video_thumbnail(source, w, 4) : fbthumb::decode_stb(source, 4);
+	// odd/seek-resistant streams); image/gif/avif -> decode_still (stb, or FFmpeg for AVIF).
+	auto dec = is_video ? img::ops::decode_video_thumbnail(source, w, 4) : decode_still(source);
 	if (!dec)
 		return std::unexpected(dec.error());
 
@@ -64,19 +77,48 @@ ThumbnailGenerator::Result ThumbnailGenerator::generate(std::filesystem::path co
 
 	// Persist the sized thumbnail so the Reproducer reloads it next time instead of
 	// re-running the source decode. Best-effort: a failed write just means regeneration later.
-	std::error_code ec;
-	std::filesystem::create_directories(out_png.parent_path(), ec);
-	auto const encoded = img::ops::encode_png(*rz, out_png);
-	static_cast<void>(encoded);
+	// An EMPTY out_png means "do not cache" — images take this path (cheap stb decode, so a
+	// disk cache buys nothing); only the no-BC video fallback passes a real path.
+	if (!out_png.empty()) {
+		std::error_code ec;
+		std::filesystem::create_directories(out_png.parent_path(), ec);
+		auto const encoded = img::ops::encode_png(*rz, out_png);
+		static_cast<void>(encoded);
+	}
 
 	return rz;
+}
+
+ThumbnailGenerator::Result ThumbnailGenerator::generate_image_full(std::filesystem::path const &source,
+	int max_edge) {
+	// Decode at native resolution (stb returns the source's own w x h, frame 0 for GIFs;
+	// AVIF/HEIF go through FFmpeg via decode_still).
+	auto dec = decode_still(source);
+	if (!dec)
+		return std::unexpected(dec.error());
+
+	// Keep the original pixels unless the long edge is larger than the VRAM guard, in which
+	// case scale the WHOLE image down preserving aspect (no letterbox, no padding). A masonry
+	// cell never exceeds the window width, so this is visually lossless at display size while
+	// bounding device memory for absurd (e.g. 100MP) sources.
+	int const longest = std::max(dec->width, dec->height);
+	if (max_edge > 0 && longest > max_edge) {
+		double const scale = static_cast<double>(max_edge) / longest;
+		int const    nw    = std::max(1, static_cast<int>(std::lround(dec->width * scale)));
+		int const    nh    = std::max(1, static_cast<int>(std::lround(dec->height * scale)));
+		auto         rz    = img::ops::resize(*dec, nw, nh);
+		if (!rz)
+			return std::unexpected(rz.error());
+		return rz;
+	}
+	return dec;
 }
 
 ThumbnailGenerator::Bc1Result ThumbnailGenerator::generate_bc1(std::filesystem::path const &source, bool is_video,
 	int w, int h) {
 	// Same decode + letterbox as generate(), but produce BC1 blocks (no PNG). The
 	// transparent letterbox padding encodes as opaque black since BC1 carries no alpha.
-	auto dec = is_video ? img::ops::decode_video_thumbnail(source, w, 4) : fbthumb::decode_stb(source, 4);
+	auto dec = is_video ? img::ops::decode_video_thumbnail(source, w, 4) : decode_still(source);
 	if (!dec)
 		return std::unexpected(dec.error());
 

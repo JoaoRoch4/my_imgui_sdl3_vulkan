@@ -51,6 +51,8 @@ ConfigRuntime::ConfigRuntime()
     , m_pending_vsync_enabled {WindowStateToml {}.vsync}
     , m_on_vsync_changed {nullptr}
     , m_pending_thumbnail_format {WindowStateToml {}.thumbnail_format}
+    , m_pending_image_thumbnail_tier {WindowStateToml {}.image_thumbnail_tier}
+    , m_pending_video_thumbnail_tier {WindowStateToml {}.video_thumbnail_tier}
     , m_on_restart_all_threads {nullptr} { }
 
 // Returns true if the value changed.
@@ -128,6 +130,8 @@ void ConfigRuntime::SetVsyncChangedCallback(std::function<void(bool)> cb) { m_on
 bool ConfigRuntime::VsyncEnabled() const { return m_pending_vsync_enabled; }
 
 std::string ConfigRuntime::ThumbnailFormat() const { return m_pending_thumbnail_format; }
+std::string ConfigRuntime::ImageThumbnailTier() const { return m_pending_image_thumbnail_tier; }
+std::string ConfigRuntime::VideoThumbnailTier() const { return m_pending_video_thumbnail_tier; }
 
 void ConfigRuntime::SetVsyncEnabled(bool enabled) {
     m_pending_vsync_enabled = enabled;
@@ -195,7 +199,9 @@ void ConfigRuntime::ApplyLayout(const WindowStateToml& state) {
     if (m_on_vsync_changed)
 	m_on_vsync_changed(m_pending_vsync_enabled);
 
-    m_pending_thumbnail_format = state.thumbnail_format;
+    m_pending_thumbnail_format     = state.thumbnail_format;
+    m_pending_image_thumbnail_tier = state.image_thumbnail_tier;
+    m_pending_video_thumbnail_tier = state.video_thumbnail_tier;
 }
 
 void ConfigRuntime::ExportLayout(WindowStateToml* state) const {
@@ -217,4 +223,6 @@ void ConfigRuntime::ExportLayout(WindowStateToml* state) const {
     state->global_loop_enabled			     = m_pending_global_loop_enabled;
     state->vsync				     = m_pending_vsync_enabled;
     state->thumbnail_format			     = m_pending_thumbnail_format;
+    state->image_thumbnail_tier			     = m_pending_image_thumbnail_tier;
+    state->video_thumbnail_tier			     = m_pending_video_thumbnail_tier;
 }

@@ -6,6 +6,8 @@
 #include <expected>
 #include <filesystem>
 #include <functional>
+#include <optional>
+#include <utility>
 #include <vector>
 
 // Synchronous, thread-free image operations wrapping stb + libwebp. These are pure
@@ -29,6 +31,13 @@ decode_file(const std::filesystem::path &file, int desired_channels = 4);
 [[nodiscard]] std::expected<ImageBuffer, ImageError>
 decode_video_thumbnail(const std::filesystem::path &file, int thumbnail_size,
                        int desired_channels = 4);
+
+// Probe just the pixel dimensions of the first video/image stream WITHOUT decoding a frame
+// (header-only: avformat open + find_stream_info). Used at scan time for formats stb_image
+// cannot measure — AVIF/HEIF in particular — so the masonry view can size cells to the true
+// aspect instead of the 16:9 fallback. Returns nullopt on failure.
+[[nodiscard]] std::optional<std::pair<int, int>>
+probe_dimensions(const std::filesystem::path &file);
 
 // Single-threaded resize (stb_image_resize2, linear). The multithreaded split-based
 // resize lives in ImageJobSystem and is validated bit-exact against this one.

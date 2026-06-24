@@ -1,6 +1,9 @@
 #include "pch.hpp" // NOLINT
 #include "vulkan_texture.hpp"
 
+#include "image_buffer.hpp" // img::ImageBuffer (AVIF/HEIF decode result)
+#include "image_ops.hpp"    // img::ops::decode_file — FFmpeg path for AV1-in-HEIF formats
+
 // stb implementations are compiled in the standalone `stb` library (see
 // CMakeLists.txt); include the headers here declaration-only.
 #include <stb_image.h>
@@ -100,6 +103,21 @@ bool VulkanTexture::load(const std::filesystem::path &path, vulkan_context &vk) 
     int            h          = 0;
     unsigned char *pixels     = nullptr;
     bool           is_webp    = false;
+
+    // AVIF / HEIF: stb has no AV1-in-HEIF decoder, so route these through FFmpeg
+    // (libavcodec decodes the AV1/HEVC payload). decode_file returns RGBA already.
+    {
+        std::string ext = path.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (ext == ".avif" || ext == ".heic" || ext == ".heif") {
+            auto dec = img::ops::decode_file(path, k_channels);
+            if (!dec || !dec->valid())
+                return false;
+            return upload(*dec, vk);
+        }
+    }
 
     // 1. Decode Image Data
     if (path.extension() == ".webp" || path.extension() == ".WEBP") {

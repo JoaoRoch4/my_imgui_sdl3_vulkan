@@ -68,7 +68,7 @@ bool IsHoverPreviewMediaPath(std::filesystem::path const &path) {
 	}();
 
 	static std::unordered_set<std::string> const k_image_exts
-		= {".jpg", ".jpeg", ".png", ".bmp", ".tga", ".gif", ".webp"};
+		= {".jpg", ".jpeg", ".png", ".bmp", ".tga", ".gif", ".webp", ".avif", ".heic", ".heif"};
 	return k_image_exts.count(ext) > 0;
 }
 
@@ -435,6 +435,7 @@ void AppCoordinator::apply_file_explorer_layout(ImGui::FileBrowser &fb, WindowSt
 		fb.SetMasonryThumbnailSize(
 			ImVec2 {state.file_explorer_masonry_thumb_size->x, state.file_explorer_masonry_thumb_size->y});
 	fb.SetMasonryColumns(state.file_explorer_masonry_columns);
+	fb.SetScrollStep(state.file_explorer_scroll_step_px);
 	if (!state.file_explorer_last_directory.empty())
 		fb.SetDirectory(state.file_explorer_last_directory);
 }
@@ -461,6 +462,7 @@ void AppCoordinator::export_file_explorer_layout(ImGui::FileBrowser &fb, WindowS
 		state->file_explorer_masonry_thumb_size = WindowStateToml::Vec2Toml {ms.x, ms.y};
 	}
 	state->file_explorer_masonry_columns = fb.GetMasonryColumns();
+	state->file_explorer_scroll_step_px  = fb.GetScrollStep();
 	state->file_explorer_recent_directories.clear();
 	for (auto const &dir : fb.GetRecentDirectories())
 		state->file_explorer_recent_directories.push_back(dir.string());
@@ -504,11 +506,17 @@ ImGui::FileBrowser &AppCoordinator::open_file_explorer() {
 		if (auto *b = fb_ptr())
 			b->RebuildThumbnail(path);
 	});
+	// A/D image navigation opens the focused image in the viewer — same path the
+	// context-menu "open" and confirm-selection use.
+	fb->SetOpenFileCallback([this](std::filesystem::path const &path) {
+		m_open_image_dialogs->queue_path(path.string());
+	});
 
 	// Start the async thumbnail engine (fresh scanner + video worker threads), then
 	// restore the persisted layout (directory, sort, view, thumbnail sizes).
 	if (m_vk && !m_explorer_thumb_dir.empty())
-		fb->Setup(m_vk, m_explorer_thumb_dir, m_config_runtime->ThumbnailFormat());
+		fb->Setup(m_vk, m_explorer_thumb_dir, m_config_runtime->ThumbnailFormat(),
+			m_config_runtime->ImageThumbnailTier(), m_config_runtime->VideoThumbnailTier());
 	apply_file_explorer_layout(*fb, *MemoryManagement::GetInstance<WindowStateToml>());
 	fb->Open();
 	return *fb;

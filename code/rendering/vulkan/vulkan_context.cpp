@@ -162,6 +162,10 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 			requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
 			requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME);
 			requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+			// Live per-process VRAM budget (used to auto-size thumbnail texture resolution).
+			// Optional: filtered out below when the device lacks it, then available_vram_bytes()
+			// falls back to the static device-local heap size.
+			requested_device_extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
 			uint32_t                           properties_count;
 			std::vector<VkExtensionProperties> properties;
@@ -190,6 +194,11 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 			device_extensions.push_back(ext);
 		}
+
+		// Record whether the budget extension survived the availability filter so
+		// available_vram_bytes() knows it may chain VkPhysicalDeviceMemoryBudgetPropertiesEXT.
+		memory_budget_enabled = std::any_of(device_extensions.begin(), device_extensions.end(),
+			[](char const *e) { return strcmp(e, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0; });
 
 		APP_DEBUG_LOG("[vulkan_context] device extensions enabled: {}", device_extensions.size());
 		for (char const *ext : device_extensions) {
@@ -263,7 +272,8 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 		// Reserve a chunk of VRAM up front to keep memory headroom predictable
 		// for this application workload. Best-effort only: failure is logged.
-		constexpr VkDeviceSize k_vram_reserve_size = static_cast<VkDeviceSize>(1024ULL * 1024ULL);
+		constexpr uint64_t m_buget = 1024ULL * 512ULL;
+		constexpr VkDeviceSize k_vram_reserve_size = static_cast<VkDeviceSize>(m_buget);
 
 		VkBufferCreateInfo reserve_buffer_info = {};
 		reserve_buffer_info.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -353,6 +363,43 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 	APP_DEBUG_LOG("[vulkan_context] setup done");
 	}
+
+VkDeviceSize vulkan_context::available_vram_bytes() const {
+	if (physical_device == VK_NULL_HANDLE)
+		return 0;
+
+	// Chain the budget struct only when the extension is enabled; otherwise the driver
+	// leaves it untouched and we use the static heap size instead.
+	VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {};
+	budget.sType                                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+
+	VkPhysicalDeviceMemoryProperties2 props2 = {};
+	props2.sType                             = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+	if (memory_budget_enabled)
+		props2.pNext = &budget;
+
+	vkGetPhysicalDeviceMemoryProperties2(physical_device, &props2);
+	VkPhysicalDeviceMemoryProperties const &mp = props2.memoryProperties;
+
+	// Take the largest DEVICE_LOCAL heap — the GPU's VRAM. (On UMA/iGPU this is shared
+	// system memory, which is the correct budget there too.)
+	VkDeviceSize ideal = 0;
+	for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
+		if ((mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0)
+			continue;
+		VkDeviceSize avail = mp.memoryHeaps[i].size; // safe baseline = total heap size
+		if (memory_budget_enabled && budget.heapBudget[i] != 0) {
+			// heapBudget = what the OS will currently let THIS process use; subtract the
+			// amount already allocated for the live free figure.
+			VkDeviceSize const used = budget.heapUsage[i];
+			avail                   = budget.heapBudget[i] > used ? budget.heapBudget[i] - used : 0;
+		}
+		constexpr double discountPerCent = 0.15;
+		const double res = avail - (avail * discountPerCent);
+		ideal = static_cast<VkDeviceSize>(std::round(res));
+	}
+	return ideal;
+}
 
 void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const {
 	VkBool32 res;

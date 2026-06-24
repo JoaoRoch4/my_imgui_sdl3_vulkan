@@ -116,6 +116,26 @@ void ConfigRuntimeUiContext::DrawUi(ConfigRuntime *cfg) {
 			}
 			ImGui::SameLine();
 			ImGui::TextDisabled("bc1 = GPU block-compressed (~8x smaller); applies next run");
+
+			// Per-type quality presets. Image tiers cap the (lossless RGBA) decode resolution;
+			// video tiers set the BC1 letterbox size. Both apply at file-browser setup (next run).
+			constexpr std::array<char const*, 4> k_tiers = {"original", "high", "medium", "low"};
+			auto tier_combo = [&](char const* label, std::string& pending, char const* help) {
+				int idx = 0;
+				for (int i = 0; i < static_cast<int>(k_tiers.size()); ++i)
+					if (pending == k_tiers[static_cast<std::size_t>(i)]) {
+						idx = i;
+						break;
+					}
+				if (ImGui::Combo(label, &idx, k_tiers.data(), static_cast<int>(k_tiers.size())))
+					pending = k_tiers[static_cast<std::size_t>(idx)];
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s", help);
+			};
+			tier_combo("Image quality##img_tier", cfg->m_pending_image_thumbnail_tier,
+				"resolution cap (lossless RGBA); applies next run");
+			tier_combo("Video quality##vid_tier", cfg->m_pending_video_thumbnail_tier,
+				"BC1 letterbox size; applies next run");
 		}
 
 		if (playback_changed && cfg->m_on_video_playback_changed) {
@@ -179,6 +199,14 @@ void ConfigRuntimeUiContext::DrawUi(ConfigRuntime *cfg) {
 		}
 		ImGui::SameLine();
 		ImGui::TextDisabled("0 = auto (driven by column-width hint above)");
+
+		int scrollStep = fb ? fb->GetScrollStep() : 40;
+		ImGui::SetNextItemWidth(160.0f);
+		if (ImGui::SliderInt("Keyboard scroll step##fe_scroll_step", &scrollStep, 4, 400, "%d px") && fb) {
+			fb->SetScrollStep(scrollStep);
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("W/S scroll amount (Shift+W/S pages)");
 
 		ImGui::EndDisabled();
 		if (fb == nullptr)

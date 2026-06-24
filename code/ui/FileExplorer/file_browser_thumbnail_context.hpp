@@ -35,8 +35,11 @@ class FileBrowserThumbnailContext {
 		// @p thumbnail_format selects storage: "bc1" (GPU block-compressed single-blob,
 		// default) or "png" (per-file fallback). bc1 auto-falls-back to png when the
 		// device lacks textureCompressionBC.
+		// @p image_tier / @p video_tier are quality presets ("original"|"high"|"medium"|"low")
+		// bundling a resolution cap (and, for video, the BC1 letterbox size). See setup().
 		void               setup(vulkan_context *vk, std::filesystem::path thumb_dir,
-		                         std::string thumbnail_format = "bc1");
+		                         std::string thumbnail_format = "bc1", std::string image_tier = "original",
+		                         std::string video_tier = "medium");
 		void               shutdown();
 		[[nodiscard]] bool is_setup() const noexcept { return m_setup; }
 
@@ -56,6 +59,9 @@ class FileBrowserThumbnailContext {
 
 		void evict(std::filesystem::path const &path); // regenerate next get()
 		void clear(); // drop everything + delete PNGs
+		// Free all live GPU textures + in-memory entries (keeps the on-disk caches). Call on a
+		// directory switch so the previous folder's thumbnail VRAM is reclaimed.
+		void release_textures();
 
 		// True for files we generate thumbnails for (images + videos).
 		[[nodiscard]] static bool is_thumbnailable(std::filesystem::path const &path);
@@ -71,14 +77,23 @@ class FileBrowserThumbnailContext {
 		// scan-time precompute can build it off the render hot path.
 		[[nodiscard]] static std::string make_key(std::filesystem::path const &path);
 
-		static constexpr int k_thumb_w               = 640;
-		static constexpr int k_thumb_h               = 480;
+		// Default VIDEO thumbnail letterbox size (the "medium" tier). The live values are
+		// m_thumb_w/m_thumb_h, set from the video quality tier in setup().
+		static constexpr int k_thumb_w_default       = 640;
+		static constexpr int k_thumb_h_default       = 480;
+		// Image thumbnails decode at NATIVE resolution (full quality, matching the hover
+		// preview) instead of the k_thumb_w x k_thumb_h letterbox; m_image_max_edge caps the
+		// long edge purely as a VRAM guard for huge sources. Masonry cells never exceed the
+		// window width, so it is visually lossless at display size. Videos ignore it.
+		// Auto-sized from available VRAM in setup(); this is the fallback when the GPU can't
+		// report its memory.
+		static constexpr int k_image_max_edge_default = 2048;
 		static constexpr int k_max_uploads_per_frame = 4;
 		static constexpr int k_retire_frames         = 3;
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are
 		// retired so a folder with thousands of files can't exhaust samplers/descriptors/
 		// VRAM. Must comfortably exceed the number of thumbnails visible at once.
-		static constexpr int k_max_live_textures     = 1024 *8;
+		static constexpr int k_max_live_textures     = 1024 *2;
 
 	private:
 
@@ -107,6 +122,14 @@ class FileBrowserThumbnailContext {
 				// gates future polling); tried_mpv prevents an infinite re-derive loop.
 				bool                           source_is_video = false;
 				bool                           tried_mpv       = false;
+				// Per-entry storage route (decided in get(), not global). The backend is no
+				// longer one-size-fits-all: BC1's 4-colour-per-block quantization bands badly on
+				// flat-shaded art, so only VIDEO thumbs take it (motion hides it + decode is the
+				// real cost). Images decode to lossless RGBA and are NOT persisted to disk —
+				// stb decode is cheap enough that a thumbnail cache buys nothing.
+				//   use_bc1 == true  -> video, BC1 blob cache (m_backend == Bc1)
+				//   use_bc1 == false -> RGBA upload; png_path set only for the no-BC video fallback
+				bool                           use_bc1 = false;
 				std::future<ImgResult>         img_future; // image path: composite ImageJobSystem job
 				img::ImageBuffer               pixels; // PixelsReady: RGBA awaiting GPU upload
 				bool                           have_pixels = false;
@@ -151,6 +174,9 @@ class FileBrowserThumbnailContext {
 		bool                  m_setup = false;
 
 		Backend            m_backend = Backend::Png; // resolved in setup()
+		int                m_image_max_edge = k_image_max_edge_default; // auto-sized from VRAM + image tier
+		int                m_thumb_w = k_thumb_w_default; // video BC1 letterbox size (video tier)
+		int                m_thumb_h = k_thumb_h_default;
 		ThumbnailBlobCache m_blob;                   // BC1 backend store (single blob + index)
 
 		std::unordered_map<std::string, Entry, StringHash, std::equal_to<>> m_entries; // render-thread only

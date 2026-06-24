@@ -19,7 +19,7 @@ ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags, std::filesystem::pa
 	, setFocusToEditDir_(false)
 	, sortField_(SortField::Name)
 	, mediaFilter_(MediaFilter::All)
-	, keepOpen_(false) {
+	, keepOpen_(true) {
 	assert(!((flags_ & ImGuiFileBrowserFlags_SelectDirectory) && (flags_ & ImGuiFileBrowserFlags_EnterNewFilename))
 		&& "'EnterNewFilename' doesn't work when 'SelectDirectory' is enabled");
 	if (flags_ & ImGuiFileBrowserFlags_CreateNewDir) {
@@ -412,7 +412,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 	Checkbox("Keep open", &keepOpen_);
 	if (m_thumbnails.is_setup()) {
 		SameLine();
-		Checkbox("Thumbnails", &showThumbnails_);
+		if (Checkbox("Thumbnails", &showThumbnails_) && !showThumbnails_)
+			m_thumbnails.release_textures(); // disabling thumbnails frees their GPU textures
 		ToolTip("Show or hide file thumbnails");
 		if (showThumbnails_) {
 			SameLine();
@@ -486,7 +487,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				return static_cast<char>(std::tolower(c));
 			});
 			if (mediaFilter_ == MediaFilter::Images)
-				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp" || e == ".gif";
+				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp" || e == ".gif"
+					|| e == ".avif" || e == ".heic" || e == ".heif";
 			// MediaFilter::Videos — video + animated formats
 			return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv" || e == ".flv"
 				|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
@@ -506,6 +508,160 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				return static_cast<float>(rsc.source_w) / static_cast<float>(rsc.source_h);
 			return 16.0f / 9.0f;
 		};
+
+		// Image thumbnails are now stored at their NATIVE aspect/resolution (full quality, no
+		// baked letterbox). Masonry sizes its cells to that aspect, so it can fill directly;
+		// the fixed-cell list/grid views letterbox at DISPLAY time via this helper, drawing the
+		// image centred at the largest size that fits the cell without distortion. Videos keep
+		// their fixed-AR letterboxed texture, so they still fill the cell (skip this).
+		auto const draw_thumb_fitted = [&aspect_for](ImTextureID tex, FileRecord const& rsc, ImVec2 cell) {
+			if (rsc.isVideoThumb) { // letterboxed video frame — fill the cell as before
+				ImVec2 const cur = GetCursorScreenPos();
+				Dummy(cell);
+				GetWindowDrawList()->AddImage(tex, cur, {cur.x + cell.x, cur.y + cell.y});
+				return;
+			}
+			float const a = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
+			float       w = cell.x, h = cell.x / a;
+			if (h > cell.y) { h = cell.y; w = cell.y * a; }
+			ImVec2 const cur = GetCursorScreenPos();
+			Dummy(cell); // reserve the full cell so hit-testing/layout match the old Image()
+			ImVec2 const o = {(cell.x - w) * 0.5f, (cell.y - h) * 0.5f};
+			GetWindowDrawList()->AddImage(tex, {cur.x + o.x, cur.y + o.y}, {cur.x + o.x + w, cur.y + o.y + h});
+		};
+
+		// ── Keyboard navigation / actions ──────────────────────────────────────
+		// Active only when the explorer is focused and no text field is being edited, so it
+		// never steals keys from the search / rename inputs. All handling lives inside the
+		// "ch" child so SetScrollY()/SetScrollHereY() target the scrollable file list.
+		if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !IsAnyItemActive()) {
+			ImGuiIO const& io    = GetIO();
+			bool const     shift = io.KeyShift;
+			bool const     ctrl  = io.KeyCtrl;
+
+			// W/S scroll the list with a smooth ease-in-out-sine glide (Shift pages a near-full
+			// view height, PgUp/PgDn feel). Each repeat re-aims the target one step from the
+			// CURRENT position and restarts the ease, so a tap glides once and a hold scrolls
+			// continuously — no pixel jumps. ONLY keyboard scroll is animated; the mouse wheel
+			// and scrollbar are left to ImGui (a wheel tick cancels an in-flight glide).
+			if (!ctrl) {
+				float const page = std::max(40.0f, GetWindowHeight() * 0.9f);
+				float const maxY = GetScrollMaxY();
+				float       dy   = 0.0f;
+				if (IsKeyPressed(ImGuiKey_W, true))
+					dy -= shift ? page : static_cast<float>(scrollStepPx_);
+				if (IsKeyPressed(ImGuiKey_S, true))
+					dy += shift ? page : static_cast<float>(scrollStepPx_);
+
+				if (dy != 0.0f) {
+					scrollAnimStart_   = GetScrollY();
+					scrollAnimTarget_  = std::clamp(GetScrollY() + dy, 0.0f, maxY);
+					scrollAnimElapsed_ = 0.0f;
+					scrollAnimActive_  = true;
+				}
+
+				if (scrollAnimActive_) {
+					if (io.MouseWheel != 0.0f) {
+						scrollAnimActive_ = false; // yield to the wheel — keyboard-only animation
+					} else {
+						constexpr float k_dur = 0.15f; // seconds to glide one step
+						scrollAnimElapsed_ += io.DeltaTime;
+						float const t = (k_dur > 0.0f) ? std::clamp(scrollAnimElapsed_ / k_dur, 0.0f, 1.0f) : 1.0f;
+						float const e = -(std::cos(3.14159265358979f * t) - 1.0f) * 0.5f; // ease-in-out-sine
+						SetScrollY(scrollAnimStart_ + (scrollAnimTarget_ - scrollAnimStart_) * e);
+						if (t >= 1.0f)
+							scrollAnimActive_ = false;
+					}
+				}
+			}
+
+			// A/D jump to the previous/next visible IMAGE (skip dirs + videos, wrap at the
+			// ends): move the selection, scroll it into view, fire the hover preview and open.
+			if (!ctrl) {
+				int dir = 0;
+				if (IsKeyPressed(ImGuiKey_D, false))
+					dir = +1;
+				else if (IsKeyPressed(ImGuiKey_A, false))
+					dir = -1;
+				if (dir != 0 && !fileRecords_.empty()) {
+					auto const is_image_nav = [&](FileRecord const& r) -> bool {
+						if (r.isDir || r.thumbKey.empty() || r.isVideoThumb)
+							return false;
+						if (!IsExtensionMatched(r.extension) || !isMediaMatched(r.extension))
+							return false;
+						if (!tagFilter_.empty()
+							&& std::find(r.tags.begin(), r.tags.end(), tagFilter_) == r.tags.end())
+							return false;
+						if (!r.name.empty() && r.name.c_str()[0] == '$')
+							return false;
+						if (!lowerSearch.empty()
+							&& ToLower(u8StrToStr(r.name.u8string())).find(lowerSearch) == std::string::npos)
+							return false;
+						return true;
+					};
+					int const n   = static_cast<int>(fileRecords_.size());
+					int       cur = -1;
+					if (!selectedFilenames_.empty()) {
+						auto const& sel = *selectedFilenames_.begin();
+						for (int i = 0; i < n; ++i)
+							if (fileRecords_[static_cast<std::size_t>(i)].name == sel) {
+								cur = i;
+								break;
+							}
+					}
+					int const start = (cur >= 0) ? cur : (dir > 0 ? -1 : n);
+					for (int step = 1; step <= n; ++step) {
+						int const idx = ((start + dir * step) % n + n) % n;
+						if (is_image_nav(fileRecords_[static_cast<std::size_t>(idx)])) {
+							auto const& rec      = fileRecords_[static_cast<std::size_t>(idx)];
+							selectedFilenames_   = {rec.name};
+							rangeSelectionStart_ = static_cast<unsigned int>(idx);
+							scrollToIdx_         = idx;
+							auto const full      = currentDirectory_ / rec.name;
+							if (hoverFileCallback_)
+								hoverFileCallback_(full);
+							if (openFileCallback_)
+								openFileCallback_(full);
+							break;
+						}
+					}
+				}
+			}
+
+			// Delete -> OS trash (recoverable). Shift+Delete -> permanent (confirm modal,
+			// opened below outside the child). Batch: every selected file; ".." is skipped.
+			if (IsKeyPressed(ImGuiKey_Delete, false) && !selectedFilenames_.empty()) {
+				std::vector<std::filesystem::path> targets;
+				for (auto const& nm : selectedFilenames_) {
+					if (nm == "..")
+						continue;
+					targets.push_back(currentDirectory_ / nm);
+				}
+				if (!targets.empty()) {
+					if (shift) {
+						pendingPermDelete_   = std::move(targets);
+						wantPermDeleteModal_ = true;
+					} else {
+						// Single-quote each path (escaping embedded quotes) so spaces and shell
+						// metacharacters in filenames can't break or inject into the command.
+						auto const shq = [](std::string const& s) {
+							std::string o = "'";
+							for (char c : s)
+								o += (c == '\'') ? std::string("'\\''") : std::string(1, c);
+							o += "'";
+							return o;
+						};
+						for (auto const& p : targets) {
+							std::string const cmd = "gio trash -- " + shq(p.string()) + " >/dev/null 2>&1";
+							std::system(cmd.c_str()); // NOLINT(cert-env33-c)
+							m_thumbnails.evict(p);
+						}
+						selectedFilenames_.clear();
+						RequestReload();
+					}
+				}
+			}
+		}
 
 		// ── Grid view ──────────────────────────────────────────────────────────
 		if (useGridView) {
@@ -535,6 +691,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 					TableNextColumn();
 					PushID(static_cast<int>(rscIdx));
+					if (static_cast<int>(rscIdx) == scrollToIdx_)
+						SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
 
 					bool const  selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 					float const thumbW   = gridThumbnailSize_.x;
@@ -549,7 +707,7 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 							? ImTextureID(0)
 							: m_thumbnails.get(rsc.thumbKey, currentDirectory_, rsc.name, rsc.isVideoThumb);
 						if (thumb)
-							Image(thumb, {thumbW, thumbH});
+							draw_thumb_fitted(thumb, rsc, {thumbW, thumbH});
 						else
 							Dummy({thumbW, thumbH});
 					}
@@ -629,11 +787,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 		// ── Masonry view ──────────────────────────────────────────────────────
 		// Column-balanced packing: every cell is sized to `colW × colW / aspect`
-		// and placed in the column with the smallest current Y. The thumbnail
-		// engine itself produces letterboxed images; the masonry layout is
-		// independent of the texture's storage aspect (we just stretch into the
-		// cell — letterbox bars in the texture render inside the cell, no global
-		// row gaps appear between cells).
+		// and placed in the column with the smallest current Y. Image thumbnails are
+		// stored at their native aspect/full resolution, so the cell aspect matches the
+		// texture and we fill the cell directly — no letterbox bars, no distortion, full
+		// quality (identical to the hover preview). (Video thumbs keep a fixed-AR frame.)
 		if (useMasonryView) {
 			float const  availW   = GetContentRegionAvail().x;
 			float const  spacingX = GetStyle().ItemSpacing.x;
@@ -685,6 +842,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					origin.y + colY[static_cast<std::size_t>(col)]};
 				SetCursorPos(slotPos);
 				PushID(static_cast<int>(rscIdx));
+				if (static_cast<int>(rscIdx) == scrollToIdx_)
+					SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
 
 				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
@@ -804,7 +963,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					}
 				}
 
-				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+				if (static_cast<int>(rscIndex) == scrollToIdx_)
+						SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
+
+					bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
 #if IMGUI_VERSION_NUM >= 19100
 				const ImGuiSelectableFlags selectableFlag = ImGuiSelectableFlags_NoAutoClosePopups;
@@ -823,7 +985,7 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					float const       ty    = GetCursorPosY();
 					if (thumb) {
 						SetCursorPosY(ty + 1.0f);
-						Image(thumb, thumbnailSize_);
+						draw_thumb_fitted(thumb, rsc, thumbnailSize_);
 					} else {
 						Dummy(thumbnailSize_);
 					}
@@ -916,6 +1078,39 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				}
 			}
 		} // if (!useGridView)
+
+		scrollToIdx_ = -1; // consumed by the view loops above (SetScrollHereY)
+	}
+
+	// Permanent-delete confirmation (Shift+Delete). Opened here, OUTSIDE the "ch" child,
+	// so OpenPopup and BeginPopupModal share the same ID scope. Trash deletes need no
+	// confirmation (recoverable); this bypasses the trash, so it must be deliberate.
+	if (wantPermDeleteModal_) {
+		OpenPopup("##fb_perm_delete");
+		wantPermDeleteModal_ = false;
+	}
+	if (BeginPopupModal("##fb_perm_delete", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		Text("Permanently delete %d item(s)?", static_cast<int>(pendingPermDelete_.size()));
+		TextDisabled("This bypasses the trash and cannot be undone.");
+		Separator();
+		bool const confirm = Button("Delete permanently", ImVec2(180.0f, 0.0f));
+		SameLine();
+		bool const cancel = Button("Cancel", ImVec2(120.0f, 0.0f)) || IsKeyPressed(ImGuiKey_Escape);
+		if (confirm) {
+			for (auto const& p : pendingPermDelete_) {
+				std::error_code ec;
+				std::filesystem::remove_all(p, ec);
+				m_thumbnails.evict(p);
+			}
+			pendingPermDelete_.clear();
+			selectedFilenames_.clear();
+			RequestReload();
+			CloseCurrentPopup();
+		} else if (cancel) {
+			pendingPermDelete_.clear();
+			CloseCurrentPopup();
+		}
+		EndPopup();
 	}
 
 	if (shouldSetNewDir) {
@@ -979,9 +1174,12 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 	SameLine();
 
-	bool const doClose = Button("cancel") || shouldClose_
-		|| ((flags_ & ImGuiFileBrowserFlags_CloseOnEsc) && IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
-			&& IsKeyPressed(ImGuiKey_Escape));
+	// Esc closes the browser — but NOT while a popup/modal is open (e.g. the permanent-delete
+	// confirmation), so Esc there only dismisses the popup instead of closing the whole browser.
+	bool const escClose = (flags_ & ImGuiFileBrowserFlags_CloseOnEsc)
+		&& IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && IsKeyPressed(ImGuiKey_Escape)
+		&& !IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+	bool const doClose = Button("cancel") || shouldClose_ || escClose;
 	if (doClose) {
 		closeContainer();
 	}
@@ -1172,12 +1370,21 @@ void ImGui::FileBrowser::SetRebuildThumbnailCallback(std::function<void(std::fil
 	rebuildThumbnailCallback_ = std::move(cb);
 }
 
+void ImGui::FileBrowser::SetOpenFileCallback(std::function<void(std::filesystem::path const&)> cb) {
+	openFileCallback_ = std::move(cb);
+}
+
+void ImGui::FileBrowser::SetScrollStep(int px) noexcept { scrollStepPx_ = std::clamp(px, 1, 4000); }
+int  ImGui::FileBrowser::GetScrollStep() const noexcept { return scrollStepPx_; }
+
 void ImGui::FileBrowser::SetPreviewEnabled(bool enabled) noexcept { previewEnabled_ = enabled; }
 
 bool ImGui::FileBrowser::IsPreviewEnabled() const noexcept { return previewEnabled_; }
 
-void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format) {
-	m_thumbnails.setup(vk, std::move(thumb_dir), std::move(thumbnail_format));
+void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format,
+	std::string image_tier, std::string video_tier) {
+	m_thumbnails.setup(vk, std::move(thumb_dir), std::move(thumbnail_format), std::move(image_tier),
+		std::move(video_tier));
 }
 
 void ImGui::FileBrowser::ClearThumbnailCache() { m_thumbnails.clear(); }
@@ -1384,7 +1591,12 @@ void ImGui::FileBrowser::SetCurrentDirectoryUncatched(std::filesystem::path cons
 		(void)probe;
 	}
 
-	currentDirectory_ = target;
+	// Free the previous folder's thumbnail textures so VRAM doesn't accumulate as the user
+	// navigates (full-res image thumbnails are large). Skip on a same-folder refresh.
+	bool const dirChanged = (currentDirectory_ != target);
+	currentDirectory_     = target;
+	if (dirChanged)
+		m_thumbnails.release_textures();
 	TouchRecentDirectory(currentDirectory_);
 	RequestReload();
 

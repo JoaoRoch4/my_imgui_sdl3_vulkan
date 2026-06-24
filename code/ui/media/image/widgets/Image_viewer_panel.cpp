@@ -5,8 +5,10 @@
  * Each open image is shown in its own resizable ImGui window.
  * The user can:
  *   - Scroll the mouse wheel        → zoom toward / away from the cursor.
- *   - Left-drag (zoom == 1)         → move the ImGui window (image is "draggable").
- *   - Left-drag (zoom > 1)          → pan the image within the canvas.
+ *   - Left-drag (image fits canvas) → move the ImGui window (image is "draggable").
+ *   - Left-drag (image overflows)   → pan the image within the canvas (zoomed in, OR a
+ *                                     tall/wide image that doesn't fit at zoom 1).
+ *   - WASD / arrow keys (overflows) → pan the image, mirroring the mouse drag.
  *   - Shift + Left-drag (any zoom)  → always move the ImGui window.
  *   - Double-click                  → reset zoom and pan to defaults.
  *
@@ -413,6 +415,13 @@ void ImageViewerPanel::handle_interactions(ImageEntry &entry,
     const float ppm = base_scale * entry.zoom;
     const bool shift_held = ImGui::GetIO().KeyShift;
 
+    // The image "overflows" the canvas when its on-screen size exceeds the canvas on either
+    // axis — either zoomed in, OR a tall/wide image that doesn't fit at fit-width zoom 1.
+    // Drag-to-pan and keyboard-pan are enabled whenever it overflows, not only when zoom > 1.
+    const float img_w_px = static_cast<float>(entry.texture.width);
+    const float img_h_px = static_cast<float>(entry.texture.height);
+    const bool  image_overflows = (img_w_px * ppm > size.x + 1.0f) || (img_h_px * ppm > size.y + 1.0f);
+
     // ---- Zoom-to-cursor (scroll wheel) ------------------------------------
     if (is_hovered && ImGui::GetIO().MouseWheel != 0.0f)
         update_zoom(entry, pos, base_scale);
@@ -420,7 +429,7 @@ void ImageViewerPanel::handle_interactions(ImageEntry &entry,
     // ---- Drag routing -------------------------------------------------------
     if (is_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
         const ImVec2 delta = ImGui::GetIO().MouseDelta;
-        const bool window_move_mode = shift_held || (entry.zoom <= 1.0f);
+        const bool window_move_mode = shift_held || !image_overflows;
 
         if (window_move_mode) {
             ImGuiWindow *window = ImGui::GetCurrentWindow();
@@ -454,10 +463,28 @@ void ImageViewerPanel::handle_interactions(ImageEntry &entry,
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
     } else if (is_hovered) {
-        if (shift_held || entry.zoom <= 1.0f)
+        if (shift_held || !image_overflows)
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         else
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+
+    // ---- Keyboard pan (WASD + arrow keys) — mirrors mouse-drag panning ------
+    // Active when the viewer is focused, no other item is capturing input, and the image
+    // actually overflows the canvas (otherwise there is nothing to pan). The offset moves
+    // in image-space; dividing a fixed screen-pixel step by ppm keeps the on-screen pan
+    // speed constant across zoom levels. clamp_view_to_bounds() bounds it afterwards.
+    if (image_overflows && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+        && !ImGui::IsAnyItemActive()) {
+        const float step = 16.0f / ppm; // ~16 screen px per frame -> image-space pixels
+        if (ImGui::IsKeyDown(ImGuiKey_RightArrow) || ImGui::IsKeyDown(ImGuiKey_D))
+            entry.offset.x += step;
+        if (ImGui::IsKeyDown(ImGuiKey_LeftArrow) || ImGui::IsKeyDown(ImGuiKey_A))
+            entry.offset.x -= step;
+        if (ImGui::IsKeyDown(ImGuiKey_DownArrow) || ImGui::IsKeyDown(ImGuiKey_S))
+            entry.offset.y += step;
+        if (ImGui::IsKeyDown(ImGuiKey_UpArrow) || ImGui::IsKeyDown(ImGuiKey_W))
+            entry.offset.y -= step;
     }
 
     // ---- Double-click reset -----------------------------------------------
@@ -489,15 +516,12 @@ void ImageViewerPanel::clamp_view_to_bounds(ImageEntry &entry,
     const float visible_w = canvas_size.x / ppm;
     const float visible_h = canvas_size.y / ppm;
 
-    if (entry.zoom <= 1.0f) {
-        // At fit-width scale the image exactly fills the canvas — no panning needed.
-        entry.offset = {0.0f, 0.0f};
-    } else {
-        // Clamp each axis: offset cannot go below 0 (left/top edge of image)
-        // or above image_size − visible_size (right/bottom edge).
-        entry.offset.x = std::clamp(entry.offset.x, 0.0f, std::max(0.0f, img_w - visible_w));
-        entry.offset.y = std::clamp(entry.offset.y, 0.0f, std::max(0.0f, img_h - visible_h));
-    }
+    // Clamp each axis INDEPENDENTLY by whether the image overflows the canvas on that axis.
+    // If it does, the offset is bounded to [0, image − visible] (can't pan past an edge);
+    // if it fits, the axis is locked at 0. This generalizes the old "zoom <= 1 => no pan"
+    // rule so a tall/wide image that overflows at fit-width zoom 1 can still be panned.
+    entry.offset.x = (img_w > visible_w) ? std::clamp(entry.offset.x, 0.0f, img_w - visible_w) : 0.0f;
+    entry.offset.y = (img_h > visible_h) ? std::clamp(entry.offset.y, 0.0f, img_h - visible_h) : 0.0f;
 }
 
 /**

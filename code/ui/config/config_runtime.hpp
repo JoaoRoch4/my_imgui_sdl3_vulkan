@@ -79,6 +79,11 @@ class ConfigRuntime {
 		/// setup; changes take effect on the next run.
 		[[nodiscard]] std::string ThumbnailFormat() const;
 
+		/// Per-type thumbnail quality presets ("original"|"high"|"medium"|"low"). Read at
+		/// file-browser setup; changes take effect on the next run.
+		[[nodiscard]] std::string ImageThumbnailTier() const;
+		[[nodiscard]] std::string VideoThumbnailTier() const;
+
 		/// Toggle VSync programmatically (fires the VSync changed callback).
 		void SetVsyncEnabled(bool enabled);
 
@@ -120,6 +125,8 @@ class ConfigRuntime {
 		bool                           m_pending_vsync_enabled;
 		std::function<void(bool)>      m_on_vsync_changed;
 		std::string                    m_pending_thumbnail_format;
+		std::string                    m_pending_image_thumbnail_tier;
+		std::string                    m_pending_video_thumbnail_tier;
 		std::function<void()>          m_on_restart_all_threads;
 		std::function<ImGui::FileBrowser*()> m_fb_provider;
 };

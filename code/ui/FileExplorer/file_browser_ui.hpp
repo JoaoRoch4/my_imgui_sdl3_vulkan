@@ -139,13 +139,24 @@ class FileBrowser {
 	// is set.  Pass nullptr to remove the menu item.
 	void SetRebuildThumbnailCallback(std::function<void(const std::filesystem::path&)> cb);
 
+	// set a callback invoked to OPEN a file (e.g. in the image viewer). Fired by the
+	// A/D image-navigation keys after they move the selection. The argument is the full
+	// absolute path. Decoupled so the browser need not know about the viewer.
+	void SetOpenFileCallback(std::function<void(const std::filesystem::path&)> cb);
+
+	// Keyboard scroll step in pixels for the W/S list-scroll keys (Shift+W/S page-scrolls
+	// a full view height instead). Persisted across runs; editable in the Runtime Config.
+	void              SetScrollStep(int px) noexcept;
+	[[nodiscard]] int GetScrollStep() const noexcept;
+
 	// enable/disable the hover preview (also togglable via the in-UI checkbox).
 	void		   SetPreviewEnabled(bool enabled) noexcept;
 	[[nodiscard]] bool IsPreviewEnabled() const noexcept;
 
 	// Attach the Vulkan context + on-disk thumbnail cache dir, enabling the browser-
 	// owned async thumbnail engine. Call once (render thread) after construction.
-	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format = "bc1");
+	void Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format = "bc1",
+		std::string image_tier = "original", std::string video_tier = "medium");
 	// Flush all cached thumbnails (in-memory + on-disk PNGs); regenerated on demand.
 	void ClearThumbnailCache();
 	// Drop one file's cached thumbnail so it regenerates on the next get().
@@ -304,6 +315,23 @@ class FileBrowser {
 	std::function<void(const std::filesystem::path&)>	 hoverFileCallback_;
 	std::function<void(const std::filesystem::path&)>	 contextMenuCallback_;
 	std::function<void(const std::filesystem::path&)>	 rebuildThumbnailCallback_;
+	std::function<void(const std::filesystem::path&)>	 openFileCallback_; // A/D image-open
+	// W/S keyboard scroll step (px); Shift+W/S page-scrolls. Editable in Runtime Config.
+	int							 scrollStepPx_ = 40;
+	// Smooth (ease-in-out-sine) KEYBOARD scroll. A W/S press re-aims the target one step from
+	// the current position and restarts the ease; the position glides there over k_dur. Only
+	// keyboard scroll is animated — the mouse wheel and scrollbar are left to ImGui untouched.
+	float							 scrollAnimStart_   = 0.0f;
+	float							 scrollAnimTarget_  = 0.0f;
+	float							 scrollAnimElapsed_ = 0.0f;
+	bool							 scrollAnimActive_  = false;
+	// Set by A/D image navigation to a fileRecords_ index; the next frame's view loop
+	// calls SetScrollHereY on that row to bring it into view, then resets this to -1.
+	int							 scrollToIdx_ = -1;
+	// Shift+Delete staging: paths awaiting permanent-delete confirmation, and a one-shot
+	// flag to open the confirm modal OUTSIDE the scroll child (so the popup ID scope matches).
+	std::vector<std::filesystem::path>			 pendingPermDelete_;
+	bool							 wantPermDeleteModal_ = false;
 	FileBrowserThumbnailContext				 m_thumbnails; // browser-owned async thumbnail engine
 	ImVec2							 thumbnailSize_	    = {64.0f, 36.0f};
 	ImVec2							 gridThumbnailSize_ = {160.0f, 90.0f};

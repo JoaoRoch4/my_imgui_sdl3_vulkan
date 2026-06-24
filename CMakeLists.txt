@@ -351,7 +351,9 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     -Wall -Wformat
 
     # Debug: include DWARF debug info
-    $<$<CONFIG:Debug>:-g>
+    $<$<CONFIG:Debug>:-g>    
+
+
     $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
     $<$<CONFIG:Debug>:-mno-omit-leaf-frame-pointer>
     $<$<CONFIG:RelWithDebInfo>:-g>

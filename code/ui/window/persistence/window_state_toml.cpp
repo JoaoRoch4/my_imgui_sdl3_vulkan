@@ -111,6 +111,8 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# Masonry column width in File Explorer (px); y is unused.";
   if (key == "file_explorer_masonry_columns")
     return "# Forced masonry column count (0 = auto-pick from masonry_thumb_size.x).";
+  if (key == "file_explorer_scroll_step_px")
+    return "# File Explorer W/S keyboard scroll step in px (Shift+W/S page-scrolls).";
   if (key == "global_video_playback_mode")
     return "# Global video playback mode: 0=SW MPV, 1=NVDEC MPV, 2=NVDEC "
            "libplacebo.";

@@ -139,10 +139,17 @@ struct WindowStateToml {
   bool show_file_explorer_window = false;
   bool show_console_window = false;
   bool vsync = true;
-  // Thumbnail storage backend: "bc1" (GPU block-compressed, ~8:1, default) or
-  // "png" (portable fallback). bc1 auto-falls-back to png when the GPU lacks
-  // textureCompressionBC. Applied at file-browser setup (next run after a change).
+  // Thumbnail storage backend: "bc1" (hybrid, default) or "png" (portable fallback).
+  // "bc1" = video thumbs BC1-compressed into a shared blob (~8:1); image thumbs decode
+  // to lossless RGBA with NO disk cache (BC1 bands on flat-shaded art; image decode is
+  // cheap so a cache buys nothing). Auto-falls-back to "png" for everything when the GPU
+  // lacks textureCompressionBC. Applied at file-browser setup (next run after a change).
   std::string thumbnail_format = "bc1";
+  // Thumbnail quality presets ("original"|"high"|"medium"|"low"), separate per media type.
+  // Image tiers cap the (lossless RGBA) decode resolution; video tiers set the BC1 letterbox
+  // size. Applied at file-browser setup (next run after a change).
+  std::string image_thumbnail_tier = "original";
+  std::string video_thumbnail_tier = "medium";
   int video_resume_persist_min_duration_seconds = 30;
   bool hover_preview_enabled = true;
   int  hover_preview_delay_ms = 800;
@@ -162,6 +169,8 @@ struct WindowStateToml {
   std::optional<Vec2Toml> file_explorer_masonry_thumb_size;
   // Forced masonry column count (0 = auto-pick from masonry_thumb_size.x).
   int                     file_explorer_masonry_columns = 0;
+  // Keyboard scroll step (px) for the W/S keys in the File Explorer (Shift+W/S page-scrolls).
+  int                     file_explorer_scroll_step_px = 40;
   bool global_hwdec_enabled = false;
   int global_video_playback_mode = -1; // -1=derive from global_hwdec_enabled, else 0=SW MPV, 1=NVDEC MPV, 2=NVDEC libplacebo
   bool global_loop_enabled = false;
