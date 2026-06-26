@@ -35,6 +35,30 @@ uint32_t find_memory_type(VkPhysicalDevice physical_device,
 } // namespace
 
 // ============================================================
+// Compile-time tests for the letterbox geometry (video_subrect).
+// These pin the aspect math so a popup sized to the media stays undistorted.
+// ============================================================
+namespace {
+constexpr bool uv_eq(VideoHoverPreview::UvRect r,
+                     float u0, float v0, float u1, float v1) {
+    auto close = [](float a, float b) { return (a > b ? a - b : b - a) < 1e-4f; };
+    return close(r.u0, u0) && close(r.v0, v0) && close(r.u1, u1) && close(r.v1, v1);
+}
+// Source aspect == buffer aspect (16:9 in 16:9) → full frame, no bars.
+static_assert(uv_eq(VideoHoverPreview::video_subrect(1920, 1080, 1920, 1080),
+                    0.0f, 0.0f, 1.0f, 1.0f));
+// Portrait 9:16 in a 16:9 buffer → pillarbox left/right, full height.
+static_assert(uv_eq(VideoHoverPreview::video_subrect(1080, 1920, 1920, 1080),
+                    0.341797f, 0.0f, 0.658203f, 1.0f));
+// Ultrawide 21:9 in a 16:9 buffer → letterbox top/bottom, full width.
+static_assert(uv_eq(VideoHoverPreview::video_subrect(2560, 1080, 1920, 1080),
+                    0.0f, 0.125f, 1.0f, 0.875f));
+// Unknown source size → full frame (safe fallback, never crops real video).
+static_assert(uv_eq(VideoHoverPreview::video_subrect(0, 0, 1920, 1080),
+                    0.0f, 0.0f, 1.0f, 1.0f));
+} // namespace
+
+// ============================================================
 // Lifecycle
 // ============================================================
 
@@ -51,8 +75,8 @@ void VideoHoverPreview::setup(vulkan_context *vk) {
     _Debug("setup");
 
     m_vk = vk;
-    m_w  = static_cast<int>(preview_size.x);
-    m_h  = static_cast<int>(preview_size.y);
+    m_w  = static_cast<int>(capture_size.x);
+    m_h  = static_cast<int>(capture_size.y);
 
     init_mpv();
     create_shared();
@@ -105,6 +129,10 @@ void VideoHoverPreview::init_mpv() {
     m_mpv = mpv_create();
 
     mpv_set_option_string(m_mpv, "vo", "libmpv");
+
+	// Letterbox (preserve aspect) into the fixed capture buffer; the UI crops the
+	// bars via video_subrect(). Explicit so we never depend on the mpv default.
+	mpv_set_option_string(m_mpv, "keepaspect", "yes");
 
 	mpv_set_option_string(m_mpv, "pause", "yes");
     mpv_set_option_string(m_mpv, "mute", preview_sound ? "no" : "yes");
@@ -161,9 +189,11 @@ void VideoHoverPreview::start_thread() {
             if (ev && ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 m_waiting.store(false);
                 int64_t w = 0, h = 0;
-                if (mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w) == 0 &&
-                    mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h) == 0 && w > 0 && h > 0) {
-                    last_source_size = ImVec2{static_cast<float>(w), static_cast<float>(h)};
+                // dwidth/dheight = display dimensions (honor anamorphic SAR + rotation),
+                // which is what we must size the popup to. Published atomically for the UI.
+                if (mpv_get_property(m_mpv, "dwidth", MPV_FORMAT_INT64, &w) == 0 &&
+                    mpv_get_property(m_mpv, "dheight", MPV_FORMAT_INT64, &h) == 0 && w > 0 && h > 0) {
+                    set_source_size(static_cast<int>(w), static_cast<int>(h));
                 }
             }
 
@@ -642,30 +672,43 @@ bool VideoHoverPreview::save_frame(const std::filesystem::path &path) {
     _Debug("save {}", path.string());
     std::lock_guard lock(m_buf_mutex);
 
-    // Reject mostly-black frames so the caller retries on the next frame.
-    // Sample every 8th pixel (RGBA stride 4), compute average luma.
-    if (!m_buf.empty()) {
-        const int   total   = m_w * m_h;
-        const int   step    = 8;
-        uint64_t    sum     = 0;
-        int         count   = 0;
-        const auto *px      = m_buf.data();
-        for (int i = 0; i < total; i += step) {
-            const int base = i * 4;
-            // BT.601 integer luma: (77*R + 150*G + 29*B) / 256
-            sum += (77u  * px[base + 0] +
-                    150u * px[base + 1] +
-                    29u  * px[base + 2]) >> 8;
-            ++count;
+    if (m_buf.empty())
+        return false;
+
+    // Crop the letterbox bars so the saved PNG matches the live preview (media
+    // aspect, no black bars). The sub-rect mirrors video_subrect()/keepaspect; an
+    // unknown source size yields the full buffer (safe fallback).
+    const ImVec2 src    = source_size();
+    const UvRect r      = video_subrect(src.x, src.y,
+                                        static_cast<float>(m_w), static_cast<float>(m_h));
+    const size_t stride = static_cast<size_t>(m_w) * 4;
+
+    const float fw = static_cast<float>(m_w);
+    const float fh = static_cast<float>(m_h);
+    int x0 = std::clamp(static_cast<int>(std::lround(r.u0 * fw)), 0, m_w - 1);
+    int y0 = std::clamp(static_cast<int>(std::lround(r.v0 * fh)), 0, m_h - 1);
+    int cw = std::clamp(static_cast<int>(std::lround((r.u1 - r.u0) * fw)), 1, m_w - x0);
+    int ch = std::clamp(static_cast<int>(std::lround((r.v1 - r.v0) * fh)), 1, m_h - y0);
+
+    // Reject mostly-black frames (sampled over the cropped region only) so the
+    // caller retries on the next frame. BT.601 integer luma, coarse 8px sampling.
+    {
+        uint64_t sum = 0;
+        int      count = 0;
+        for (int y = y0; y < y0 + ch; y += 8) {
+            const uint8_t *row = m_buf.data() + static_cast<size_t>(y) * stride;
+            for (int x = x0; x < x0 + cw; x += 8) {
+                const uint8_t *px = row + static_cast<size_t>(x) * 4;
+                sum += (77u * px[0] + 150u * px[1] + 29u * px[2]) >> 8;
+                ++count;
+            }
         }
         if (count > 0 && (sum / static_cast<uint64_t>(count)) < 8u)
             return false; // black frame — skip
     }
 
-    bool res = static_cast<bool> (stbi_write_png(
-               path.string().c_str(),
-               m_w, m_h, 4,
-               m_buf.data(),
-               m_w * 4) != 0);
-    return res;
+    const uint8_t *start = m_buf.data() + static_cast<size_t>(y0) * stride +
+                           static_cast<size_t>(x0) * 4;
+    return stbi_write_png(path.string().c_str(), cw, ch, 4, start,
+                          static_cast<int>(stride)) != 0;
 }

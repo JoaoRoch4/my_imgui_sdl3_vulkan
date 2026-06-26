@@ -8,7 +8,18 @@ class ManagedThread;
 class VideoHoverPreview {
 	public:
 
-		static inline ImVec2 preview_size = {3000, 3000};
+		/// On-screen MAX size of the hover popup (display bound, user-configurable).
+		/// The actual window is fit to the media's aspect ratio within this box and
+		/// further clamped to a fraction of the screen, so it never overflows.
+		/// NOTE: display-only — it does NOT size the GPU capture buffer, so changing
+		/// it at runtime never reallocates Vulkan resources.
+		static inline ImVec2 preview_size = {960, 540};
+
+		/// FIXED resolution of the mpv SW render target / Vulkan texture / saved
+		/// thumbnail. Decoupled from preview_size so the popup can be resized to the
+		/// media without ever reallocating Vulkan resources (which would race the
+		/// render worker / crash the device). 16:9 → zero letterbox for common video.
+		static constexpr ImVec2 capture_size = {1920, 1080};
 
 		/// Runtime-mutable: enable/disable the hover preview popup entirely.
 		static inline bool enabled = true;
@@ -16,8 +27,42 @@ class VideoHoverPreview {
 		/// Runtime-mutable: play audio in hover preview (default: muted).
 		static inline bool preview_sound = false;
 
-		/// Last known native resolution of the loaded source (0×0 when unknown).
-		static inline ImVec2 last_source_size = {0.0f, 0.0f};
+		/// Last known native (display) resolution of the loaded source, published by
+		/// the mpv worker thread on VIDEO_RECONFIG and read on the UI thread. Stored as
+		/// one packed 64-bit atomic (w:hi32, h:lo32) so the (w,h) pair is always read
+		/// coherently — no torn reads, no mutex. Use the accessors below, not the field.
+		static inline std::atomic<uint64_t> s_source_size_bits {0};
+
+		static void set_source_size(int w, int h) noexcept {
+			s_source_size_bits.store(
+				(static_cast<uint64_t>(static_cast<uint32_t>(w)) << 32) |
+				 static_cast<uint64_t>(static_cast<uint32_t>(h)),
+				std::memory_order_relaxed);
+		}
+		[[nodiscard]] static ImVec2 source_size() noexcept {
+			const uint64_t b = s_source_size_bits.load(std::memory_order_relaxed);
+			return {static_cast<float>(b >> 32),
+			        static_cast<float>(b & 0xFFFFFFFFu)};
+		}
+
+		/// Normalized sub-rectangle of the capture buffer actually covered by the
+		/// (letterboxed, keepaspect=yes) video, for the given source + capture dims.
+		/// Pure + constexpr so the UI can crop the bars on display and the saver can
+		/// crop them out of the PNG — and so it is unit-checked at compile time.
+		struct UvRect { float u0, v0, u1, v1; };
+		static constexpr UvRect video_subrect(float src_w, float src_h,
+		                                       float cap_w, float cap_h) noexcept {
+			if (src_w <= 0.0f || src_h <= 0.0f || cap_w <= 0.0f || cap_h <= 0.0f)
+				return {0.0f, 0.0f, 1.0f, 1.0f};
+			const float src_aspect = src_w / src_h;
+			const float cap_aspect = cap_w / cap_h;
+			if (src_aspect > cap_aspect) {        // wider than buffer → bars top/bottom
+				const float pad = (1.0f - cap_aspect / src_aspect) * 0.5f;
+				return {0.0f, pad, 1.0f, 1.0f - pad};
+			}
+			const float pad = (1.0f - src_aspect / cap_aspect) * 0.5f;  // bars left/right
+			return {pad, 0.0f, 1.0f - pad, 1.0f};
+		}
 
 		/// Runtime-mutable: dwell time before the popup appears and mpv starts loading.
 		static inline std::chrono::milliseconds hover_delay {300};

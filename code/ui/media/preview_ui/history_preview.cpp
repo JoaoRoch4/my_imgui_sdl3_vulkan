@@ -28,6 +28,24 @@ ImVec2 g_history_preview_max_size = ImVec2(1000.0f, 1000.0f);
 
 namespace {
 
+/// On-screen size of the video hover popup: the media's native aspect ratio fit
+/// into the user's configured max (VideoHoverPreview::preview_size), then clamped
+/// to a fraction of the screen work area so it never overflows regardless of the
+/// configured size or the media resolution. Returns the bound itself when the
+/// source size is not yet known (first frames before VIDEO_RECONFIG).
+ImVec2 hover_preview_draw_size() {
+    const ImGuiViewport *vp = ImGui::GetMainViewport();
+    const float bound_w = std::min(VideoHoverPreview::preview_size.x, vp->WorkSize.x * 0.6f);
+    const float bound_h = std::min(VideoHoverPreview::preview_size.y, vp->WorkSize.y * 0.6f);
+
+    const ImVec2 src = VideoHoverPreview::source_size();
+    if (src.x <= 0.0f || src.y <= 0.0f)
+        return {bound_w, bound_h};
+
+    const float scale = std::min(bound_w / src.x, bound_h / src.y);
+    return {src.x * scale, src.y * scale};
+}
+
 /// Accumulation buffer used by the libcurl write callback.
 struct CurlBuf {
     std::vector<uint8_t> data; ///< Raw bytes received from the network.
@@ -467,14 +485,15 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
     // ------------------------------------------------------------------
     // Compute the clamped tooltip position before opening the window.
     //
-    // We use the maximum possible content size for the placement decision:
-    //   - Videos are always preview_size (fixed 320×180).
+    // We use the predicted content size for the placement decision:
+    //   - Videos are sized to the media's aspect ratio, clamped to the screen
+    //     (hover_preview_draw_size()), so the flip point matches what we draw.
     //   - Images are bounded by g_history_preview_max_size but may be smaller
     //     after aspect-ratio scaling.  Over-estimating shifts the flip point
     //     slightly early, which is harmless — the window always stays on screen.
     // ------------------------------------------------------------------
     const ImVec2 expected_content = is_video
-        ? VideoHoverPreview::preview_size   // fixed frame size
+        ? hover_preview_draw_size()         // media-aspect, screen-clamped
         : g_history_preview_max_size;       // conservative upper bound for images
 
     const ImVec2 mouse      = ImGui::GetMousePos();
@@ -543,17 +562,17 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
                 : m_video_player->hover_thumbnail(lookup_src);
 
         if (ds != VK_NULL_HANDLE) {
-            // Live frame available — render it, correcting for aspect ratio.
-            // mpv SW renderer fills the entire preview_size buffer by stretching;
-            // compute the display size from the source's native dimensions so the
-            // content appears with correct proportions.
-            const ImVec2 src_dims = VideoHoverPreview::last_source_size;
-            ImVec2 draw_size = VideoHoverPreview::preview_size;
-            if (src_dims.x > 0.0f && src_dims.y > 0.0f) {
-                const float scale = std::min(draw_size.x / src_dims.x, draw_size.y / src_dims.y);
-                draw_size = ImVec2(src_dims.x * scale, src_dims.y * scale);
-            }
-            ImGui::Image(std::bit_cast<ImTextureID>(ds), draw_size);
+            // Live frame available. The capture buffer letterboxes the source
+            // (keepaspect=yes), so size the window to the media (draw_size) and
+            // crop the bars via UV coords — no distortion, no GPU resize, and the
+            // source size is read coherently through the atomic accessor.
+            const ImVec2 src_dims = VideoHoverPreview::source_size();
+            const ImVec2 draw_size = hover_preview_draw_size();
+            const auto   uv = VideoHoverPreview::video_subrect(
+                src_dims.x, src_dims.y,
+                VideoHoverPreview::capture_size.x, VideoHoverPreview::capture_size.y);
+            ImGui::Image(std::bit_cast<ImTextureID>(ds), draw_size,
+                         ImVec2(uv.u0, uv.v0), ImVec2(uv.u1, uv.v1));
 
             // Opportunistically save this frame as a static thumbnail PNG so
             // that subsequent hovers can show something while the live preview loads.
@@ -606,11 +625,15 @@ void HistoryPreview::draw_for_hover(WindowStateToml::ImageHistoryEntry &hentry)
                     }
 
                     if (m_active_texture.is_loaded()) {
-                        // Scale the PNG to fit within preview_size, preserving aspect ratio.
-                        const float src_w = static_cast<float>(m_active_texture.width);
-                        const float src_h = static_cast<float>(m_active_texture.height);
-                        const float max_w = VideoHoverPreview::preview_size.x;
-                        const float max_h = VideoHoverPreview::preview_size.y;
+                        // The cached PNG is already cropped to the media aspect, so fit
+                        // it into the same screen-clamped bound as the live preview.
+                        const auto  src_w = static_cast<float>(m_active_texture.width);
+                        const auto  src_h = static_cast<float>(m_active_texture.height);
+                        const ImGuiViewport *vp = ImGui::GetMainViewport();
+                        const float max_w = std::min(VideoHoverPreview::preview_size.x,
+                                                     vp->WorkSize.x * 0.6f);
+                        const float max_h = std::min(VideoHoverPreview::preview_size.y,
+                                                     vp->WorkSize.y * 0.6f);
                         const float scale = std::min(max_w / src_w, max_h / src_h);
                         ImGui::Image(m_active_texture.imgui_id(),
                                      ImVec2(src_w * scale, src_h * scale));

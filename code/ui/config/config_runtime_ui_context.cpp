@@ -87,7 +87,7 @@ void ConfigRuntimeUiContext::RenderVideoPreviewSizeSection(ConfigRuntime* cfg) {
 			VideoHoverPreview::preview_size = cfg->m_pending_hover_size;
 
 		{
-			ImVec2 const src     = VideoHoverPreview::last_source_size;
+			ImVec2 const src     = VideoHoverPreview::source_size();
 			bool const   has_src = src.x > 0.0f && src.y > 0.0f;
 			ImGui::SameLine();
 			ImGui::BeginDisabled(!has_src);
