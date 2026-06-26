@@ -5,14 +5,6 @@
 #include "image_buffer.hpp"
 #include "image_types.hpp"
 
-#include <cstddef>
-#include <deque>
-#include <expected>
-#include <future>
-#include <memory>
-#include <mutex>
-#include <vector>
-
 class vulkan_context;
 
 // GPU-side BC1/DXT1 encoder driven by a compute shader (bc1_encode.comp).
@@ -66,9 +58,9 @@ public:
 
     // Soft cap on simultaneous in-flight batches (a batch is one cmdbuf+fence).
     // submit() falls back to CPU when the cap is reached.
-    static constexpr std::size_t k_max_in_flight_batches = 4;
+    std::size_t k_max_in_flight_batches = std::thread::hardware_concurrency();
     // Max blocks per dispatch — bounds the per-slot buffer size.  320x180 = 3600.
-    static constexpr std::size_t k_max_blocks_per_image  = 4096*2;
+    static constexpr std::size_t k_max_blocks_per_image  = std::numeric_limits<size_t>::max();
 
 private:
     struct Pending {

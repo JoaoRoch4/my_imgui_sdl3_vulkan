@@ -13,6 +13,13 @@ class vulkan_context;
 
 using ImGuiFileBrowserFlags = std::uint32_t;
 
+struct Dimensions {
+		float w      = 0.f; // largura em pixels
+		float h      = 0.f; // altura em pixels
+		float x      = 0.f; // posição X da janela (canto superior esquerdo)
+		float y      = 0.f; // posição Y da janela (canto superior esquerdo)
+		float aspect = 0.f; // proporção: w / h (ex: 1.7778 para 16:9)
+};
 enum ImGuiFileBrowserFlags_ : std::uint32_t {
     ImGuiFileBrowserFlags_SelectDirectory   = 1 << 0, // select directory instead of regular file
     ImGuiFileBrowserFlags_EnterNewFilename  = 1 << 1, // allow user to enter new filename when selecting regular file
@@ -41,13 +48,28 @@ enum ImGuiFileBrowserFlags_ : std::uint32_t {
 namespace ImGui {
 class FileBrowser {
     public:
-
 	explicit FileBrowser(ImGuiFileBrowserFlags flags	    = 0,
 	    std::filesystem::path		   defaultDirectory = std::filesystem::current_path());
 
 	// Non-copyable: owns a FileBrowserScanner (background std::jthread).
 	FileBrowser(const FileBrowser&)		   = delete;
 	FileBrowser& operator=(const FileBrowser&) = delete;
+
+	// Scroll animation tuning — all editable at runtime via ImGui.
+	void                SetScrollMinPageSizePx(float px) noexcept;
+	
+	[[nodiscard]] float GetScrollMinPageSizePx() const noexcept;
+	void                SetScrollShiftMultiplier(float multiplier) noexcept;
+	[[nodiscard]] float GetScrollShiftMultiplier() const noexcept;
+
+	void                SetScrollPageSizeRatio(float ratio) noexcept;
+	[[nodiscard]] float GetScrollPageSizeRatio() const noexcept;
+
+	void                SetScrollDistanceSensitivity(float sensitivity) noexcept;
+	[[nodiscard]] float GetScrollDistanceSensitivity() const noexcept;
+
+	void                SetScrollAnimDuration(float seconds) noexcept;
+	[[nodiscard]] float GetScrollAnimDuration() const noexcept;
 
 	// set the window position (in pixels)
 	// default is centered
@@ -200,9 +222,46 @@ class FileBrowser {
 	[[nodiscard]] bool GetKeepOpen() const noexcept;
 
 	// Media type filter (combo box in the toolbar).
-	enum class MediaFilter { All, Videos, Images };
+	enum class MediaFilter { All, Videos, Images, Media };
 	void			  SetMediaFilter(MediaFilter filter) noexcept;
 	[[nodiscard]] MediaFilter GetMediaFilter() const noexcept;
+
+	/**
+	 * @brief Retrieves the real aspect ratio of the currently selected file's thumbnail.
+	 * @return The calculated float aspect ratio (width / height). Returns 16:9 (1.7778f) as a safe
+	 * fallback.
+	 */
+	[[nodiscard]] float GetSelectedThumbnailAspectRatio() const noexcept;
+
+
+
+	 struct ThumbnailHeightEvaluator {
+			FileBrowser const* browserContext = nullptr;
+
+			/**
+			 * @brief Functional sub-component to handle height (Y) evaluations based on width (X).
+			 */
+			struct HeightAxisEvaluator {
+					FileBrowser const* parentContext = nullptr;
+
+					/**
+					 * @brief Evaluates and maps an input width to its aspect-correct height.
+					 * @param width The horizontal boundary size (X) in pixels.
+					 * @return The proportional vertical size (Y) in pixels.
+					 */
+					[[nodiscard]] float operator()(float width) const noexcept;
+			};
+
+			// Exposed sub-component property mimicking an isolated evaluation axis
+			HeightAxisEvaluator y;
+	};
+
+	/**
+	 * @brief Factory method to initialize and retrieve the height evaluator functoid layout.
+	 */
+	[[nodiscard]] ThumbnailHeightEvaluator GetHeightEvaluator() const noexcept {
+		return ThumbnailHeightEvaluator {this, ThumbnailHeightEvaluator::HeightAxisEvaluator {this}};
+	}
 
     private:
 
@@ -274,6 +333,7 @@ class FileBrowser {
 
 	static std::filesystem::path u8StrToPath(const char* str);
 
+
 	int		      width_;
 	int		      height_;
 	int		      posX_;
@@ -317,7 +377,7 @@ class FileBrowser {
 	std::function<void(const std::filesystem::path&)>	 rebuildThumbnailCallback_;
 	std::function<void(const std::filesystem::path&)>	 openFileCallback_; // A/D image-open
 	// W/S keyboard scroll step (px); Shift+W/S page-scrolls. Editable in Runtime Config.
-	int							 scrollStepPx_ = 40;
+	int							 scrollStepPx_ ;
 	// Smooth (ease-in-out-sine) KEYBOARD scroll. A W/S press re-aims the target one step from
 	// the current position and restarts the ease; the position glides there over k_dur. Only
 	// keyboard scroll is animated — the mouse wheel and scrollbar are left to ImGui untouched.
@@ -325,6 +385,13 @@ class FileBrowser {
 	float							 scrollAnimTarget_  = 0.0f;
 	float							 scrollAnimElapsed_ = 0.0f;
 	bool							 scrollAnimActive_  = false;
+	// Smooth keyboard scroll tuning (all runtime-editable).
+	float scrollMinPageSizePx_       = 40.0f; // px floor for page height
+	float scrollPageSizeRatio_       = 0.90f; // fraction of window height → page
+	float scrollDistanceSensitivity_ = 0.90f; // per-step distance scale
+	float scrollAnimDuration_        = 0.20f; // glide length in seconds
+	float scrollShiftMultiplier_ = 2.0f; // Shift+W/S multiplies stepSize by this
+
 	// Set by A/D image navigation to a fileRecords_ index; the next frame's view loop
 	// calls SetScrollHereY on that row to bring it into view, then resets this to -1.
 	int							 scrollToIdx_ = -1;
@@ -340,7 +407,7 @@ class FileBrowser {
 	ImVec2							 masonryThumbnailSize_ = {200.0f, 200.0f};
 	// 0 = auto column count (derived from masonryThumbnailSize_.x as a soft cap),
 	// otherwise force exactly N columns. Persisted in window_state.toml.
-	int 						 masonryColumns_   = 0;
+	int 						 masonryColumns_   = 1;
 	ViewMode						 viewMode_	    = ViewMode::List;
 	SortField						 sortField_	    = SortField::Name;
 	bool				   sortAscending_ = true; // direction applied to sortField_
@@ -349,7 +416,7 @@ class FileBrowser {
 	std::vector<std::filesystem::path> recentDirectories_;
 	bool				   previewEnabled_ = true;
 	bool showThumbnails_ = true; // render inline/grid thumbnails when a provider is set
-	bool keepOpen_	     = false; // when true, confirming a file does not close the browser
+	bool keepOpen_	     = true; // when true, confirming a file does not close the browser
 	bool windowVisible_  = false; // tracked open state for ImGuiFileBrowserFlags_Window
 
 	std::vector<std::string> availableTags_; ///< union of user.xdg.tags across all files in currentDirectory_
@@ -359,4 +426,4 @@ class FileBrowser {
 	std::uint32_t drives_;
 #endif
 };
-} // namespace ImGui
+} // espace ImGui

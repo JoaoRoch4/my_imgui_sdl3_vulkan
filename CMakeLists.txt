@@ -348,7 +348,8 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
 # ── Compile options ───────────────────────────────────────────────────────────
 target_compile_options(example_sdl3_vulkan PRIVATE
     # Warnings — always on
-    -Wall -Wformat
+    -Wall -Wformat 
+    
 
     # Debug: include DWARF debug info
     $<$<CONFIG:Debug>:-g>    
@@ -372,6 +373,7 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     # CPU profiles (esp. tight pixel loops in JPEG decode / stbir resize). Keep ASan
     # in Debug for correctness; profile RelWithDebInfo (or Release) clean.
 
+
     # Release (Clang only): aggressive optimisation + LTO + dead-code elimination
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-O3>
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-march=native>
@@ -384,7 +386,13 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     # Pass through any extra flags reported by pkg-config (FreeType / PlutoSVG)
     ${FREETYPE_CFLAGS_OTHER}
     ${PLUTOSVG_CFLAGS_OTHER}
+
+    $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<BOOL:$<COMPILE_LANGUAGE:Header>>>>:-save-temps=obj>
+    $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<BOOL:$<COMPILE_LANGUAGE:Header>>>>:-masm=att>
+    $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<BOOL:$<COMPILE_LANGUAGE:Header>>>>:-fdump-tree-gimple>
 )
+
+
 
 # ── Linker options ────────────────────────────────────────────────────────────
 target_link_options(example_sdl3_vulkan PRIVATE
@@ -463,8 +471,7 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
 # ── ffmpegthumbnailer (static, from-source) ───────────────────────────────────
 # Header path for <libffmpegthumbnailer/...> + the per-config static archive built
 # against our FFmpeg 8.0 (thirdparty/ffmpegthumbnailer). The archive is linked by
-# full $<CONFIG> path and placed BEFORE the mpv media-link.rsp below, so its libav*
-# references resolve against the FFmpeg --start-group inside that rsp (a static lib
+# full $<CONFIG> path and placed BEFORE the mpv media-link.rsp below,tatic lib
 # must precede the libraries it depends on). LINK_DEPENDS on the same $<CONFIG>
 # archive makes the link wait for — and so build — only this config's EP (which in
 # turn DEPENDS on the same-config FFmpeg). No .so, no rpath; one FFmpeg in-process.

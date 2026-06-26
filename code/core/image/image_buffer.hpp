@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SDL3/SDL_stdinc.h"
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -14,8 +15,8 @@ namespace img {
 
 struct ImageBuffer {
 		std::vector<std::uint8_t> data;
-		int                       width    = 0;
-		int                       height   = 0;
+		Uint64                       width    = 0;
+		Uint64                       height   = 0;
 		int                       channels = 4;
 
 		ImageBuffer()                                   = default;

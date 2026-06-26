@@ -7,6 +7,7 @@
 #include "thumbnail_blob_cache.hpp" // BC1 backend: single-blob store + index
 #include "thumbnail_reproducer.hpp" // owns the nvdec-copy mpv worker; pulls in the thread header
 
+
 class vulkan_context;
 class VulkanTexture;
 
@@ -79,22 +80,24 @@ class FileBrowserThumbnailContext {
 
 		// Default VIDEO thumbnail letterbox size (the "medium" tier). The live values are
 		// m_thumb_w/m_thumb_h, set from the video quality tier in setup().
-		static constexpr int k_thumb_w_default       = 640;
-		static constexpr int k_thumb_h_default       = 480;
+		static constexpr uint64_t k_thumb_w_default       = std::numeric_limits<uint64_t>::max();
+		static constexpr uint64_t k_thumb_h_default       = std::numeric_limits<uint64_t>::max();
 		// Image thumbnails decode at NATIVE resolution (full quality, matching the hover
 		// preview) instead of the k_thumb_w x k_thumb_h letterbox; m_image_max_edge caps the
 		// long edge purely as a VRAM guard for huge sources. Masonry cells never exceed the
 		// window width, so it is visually lossless at display size. Videos ignore it.
 		// Auto-sized from available VRAM in setup(); this is the fallback when the GPU can't
 		// report its memory.
-		static constexpr int k_image_max_edge_default = 2048;
-		static constexpr int k_max_uploads_per_frame = 4;
-		static constexpr int k_retire_frames         = 3;
+		static constexpr uint64_t k_image_max_edge_default = 4096;
+		static constexpr uint64_t k_max_uploads_per_frame = 4;
+		static constexpr uint64_t k_retire_frames         = 3;
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are
 		// retired so a folder with thousands of files can't exhaust samplers/descriptors/
 		// VRAM. Must comfortably exceed the number of thumbnails visible at once.
-		static constexpr int k_max_live_textures     = 1024 *2;
+		static constexpr uint64_t k_max_live_textures     =  std::numeric_limits<uint64_t>::max();
 
+		[[nodiscard]] bool
+		GetLoadedTextureDimensions(std::string const &key, int &outW, int &outH) const noexcept;
 	private:
 
 		// Queued      -> never seen, needs first generation
@@ -174,14 +177,14 @@ class FileBrowserThumbnailContext {
 		bool                  m_setup = false;
 
 		Backend            m_backend = Backend::Png; // resolved in setup()
-		int                m_image_max_edge = k_image_max_edge_default; // auto-sized from VRAM + image tier
-		int                m_thumb_w = k_thumb_w_default; // video BC1 letterbox size (video tier)
-		int                m_thumb_h = k_thumb_h_default;
+		uint64_t                m_image_max_edge = k_image_max_edge_default; // auto-sized from VRAM + image tier
+		uint64_t                m_thumb_w = k_thumb_w_default; // video BC1 letterbox size (video tier)
+		uint64_t                m_thumb_h = k_thumb_h_default;
 		ThumbnailBlobCache m_blob;                   // BC1 backend store (single blob + index)
 
 		std::unordered_map<std::string, Entry, StringHash, std::equal_to<>> m_entries; // render-thread only
 		std::vector<Retire>                                                 m_retire;
-		int                                                                 m_uploads_this_frame = 0;
+		uint64_t                                                                 m_uploads_this_frame = 0;
 		std::uint64_t m_frame = 0; // monotonic frame index (LRU clock)
 
 		// Reload cached PNGs (stb) + owns the nvdec-copy mpv worker used as the video

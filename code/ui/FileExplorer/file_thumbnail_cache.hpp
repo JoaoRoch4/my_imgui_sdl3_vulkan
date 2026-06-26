@@ -51,13 +51,14 @@ public:
     static constexpr ImTextureID k_no_texture = 0;
 
     /// Maximum concurrent image-thumbnail threads (stb_image — lightweight).
-    static constexpr int k_max_img_generators = 4;
+    uint64_t k_max_img_generators = std::thread::hardware_concurrency();
     /// Maximum concurrent video-thumbnail threads (libmpv SW-render — heavy).
-    static constexpr int k_max_vid_generators = 2;
+    uint64_t k_max_vid_generators = std::thread::hardware_concurrency();
 
     /// On-disk thumbnail dimensions (pixels).
-    static constexpr int k_thumb_w = 320;
-    static constexpr int k_thumb_h = 180;
+    static constexpr uint64_t k_thumb_w = std::numeric_limits<uint64_t>::max();
+    static constexpr uint64_t k_thumb_h = std::numeric_limits<uint64_t>::max();
+	
 
 private:
     enum class State { InQueue, Generating, DiskReady, Ready, Failed };

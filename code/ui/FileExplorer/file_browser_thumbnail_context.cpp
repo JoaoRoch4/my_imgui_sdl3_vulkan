@@ -11,22 +11,13 @@
 
 
 
-// Thumbnail-pipeline debug logging. Set to 0 to silence. Logs only on state transitions
-// (first sighting, decode result, upload, video done) — NOT per-frame — so it is safe to
-// // leave on while diagnosing the black-thumbnail issue.
-// #define THUMB_DEBUG 1
-// #if THUMB_DEBUG
-// #define THUMB_LOG(fmt, ...) std::println("[Thumb] " fmt __VA_OPT__(, ) __VA_ARGS__)
-// #else
-// #define THUMB_LOG(fmt, ...) ((void) 0)
-// #endif
-#define THUMB_LOG(fmt, ...) ((void)0)
-
+#define THUMB_LOG APP_DEBUG_LOG
+#define  THUMB_DEBUG APP_DEBUG_LOG
 
 
 namespace {
 
-#if THUMB_DEBUG
+
 // Compact pixel summary: dimensions, the brightest channel value anywhere, and the centre
 // pixel. A real thumbnail has max≈255 and a non-zero centre; a black one reads max≈0.
 std::string px_summary(img::ImageBuffer const &b) {
@@ -40,7 +31,6 @@ std::string px_summary(img::ImageBuffer const &b) {
 		static_cast<int>(b.data[mid]), static_cast<int>(b.data[mid + 1]), static_cast<int>(b.data[mid + 2]),
 		static_cast<int>(b.data[mid + 3]));
 }
-#endif
 
 std::uint64_t fnv1a_hash(std::string const &s) {
 	std::uint64_t h = 14695981039346656037ULL;
@@ -103,6 +93,19 @@ std::string FileBrowserThumbnailContext::make_key(std::filesystem::path const &p
 	return path.lexically_normal().string();
 }
 
+// Add to: file_browser_thumbnail_context.hpp
+[[nodiscard]] bool
+FileBrowserThumbnailContext::GetLoadedTextureDimensions(std::string const &key, int &outW, int &outH) const noexcept {
+	if (auto const it = m_entries.find(key); it != m_entries.end()) {
+		if (it->second.texture) {
+			outW = it->second.texture->width;
+			outH = it->second.texture->height;
+			return true;
+		}
+	}
+	return false;
+}
+
 void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::path thumb_dir,
 	std::string thumbnail_format, std::string image_tier, std::string video_tier) {
 	m_vk        = vk;
@@ -114,13 +117,13 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 
 	// VIDEO quality tier -> BC1 letterbox resolution. Higher tier = sharper (more VRAM/disk).
 	if (video_tier == "original")
-		m_thumb_w = 1280, m_thumb_h = 720;
+		m_thumb_w = 1920, m_thumb_h = 1080;
 	else if (video_tier == "high")
 		m_thumb_w = 854, m_thumb_h = 480;
 	else if (video_tier == "low")
 		m_thumb_w = 426, m_thumb_h = 240;
 	else // "medium" (default)
-		m_thumb_w = k_thumb_w_default, m_thumb_h = k_thumb_h_default;
+		m_thumb_w = 1280, m_thumb_h = 720;
 
 	// Resolve the storage backend. "bc1" enables the hybrid policy: VIDEO thumbs are
 	// BC1 block-compressed into a shared blob, while IMAGE thumbs decode to lossless RGBA
@@ -163,11 +166,11 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 		// IMAGE quality tier caps the VRAM-auto value (images stay lossless RGBA — compressing
 		// them is the banding we deliberately avoid; resolution is the quality/VRAM lever).
 		if (image_tier == "high")
-			m_image_max_edge = std::min(m_image_max_edge, 2048);
+			m_image_max_edge = std::min<uint64_t>(m_image_max_edge, 2048);
 		else if (image_tier == "medium")
-			m_image_max_edge = std::min(m_image_max_edge, 1280);
+			m_image_max_edge = std::min<uint64_t>(m_image_max_edge, 1280);
 		else if (image_tier == "low")
-			m_image_max_edge = std::min(m_image_max_edge, 768);
+			m_image_max_edge = std::min<uint64_t>(m_image_max_edge, 768);
 		// "original" keeps the full VRAM-auto cap.
 		APP_DEBUG_LOG("[thumbnail_context] image tier={} -> max_edge={} (VRAM ~{:.2f} GiB, budget_ext={})",
 			image_tier, m_image_max_edge, gib, vk->memory_budget_enabled);
@@ -246,8 +249,8 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	// blocks; the blob (checked in get()) is the persistence layer, so no reload branch here.
 	// Copy the (member) video resolution into locals so the worker lambdas capture by value
 	// and never touch `this` off-thread.
-	int const tw = m_thumb_w;
-	int const th = m_thumb_h;
+	Uint64 const tw = m_thumb_w;
+	Uint64 const th = m_thumb_h;
 	if (e.use_bc1) {
 		e.bc1_future = img::ImageJobSystem::instance().submit(
 			[file, decode_as_video, tw, th]() -> Bc1Result {
@@ -264,7 +267,7 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	//   * VIDEO no-BC fallback (png_path set) -> reload the cached PNG, else letterbox-generate
 	//     into m_thumb_w x m_thumb_h and persist, exactly as before.
 	bool const full_image = e.png_path.empty();
-	int const  max_edge   = m_image_max_edge;
+	Uint64 const  max_edge   = m_image_max_edge;
 	e.img_future          = img::ImageJobSystem::instance().submit(
         [file, out = e.png_path, decode_as_video, full_image, max_edge, tw, th]() -> ImgResult {
             if (full_image)

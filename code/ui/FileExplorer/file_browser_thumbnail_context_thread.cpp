@@ -1,16 +1,12 @@
 #include "pch.hpp"	// NOLINT
 
 #include "file_browser_thumbnail_context_thread.hpp"
+#include "debug_log.hpp"
 
 
-// #define THUMB_DEBUG 0
-//  #if THUMB_DEBUG
-//  #define THUMB_LOG(fmt, ...) std::println("[ThumbVid] " fmt __VA_OPT__(, ) __VA_ARGS__)
-//  #else
-//  #define THUMB_LOG(fmt, ...) ((void) 0)
-//  #endif
+#define THUMB_DEBUG APP_DEBUG_LOG
+#define THUMB_LOG APP_DEBUG_LOG
 
-#define THUMB_LOG(fmt, ...) ((void)0)
 
 #include <stb_image_write.h>
 
@@ -18,7 +14,7 @@
 #include "thread_overwatch.hpp"
 
 FileBrowserThumbnailThread::FileBrowserThumbnailThread()
-	: k_thumb_w(640), k_thumb_h(480), k_worker_count(std::thread::hardware_concurrency()) {};
+	: k_thumb_w(std::numeric_limits<Uint64>::max()), k_thumb_h(std::numeric_limits<Uint64>::max()), k_worker_count(std::thread::hardware_concurrency()) {};
 FileBrowserThumbnailThread::~FileBrowserThumbnailThread() { shutdown(); }
 
 void FileBrowserThumbnailThread::start(DoneFn on_done) {
@@ -225,7 +221,7 @@ bool FileBrowserThumbnailThread::render_video(std::filesystem::path const& file,
 			if (ev && ev->event_id == MPV_EVENT_END_FILE) break;
 		}
 		if (frame_ready.exchange(false)) {
-			unsigned int	 size[2] = {k_thumb_w, k_thumb_h};
+			Uint64	 size[2] = {k_thumb_w, k_thumb_h};
 			size_t			 stride	 = static_cast<size_t>(k_thumb_w) * 4;
 			mpv_render_param rp[]	 = {{MPV_RENDER_PARAM_SW_SIZE, size},
 										{MPV_RENDER_PARAM_SW_FORMAT, static_cast<void*>(const_cast<char*>("rgba"))},

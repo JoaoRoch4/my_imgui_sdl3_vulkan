@@ -16,6 +16,9 @@
 #include <csetjmp>
 #include <csignal>
 #include <ctime>
+#include <csignal>
+#include <ctime>
+#include <cmath>
 
 // Memory management
 #include <memory>
@@ -157,6 +160,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/xattr.h>
+#include <sys/stat.h>  // statx, STATX_BTIME
 
 // =============================================================================
 // SDL3
@@ -168,6 +172,8 @@
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_vulkan.h>
+#include "SDL3/SDL_stdinc.h"
+
 
 // =============================================================================
 // Vulkan
@@ -250,3 +256,6 @@
 #include <taglib/fileref.h>
 #include <taglib/tag.h>
 #include <taglib/tpropertymap.h>
+#include <boost/multiprecision/cpp_dec_float.hpp>
+#include <boost/math/complex.hpp>
+#include <fontconfig/fontconfig.h>

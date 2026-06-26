@@ -2,9 +2,7 @@
 
 #include "pch.hpp"
 
-#include <condition_variable>
-#include <optional>
-#include <stop_token>
+
 
 class ManagedThread;
 
@@ -31,8 +29,8 @@ struct FileRecord {
 	/// libavformat probe is too costly to run on every file during a fresh scan. The
 	/// masonry view consumes this to size cells by native aspect; everything else is
 	/// indifferent. Both 0 = "unknown, assume 16:9 for layout".
-	int 				source_w = 0;
-	int 				source_h = 0;
+	Uint64 				source_w = 0;
+	Uint64 				source_h = 0;
 };
 
 /// Background directory scanner for the file browser.

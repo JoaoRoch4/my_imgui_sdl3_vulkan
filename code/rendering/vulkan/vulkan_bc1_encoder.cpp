@@ -9,8 +9,6 @@
 // The CMake bc1_shader target writes this under build/<...>/generated/shaders/.
 #include "bc1_encode_spv.hpp"
 
-#include <cstring>
-#include <utility>
 
 namespace {
 

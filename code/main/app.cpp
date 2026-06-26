@@ -30,6 +30,8 @@
 #include "video_downloader.hpp"
 #include "video_player.hpp"
 #include "video_player_placebo.hpp"
+#include "file_browser_ui.hpp"
+#include "file_browser_thumbnail_context.hpp"
 
 App::App(StartupOptions opts)
 	: m_Opts(opts) {
@@ -79,8 +81,10 @@ bool App::Alloc() {
 	subsystems_ok      = m_mem->Push<MediaLoadHandler>("LoadHandler");
 	subsystems_ok      = m_mem->Push<AppStateCoordinator>("AppState");
 	subsystems_ok      = m_mem->Push<ConsoleCommands>("Console");
+	subsystems_ok = m_mem->Push <FileBrowserThumbnailContext>("FileBrowserThumbnailContext");
+	m_MenuBar          = m_mem->PushGet<AppCoordinator>("MenuBar");
 
-	m_MenuBar = m_mem->PushGet<AppCoordinator>("MenuBar");
+
 
 	return subsystems_ok && m_Rt && m_State && m_Sdl && m_Vk && m_Imgui && m_FpsPlot
 		&& m_ThreadPanel && m_StyleEditor && m_MenuBar;
@@ -514,6 +518,7 @@ int App::destroy() {
 	m_mem->Release<sdl3_context>();
 	m_mem->Release<WindowStateToml>();
 	m_mem->Release<AppRuntimeState>();
+	m_mem->Release <FileBrowserThumbnailContext>();
 
 	// Every cached pointer now dangles — null them so any stale use is an obvious
 	// nullptr crash, and so the next Alloc() reassigns from scratch.

@@ -13,7 +13,10 @@ public:
     static inline bool enabled = true;
 
     /// Runtime-mutable: play audio in hover preview (default: muted).
-    static inline bool preview_sound = false;
+    static inline bool preview_sound = true;
+
+    bool has_val =false;
+
 
     /// Last known native resolution of the loaded source (0×0 when unknown).
     static inline ImVec2 last_source_size = {0.0f, 0.0f};
@@ -22,7 +25,7 @@ public:
     static inline std::chrono::milliseconds hover_delay{300};
 
     /// Kill the worker thread when no hover requests arrive for this interval.
-    static constexpr std::chrono::milliseconds idle_thread_timeout{100};
+    static constexpr std::chrono::milliseconds idle_thread_timeout{900};
 
     /// If preview loading stays stuck longer than this, restart the hover thread.
     /// MUST exceed worst-case first-frame latency. Internet sources resolve via
@@ -33,14 +36,14 @@ public:
     /// finishes loading. Genuine *thread* hangs are recovered independently by
     /// ManagedThread's 5 s RestartOnTimeout overwatch — this is only the
     /// "source not progressing" backstop, so it can afford to be generous.
-    static constexpr std::chrono::milliseconds loading_restart_timeout{15000};
+    static constexpr std::chrono::milliseconds loading_restart_timeout{950};
 
     /// Prevent rapid restart loops when a source is persistently broken.
-    static constexpr std::chrono::milliseconds loading_restart_cooldown{1000};
+    static constexpr std::chrono::milliseconds loading_restart_cooldown{900};
 
     /// If a hovered/playing source has no decoded frame for too long, force
     /// recovery. Same network-latency reasoning as loading_restart_timeout.
-    static constexpr std::chrono::milliseconds no_frame_restart_timeout{15000};
+    static constexpr std::chrono::milliseconds no_frame_restart_timeout{950};
 
     VideoHoverPreview();
     ~VideoHoverPreview();

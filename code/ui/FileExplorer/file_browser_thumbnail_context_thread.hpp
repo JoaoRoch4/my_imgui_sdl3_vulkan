@@ -32,15 +32,15 @@ public:
     void submit(std::string key, std::filesystem::path file, std::filesystem::path out_png);
     void clear_pending(); // drop queued (not in-flight) jobs
 
-	unsigned int k_thumb_w;
-	unsigned int  k_thumb_h;
+	Uint64 k_thumb_w;
+	Uint64 k_thumb_h;
 
 	// Number of parallel mpv render workers. Each pulls independently from the shared
     // queue with its own mpv instance, so a folder of videos generates several thumbnails
     // at once instead of serially. Kept modest because each worker is an NVDEC session
     // (consumer GPUs cap concurrent decode sessions) and a live mpv+render context.
-	unsigned  int k_worker_count;
-	;
+	Uint64 k_worker_count;
+	
 
 private:
     struct Job {

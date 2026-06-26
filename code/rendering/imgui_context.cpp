@@ -4,9 +4,6 @@
 
 #include "debug_log.hpp"
 
-#include <fontconfig/fontconfig.h>
-#include <imgui.h>
-
 namespace {
 
 // Case-insensitive substring test (ASCII). Used to confirm fontconfig actually
@@ -37,7 +34,7 @@ namespace {
 	if (!pattern) {
 		return {};
 	}
-	FcPatternAddString(pattern.get(), FC_FAMILY, reinterpret_cast<FcChar8 const *>(family_z.c_str()));
+	FcPatternAddString(pattern.get(), FC_FAMILY, std::bit_cast<FcChar8 const *>(family_z.c_str()));
 	FcConfigSubstitute(nullptr, pattern.get(), FcMatchPattern);
 	FcDefaultSubstitute(pattern.get());
 
@@ -51,7 +48,7 @@ namespace {
 	FcChar8 *matched_family = nullptr;
 	if (FcPatternGetString(matched.get(), FC_FAMILY, 0, &matched_family) != FcResultMatch
 		|| matched_family == nullptr
-		|| !contains_ci(reinterpret_cast<char const *>(matched_family), family)) {
+		|| !contains_ci(std::bit_cast<char const *>(matched_family), family)) {
 		return {};
 	}
 
@@ -59,7 +56,7 @@ namespace {
 	if (FcPatternGetString(matched.get(), FC_FILE, 0, &file) != FcResultMatch || file == nullptr) {
 		return {};
 	}
-	return std::string {reinterpret_cast<char const *>(file)};
+	return std::string {std::bit_cast<char const *>(file)};
 }
 
 // True when this process is being traced (TracerPid != 0 in /proc/self/status) -- i.e. running
@@ -269,7 +266,7 @@ void imgui_context::load_fonts(float main_scale) {
 		std::streamsize const size = in.tellg();
 		in.seekg(0);
 		std::vector<std::byte> blob(static_cast<std::size_t>(size));
-		if (!in.read(reinterpret_cast<char *>(blob.data()), size)) {
+		if (!in.read(std::bit_cast<char *>(blob.data()), size)) {
 			std::println(stderr, "[imgui_context] cannot read fallback font '{}'", path);
 			continue;
 		}

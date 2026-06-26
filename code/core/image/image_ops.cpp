@@ -1,4 +1,5 @@
 #include "image_ops.hpp"
+#include "SDL3/SDL_stdinc.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -168,10 +169,11 @@ std::expected<ImageBuffer, ImageError> decode_file(std::filesystem::path const& 
 
 	if (sws_ctx) {
 		uint8_t* dest_pointers[4]  = {out.data.data(), nullptr, nullptr, nullptr};
-		int      dest_linesizes[4] = {out.width * out.channels, 0, 0, 0};
+		Uint64      dest_linesizes[4] = {out.width * out.channels, 0, 0, 0};
 
 		// Executa a conversão de espaço de cores e cópia via CPU de forma otimizada (vetorizada)
-		sws_scale(sws_ctx, frame->data, frame->linesize, 0, out.height, dest_pointers, dest_linesizes);
+		sws_scale(sws_ctx, frame->data, frame->linesize, 0, out.height, 
+			dest_pointers, std::bit_cast<int*>(&dest_linesizes));
 		sws_freeContext(sws_ctx);
 	} else {
 		frame_decoded = false;
@@ -354,8 +356,8 @@ std::expected<bool, ImageError> encode_png(ImageBuffer const& src, std::filesyst
 
 	if (sws_ctx) {
 		uint8_t const* src_pointers[4]  = {src.data.data(), nullptr, nullptr, nullptr};
-		int            src_linesizes[4] = {src.width * src.channels, 0, 0, 0};
-		sws_scale(sws_ctx, src_pointers, src_linesizes, 0, src.height, frame->data, frame->linesize);
+		Uint64            src_linesizes[4] = {src.width * src.channels, 0, 0, 0};
+		sws_scale(sws_ctx, src_pointers, std::bit_cast<int*>(&src_linesizes), 0, src.height, frame->data, frame->linesize);
 		sws_freeContext(sws_ctx);
 	}
 

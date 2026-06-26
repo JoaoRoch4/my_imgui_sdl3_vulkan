@@ -6,11 +6,8 @@
 
 #include "image_ops.hpp" // img::ops::probe_dimensions — AVIF/HEIF size (stbi_info can't)
 
-#include <fcntl.h>     // AT_FDCWD
-#include <sys/stat.h>  // statx, STATX_BTIME
-#include <sys/xattr.h>
 
-#include <cstdint>
+
 
 // Header-only image-dimension probe used during scan to feed the masonry view its
 // per-record aspect ratio.  stb_image's stbi_info reads only the file header — no

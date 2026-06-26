@@ -18,6 +18,7 @@ class vulkan_context {
 	VkBuffer vram_reserve_buffer;
 	VkDeviceMemory vram_reserve_memory;
 	VkDeviceSize vram_reserve_bytes;
+	VkDeviceSize k_vram_reserve_size;
 	bool vram_reserve_active;
 
 	ImGui_ImplVulkanH_Window main_window_data;
@@ -52,6 +53,7 @@ class vulkan_context {
 	void cleanup_window(ImGui_ImplVulkanH_Window* wd) const;
 	void frame_render(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, const ImVec4& clear_color);
 	void frame_present(ImGui_ImplVulkanH_Window* wd);
+	VkDeviceSize usable_vram_with_budget(double const budget_percentage) const ;
 	VkResult queue_submit(uint32_t submit_count, const VkSubmitInfo* submits, VkFence fence);
 	VkResult queue_present(const VkPresentInfoKHR* present_info);
 

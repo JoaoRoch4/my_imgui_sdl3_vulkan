@@ -4,20 +4,12 @@
 #include "video_seek_preview.hpp"
 #include "vulkan_context.hpp"
 #include "vulkan_upload_context.hpp"
+#include "debug_log.hpp"
 
-#ifndef VIDEO_SEEK_DEBUG
-#ifdef NDEBUG
-#define VIDEO_SEEK_DEBUG 0
-#else
-#define VIDEO_SEEK_DEBUG 1
-#endif
-#endif
 
-#if VIDEO_SEEK_DEBUG
-#define _SeekDebug(fmt, ...) std::println("[VideoSeekPreview] " fmt, ##__VA_ARGS__)
-#else
-#define _SeekDebug(fmt, ...) ((void)0)
-#endif
+#define VIDEO_SEEK_DEBUG APP_DEBUG_LOG
+#define _SeekDebug APP_DEBUG_LOG
+
 
 namespace {
 
@@ -336,7 +328,7 @@ void VideoSeekPreview::start_thread() {
 	// once-per-iteration automatic heartbeat keeps the watchdog fed.
 	ManagedThread::Config cfg;
 	cfg.name    = "VidSeekPrev";
-	cfg.timeout = std::chrono::milliseconds(5000);
+	cfg.timeout = std::chrono::milliseconds(500);
 	cfg.policy  = ThreadOverwatch::RecoveryPolicy::RestartOnTimeout;
 	m_thread = std::make_unique<ManagedThread>(cfg, [this](std::stop_token const & /*stoken*/, ManagedThread & /*self*/) {
 		double req = m_seek_req.exchange(-1.0);

@@ -1,6 +1,11 @@
 #include "pch.hpp"
 
+
 #include "file_browser_ui.hpp"
+#include "file_browser_thumbnail_context.hpp"
+#include "Memory_management.hpp"
+#include <memory>
+
 
 ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags, std::filesystem::path defaultDirectory)
 	: width_(700)
@@ -20,7 +25,8 @@ ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags, std::filesystem::pa
 	, sortField_(SortField::Name)
 	, mediaFilter_(MediaFilter::All)
 	, keepOpen_(true) {
-	assert(!((flags_ & ImGuiFileBrowserFlags_SelectDirectory) && (flags_ & ImGuiFileBrowserFlags_EnterNewFilename))
+	assert(!((flags_ & ImGuiFileBrowserFlags_SelectDirectory)
+			   && (flags_ & ImGuiFileBrowserFlags_EnterNewFilename))
 		&& "'EnterNewFilename' doesn't work when 'SelectDirectory' is enabled");
 	if (flags_ & ImGuiFileBrowserFlags_CreateNewDir) {
 		newDirNameBuffer_.resize(32, '\0');
@@ -37,6 +43,100 @@ ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags, std::filesystem::pa
 	drives_ = GetDrivesBitMask();
 #endif
 }
+// In: file_browser_ui.cpp
+
+// In: file_browser_ui.cpp
+
+float ImGui::FileBrowser::ThumbnailHeightEvaluator::HeightAxisEvaluator::
+operator()(float width) const noexcept {
+	// Define the baseline fallback ratio parameters (16:9 widescreen)
+	constexpr float defaultAspect = 1.f;
+
+	if (!parentContext || parentContext->selectedFilenames_.empty()) {
+		return width / defaultAspect;
+	}
+
+	// Retrieve the absolute string path key of the first selected item
+	std::string const pathKey = parentContext->selectedFilenames_.begin()->string();
+
+	// Fetch the thumbnail context instance using the proper static subsystem accessor
+	auto static const fbc = MemoryManagement::GetInstance<FileBrowserThumbnailContext>();
+	if (!fbc) {
+		return width / defaultAspect;
+	}
+
+	int outW = 0;
+	int outH = 0;
+
+	// Query the internal map store for real texture metrics via const-safe accessor
+	if (fbc->GetLoadedTextureDimensions(pathKey, outW, outH) && outW > 0 && outH > 0) {
+		float const activeAspect = static_cast<float>(outW) / static_cast<float>(outH);
+		return width / activeAspect;
+	}
+
+	// Return height based on default fallback when background threads are still busy
+	return width / defaultAspect;
+}
+
+
+
+
+void  ImGui::FileBrowser::SetScrollMinPageSizePx(float px) noexcept { scrollMinPageSizePx_ = px; }
+float ImGui::FileBrowser::GetScrollMinPageSizePx() const noexcept { return scrollMinPageSizePx_; }
+void  ImGui::FileBrowser::SetScrollShiftMultiplier(float multiplier) noexcept {
+    scrollShiftMultiplier_ = multiplier;
+}
+float ImGui::FileBrowser::GetScrollShiftMultiplier() const noexcept {
+	return scrollShiftMultiplier_;
+}
+
+void ImGui::FileBrowser::SetScrollPageSizeRatio(float ratio) noexcept {
+	scrollPageSizeRatio_ = ratio;
+}
+float ImGui::FileBrowser::GetScrollPageSizeRatio() const noexcept { return scrollPageSizeRatio_; }
+
+void ImGui::FileBrowser::SetScrollDistanceSensitivity(float s) noexcept {
+	scrollDistanceSensitivity_ = s;
+}
+float ImGui::FileBrowser::GetScrollDistanceSensitivity() const noexcept {
+	return scrollDistanceSensitivity_;
+}
+
+void ImGui::FileBrowser::SetScrollAnimDuration(float seconds) noexcept {
+	scrollAnimDuration_ = seconds;
+}
+// In: file_browser_ui.cpp
+
+float ImGui::FileBrowser::GetSelectedThumbnailAspectRatio() const noexcept {
+	// If no files are currently selected, fallback to the standard 16:9 widescreen ratio
+	if (selectedFilenames_.empty()) {
+		return 1.f;
+	}
+
+	// Retrieve the absolute string path key of the first selected item
+	std::string const pathKey = selectedFilenames_.begin()->string();
+
+	// Fetch the thumbnail context instance using the proper static subsystem accessor
+	auto const static fbc = MemoryManagement::GetInstance<FileBrowserThumbnailContext>();
+		if (!fbc) {
+		return 64.0f / 36.0f;
+	}
+
+	// Since 'get()' returns a raw ImTextureID (primitive unsigned long long) without size fields,
+	// we query the internal map structure via a const-safe check if accessible,
+	// or provide a public constant dimensions getter inside FileBrowserThumbnailContext:
+	//
+	// Example using a clean const-qualified member check:
+	int outW = 0;
+	int outH = 0;
+	if (fbc->GetLoadedTextureDimensions(pathKey, outW, outH) && outW > 0 && outH > 0) {
+		return static_cast<float>(outW) / static_cast<float>(outH);
+	}
+
+	// Default fallback while background worker threads are still computing the image
+	return 64.0f / 36.0f;
+}
+float ImGui::FileBrowser::GetScrollAnimDuration() const noexcept { return scrollAnimDuration_; }
 
 void ImGui::FileBrowser::SetWindowPos(int posX, int posY) noexcept {
 	posX_     = posX;
@@ -114,9 +214,11 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 			return;
 
 		if (isPosSet_) {
-			SetNextWindowPos(ImVec2(static_cast<float>(posX_), static_cast<float>(posY_)), ImGuiCond_FirstUseEver);
+			SetNextWindowPos(ImVec2(static_cast<float>(posX_), static_cast<float>(posY_)),
+				ImGuiCond_FirstUseEver);
 		}
-		SetNextWindowSize(ImVec2(static_cast<float>(width_), static_cast<float>(height_)), ImGuiCond_FirstUseEver);
+		SetNextWindowSize(ImVec2(static_cast<float>(width_), static_cast<float>(height_)),
+			ImGuiCond_FirstUseEver);
 
 		ImGuiWindowFlags winFlags = ImGuiWindowFlags_NoFocusOnAppearing;
 		if (flags_ & ImGuiFileBrowserFlags_NoTitleBar)
@@ -137,15 +239,18 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 			SetNextWindowSize(ImVec2(static_cast<float>(width_), static_cast<float>(height_)));
 		} else {
 			if (isPosSet_) {
-				SetNextWindowPos(ImVec2(static_cast<float>(posX_), static_cast<float>(posY_)), ImGuiCond_FirstUseEver);
+				SetNextWindowPos(ImVec2(static_cast<float>(posX_), static_cast<float>(posY_)),
+					ImGuiCond_FirstUseEver);
 			}
-			SetNextWindowSize(ImVec2(static_cast<float>(width_), static_cast<float>(height_)), ImGuiCond_FirstUseEver);
+			SetNextWindowSize(ImVec2(static_cast<float>(width_), static_cast<float>(height_)),
+				ImGuiCond_FirstUseEver);
 		}
 		if (flags_ & ImGuiFileBrowserFlags_NoModal) {
 			if (!BeginPopup(openLabel_.c_str()))
 				return;
-		} else if (!BeginPopupModal(openLabel_.c_str(), nullptr,
-					   flags_ & ImGuiFileBrowserFlags_NoTitleBar ? ImGuiWindowFlags_NoTitleBar : 0)) {
+		} else if (
+			!BeginPopupModal(openLabel_.c_str(), nullptr,
+				flags_ & ImGuiFileBrowserFlags_NoTitleBar ? ImGuiWindowFlags_NoTitleBar : 0)) {
 			return;
 		}
 	}
@@ -179,7 +284,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 		PushItemWidth(-1);
 		bool const enter = InputText("##directory", currDirBuffer_.data(), currDirBuffer_.size(),
-			ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll,
+			ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_EnterReturnsTrue
+				| ImGuiInputTextFlags_AutoSelectAll,
 			ExpandInputBuffer, &currDirBuffer_);
 		PopItemWidth();
 
@@ -338,8 +444,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		if (BeginPopup(openNewDirLabel_.c_str())) {
 			ScopeGuard endNewDirPopup([] { EndPopup(); });
 
-			InputText("name", newDirNameBuffer_.data(), newDirNameBuffer_.size(), ImGuiInputTextFlags_CallbackResize,
-				ExpandInputBuffer, &newDirNameBuffer_);
+			InputText("name", newDirNameBuffer_.data(), newDirNameBuffer_.size(),
+				ImGuiInputTextFlags_CallbackResize, ExpandInputBuffer, &newDirNameBuffer_);
 			focusOnInputText |= IsItemFocused();
 			SameLine();
 
@@ -378,7 +484,7 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		static char const* dirLabels[] = {"Ascending", "Descending"};
 		SetNextItemWidth(120.0f);
 		int dirIdx = sortAscending_ ? 0 : 1;
-		if (Combo("##fb_sort_dir", &dirIdx, dirLabels, 2)) {
+		if (Combo("##fb_sort_dir", &dirIdx, dirLabels, IM_ARRAYSIZE(dirLabels))) {
 			sortAscending_ = (dirIdx == 0);
 			RebuildView();
 		}
@@ -386,9 +492,9 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 	SameLine();
 	SetNextItemWidth(90.0f);
 	{
-		static char const* mediaLabels[] = {"All", "Videos", "Images"};
+		static char const* mediaLabels[] = {"All", "Videos", "Images","Media"};
 		int                mfIdx         = static_cast<int>(mediaFilter_);
-		if (Combo("##fb_media", &mfIdx, mediaLabels, 3))
+		if (Combo("##fb_media", &mfIdx, mediaLabels, IM_ARRAYSIZE(mediaLabels)))
 			mediaFilter_ = static_cast<MediaFilter>(mfIdx);
 	}
 	if (!availableTags_.empty()) {
@@ -413,19 +519,14 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 	if (m_thumbnails.is_setup()) {
 		SameLine();
 		if (Checkbox("Thumbnails", &showThumbnails_) && !showThumbnails_)
-			m_thumbnails.release_textures(); // disabling thumbnails frees their GPU textures
+			m_thumbnails.release_textures();
 		ToolTip("Show or hide file thumbnails");
 		if (showThumbnails_) {
 			SameLine();
-			// 3-state cycle: List → Grid → Masonry → List. Label shows the NEXT mode.
-			char const* nextLabel = (viewMode_ == ViewMode::List) ? "Grid"
-				: (viewMode_ == ViewMode::Grid)                   ? "Masonry"
-								  : "List";
-			if (SmallButton(nextLabel)) {
-				viewMode_ = (viewMode_ == ViewMode::List) ? ViewMode::Grid
-					: (viewMode_ == ViewMode::Grid)     ? ViewMode::Masonry
-									  : ViewMode::List;
-			}
+			static char const* ViewModeChar[] = {"List", "Grid", "Masonry"};
+			int                vmIdx          = static_cast<int>(viewMode_);
+			if (Combo("##View mode", &vmIdx, ViewModeChar, IM_ARRAYSIZE(ViewModeChar)))
+				viewMode_ = static_cast<ViewMode>(vmIdx);
 			ToolTip("Cycle list / grid / masonry view");
 		}
 	}
@@ -441,31 +542,36 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		PopItemWidth();
 	}
 
+	
 	{
 		BeginChild("ch", ImVec2(0, -reserveHeight), true,
 			(flags_ & ImGuiFileBrowserFlags_NoModal) ? ImGuiWindowFlags_AlwaysHorizontalScrollbar : 0);
 		ScopeGuard endChild([] { EndChild(); });
 
+		ImGui::FileBrowser* fb =this;
+		auto const          calculateHeight
+			= fb ? fb->GetHeightEvaluator() : ImGui::FileBrowser::ThumbnailHeightEvaluator {};
 		// Shift + mouse-wheel scales thumbnails when the file list is hovered.
-		if (m_thumbnails.is_setup() && showThumbnails_ && IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
-			&& GetIO().KeyShift) {
+		if (m_thumbnails.is_setup() && showThumbnails_
+			&& IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && GetIO().KeyShift) {
 			float const wheel = GetIO().MouseWheel;
 			if (wheel != 0.0f) {
 				float const factor = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
 				// Per-mode clamp envelope (min, max) + size-field selector.
-				float   minW    = 24.0f;
-				float   maxW    = 128.0f;
-				ImVec2* sz      = &thumbnailSize_;
-				bool    keepAr  = true; // false for masonry — only column width matters
+				float       minW   = 24.0f;
+				float       maxW   =  std::numeric_limits<float>::max();
+				ImVec2*     sz     = &thumbnailSize_;
+				bool        keepAr = true; // false for masonry — only column width matters
 				if (viewMode_ == ViewMode::Grid) {
 					minW = 64.0f;
-					maxW = 1024.0f;
+					maxW = std::numeric_limits<float>::max();;
 					sz   = &gridThumbnailSize_;
 				} else if (viewMode_ == ViewMode::Masonry) {
 					minW   = 80.0f;
-					maxW   = 480.0f;
+					maxW   = std::numeric_limits<float>::max();
+				;
 					sz     = &masonryThumbnailSize_;
-					keepAr = false;
+					keepAr = true;
 				}
 				float const newW = std::clamp(sz->x * factor, minW, maxW);
 				sz->x            = newW;
@@ -474,28 +580,42 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 			}
 		}
 
-		bool const shouldHideRegularFiles
-			= (flags_ & ImGuiFileBrowserFlags_HideRegularFiles) && (flags_ & ImGuiFileBrowserFlags_SelectDirectory);
+		bool const shouldHideRegularFiles = (flags_ & ImGuiFileBrowserFlags_HideRegularFiles)
+			&& (flags_ & ImGuiFileBrowserFlags_SelectDirectory);
 		std::string const lowerSearch = searchStr_.empty() ? std::string() : ToLower(searchStr_);
 
 		// Returns true when the file should be shown given the current mediaFilter_.
 		auto const isMediaMatched = [this](std::filesystem::path const& ext) -> bool {
-			if (mediaFilter_ == MediaFilter::All)
-				return true;
+
 			std::string e = ext.string();
 			std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) {
 				return static_cast<char>(std::tolower(c));
 			});
-			if (mediaFilter_ == MediaFilter::Images)
-				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp" || e == ".gif"
-					|| e == ".avif" || e == ".heic" || e == ".heif";
-			// MediaFilter::Videos — video + animated formats
-			return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv" || e == ".flv"
-				|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
+			switch (mediaFilter_) {
+
+			case MediaFilter::Videos: return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv"
+					|| e == ".flv" || e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
+
+			case MediaFilter::Images:
+				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp"
+					|| e == ".gif" || e == ".avif" || e == ".heic" || e == ".heif";
+			case MediaFilter::Media:
+			return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp"
+					|| e == ".gif" || e == ".avif" || e == ".heic" || e == ".heif" || e == ".mp4"
+					|| e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv" || e == ".flv"
+					|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
+			case MediaFilter::All:
+				return true;
+			}
+
+	
 		};
 
-		bool const useGridView    = (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
-		bool const useMasonryView = (viewMode_ == ViewMode::Masonry) && m_thumbnails.is_setup() && showThumbnails_;
+		bool const useGridView
+			= (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
+		bool const useMasonryView
+			= (viewMode_ == ViewMode::Masonry) && m_thumbnails.is_setup() && showThumbnails_;
+			
 
 		// Per-record aspect ratio used by the masonry view (width / height of
 		// the cell). Images carry their native (w, h) from scan time
@@ -504,9 +624,12 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		// range to keep ultra-tall panoramas/portraits from overflowing the
 		// child region.
 		auto const aspect_for = [](FileRecord const& rsc) -> float {
-			if (rsc.source_w > 0 && rsc.source_h > 0)
+			if (rsc.source_w > 0 && rsc.source_h > 0) {
 				return static_cast<float>(rsc.source_w) / static_cast<float>(rsc.source_h);
-			return 16.0f / 9.0f;
+			}
+
+
+			return 1.0f; // Universal fallback aspect ratio
 		};
 
 		// Image thumbnails are now stored at their NATIVE aspect/resolution (full quality, no
@@ -514,66 +637,94 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		// the fixed-cell list/grid views letterbox at DISPLAY time via this helper, drawing the
 		// image centred at the largest size that fits the cell without distortion. Videos keep
 		// their fixed-AR letterboxed texture, so they still fill the cell (skip this).
-		auto const draw_thumb_fitted = [&aspect_for](ImTextureID tex, FileRecord const& rsc, ImVec2 cell) {
-			if (rsc.isVideoThumb) { // letterboxed video frame — fill the cell as before
+		auto const draw_thumb_fitted =
+			[&aspect_for](ImTextureID tex, FileRecord const& rsc, ImVec2 cell) {
+				if (rsc.isVideoThumb) { // letterboxed video frame — fill the cell as before
+					ImVec2 const cur = GetCursorScreenPos();
+					Dummy(cell);
+					GetWindowDrawList()->AddImage(tex, cur, {cur.x + cell.x, cur.y + cell.y});
+					return;
+				}
+				float const a = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
+				float       w = cell.x, h = cell.x / a;
+				if (h > cell.y) {
+					h = cell.y;
+					w = cell.y * a;
+				}
 				ImVec2 const cur = GetCursorScreenPos();
-				Dummy(cell);
-				GetWindowDrawList()->AddImage(tex, cur, {cur.x + cell.x, cur.y + cell.y});
-				return;
-			}
-			float const a = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
-			float       w = cell.x, h = cell.x / a;
-			if (h > cell.y) { h = cell.y; w = cell.y * a; }
-			ImVec2 const cur = GetCursorScreenPos();
-			Dummy(cell); // reserve the full cell so hit-testing/layout match the old Image()
-			ImVec2 const o = {(cell.x - w) * 0.5f, (cell.y - h) * 0.5f};
-			GetWindowDrawList()->AddImage(tex, {cur.x + o.x, cur.y + o.y}, {cur.x + o.x + w, cur.y + o.y + h});
-		};
+				Dummy(cell); // reserve the full cell so hit-testing/layout match the old Image()
+				ImVec2 const o = {(cell.x - w) * 0.5f, (cell.y - h) * 0.5f};
+				GetWindowDrawList()->AddImage(tex, {cur.x + o.x, cur.y + o.y},
+					{cur.x + o.x + w, cur.y + o.y + h});
+			};
 
-		// ── Keyboard navigation / actions ──────────────────────────────────────
-		// Active only when the explorer is focused and no text field is being edited, so it
-		// never steals keys from the search / rename inputs. All handling lives inside the
-		// "ch" child so SetScrollY()/SetScrollHereY() target the scrollable file list.
+		// ── Keyboard navigation / actions ─────────────────────────────────────────
+		// Active only when the explorer is focused and no text field is being edited,
+		// so it never steals keys from the search / rename inputs. All handling lives
+		// inside the "ch" child so SetScrollY()/SetScrollHereY() target the file list.
 		if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !IsAnyItemActive()) {
 			ImGuiIO const& io    = GetIO();
 			bool const     shift = io.KeyShift;
 			bool const     ctrl  = io.KeyCtrl;
 
-			// W/S scroll the list with a smooth ease-in-out-sine glide (Shift pages a near-full
-			// view height, PgUp/PgDn feel). Each repeat re-aims the target one step from the
-			// CURRENT position and restarts the ease, so a tap glides once and a hold scrolls
-			// continuously — no pixel jumps. ONLY keyboard scroll is animated; the mouse wheel
-			// and scrollbar are left to ImGui (a wheel tick cancels an in-flight glide).
+			// W/S scroll the list with a smooth ease-in-out-cosine glide (Shift pages
+			// a near-full view height). Each press re-aims the target from the CURRENT
+			// position and restarts the ease — tap glides once, hold scrolls continuously.
+			// Mouse wheel / scrollbar are left to ImGui; a wheel tick cancels the glide.
 			if (!ctrl) {
-				float const page = std::max(40.0f, GetWindowHeight() * 0.9f);
-				float const maxY = GetScrollMaxY();
-				float       dy   = 0.0f;
-				if (IsKeyPressed(ImGuiKey_W, true))
-					dy -= shift ? page : static_cast<float>(scrollStepPx_);
-				if (IsKeyPressed(ImGuiKey_S, true))
-					dy += shift ? page : static_cast<float>(scrollStepPx_);
+				constexpr float kPi      = 3.14159265f;
+				constexpr float kStepRef = 50.0f; // scrollStepPx_ value at which
+												  // scrollAnimDuration_ is used as-is
 
-				if (dy != 0.0f) {
+				// float const pageSize   = std::max(scrollMinPageSizePx_, GetWindowHeight() *
+				// scrollPageSizeRatio_);
+				float const maxScrollY = GetScrollMaxY();
+
+				// scrollStepPx_ IS the pixel distance per keypress — use it directly.
+				float const stepSize = static_cast<float>(scrollStepPx_) * scrollDistanceSensitivity_;
+
+				// Larger step → shorter duration → snappier feel.
+				// At scrollStepPx_ == kStepRef the base duration is used exactly;
+				// above it the duration shrinks, floored at 50 ms so it never feels instant.
+				float const dynamicDuration = std::clamp(
+					scrollAnimDuration_ * (kStepRef / static_cast<float>(scrollStepPx_)), 0.05f,
+					scrollAnimDuration_);
+
+				float deltaY = 0.0f;
+
+				if (IsKeyPressed(ImGuiKey_W, true))
+					deltaY -= shift ? stepSize * scrollShiftMultiplier_ : stepSize;
+
+				if (IsKeyPressed(ImGuiKey_S, true))
+					deltaY += shift ? stepSize * scrollShiftMultiplier_ : stepSize;
+
+				if (deltaY != 0.0f) {
 					scrollAnimStart_   = GetScrollY();
-					scrollAnimTarget_  = std::clamp(GetScrollY() + dy, 0.0f, maxY);
+					scrollAnimTarget_  = std::clamp(GetScrollY() + deltaY, 0.0f, maxScrollY);
 					scrollAnimElapsed_ = 0.0f;
 					scrollAnimActive_  = true;
 				}
 
 				if (scrollAnimActive_) {
 					if (io.MouseWheel != 0.0f) {
-						scrollAnimActive_ = false; // yield to the wheel — keyboard-only animation
+						scrollAnimActive_ = false;
 					} else {
-						constexpr float k_dur = 0.15f; // seconds to glide one step
-						scrollAnimElapsed_ += io.DeltaTime;
-						float const t = (k_dur > 0.0f) ? std::clamp(scrollAnimElapsed_ / k_dur, 0.0f, 1.0f) : 1.0f;
-						float const e = -(std::cos(3.14159265358979f * t) - 1.0f) * 0.5f; // ease-in-out-sine
-						SetScrollY(scrollAnimStart_ + (scrollAnimTarget_ - scrollAnimStart_) * e);
-						if (t >= 1.0f)
+						scrollAnimElapsed_   += io.DeltaTime;
+						float const progress  = (dynamicDuration > 0.0f)
+							 ? std::clamp(scrollAnimElapsed_ / dynamicDuration, 0.0f, 1.0f)
+							 : 1.0f;
+
+						float const easingFactor = (1.0f - std::cos(kPi * progress)) * 0.5f;
+						SetScrollY(scrollAnimStart_
+							+ (scrollAnimTarget_ - scrollAnimStart_) * easingFactor);
+
+						if (progress >= 1.0f)
 							scrollAnimActive_ = false;
 					}
 				}
 			}
+
+
 
 			// A/D jump to the previous/next visible IMAGE (skip dirs + videos, wrap at the
 			// ends): move the selection, scroll it into view, fire the hover preview and open.
@@ -595,7 +746,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 						if (!r.name.empty() && r.name.c_str()[0] == '$')
 							return false;
 						if (!lowerSearch.empty()
-							&& ToLower(u8StrToStr(r.name.u8string())).find(lowerSearch) == std::string::npos)
+							&& ToLower(u8StrToStr(r.name.u8string())).find(lowerSearch)
+								== std::string::npos)
 							return false;
 						return true;
 					};
@@ -652,7 +804,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 							return o;
 						};
 						for (auto const& p : targets) {
-							std::string const cmd = "gio trash -- " + shq(p.string()) + " >/dev/null 2>&1";
+							std::string const cmd
+								= "gio trash -- " + shq(p.string()) + " >/dev/null 2>&1";
 							std::system(cmd.c_str()); // NOLINT(cert-env33-c)
 							m_thumbnails.evict(p);
 						}
@@ -685,7 +838,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					if (!rsc.name.empty() && rsc.name.c_str()[0] == '$')
 						continue;
 					if (!lowerSearch.empty()) {
-						if (ToLower(u8StrToStr(rsc.name.u8string())).find(lowerSearch) == std::string::npos)
+						if (ToLower(u8StrToStr(rsc.name.u8string())).find(lowerSearch)
+							== std::string::npos)
 							continue;
 					}
 
@@ -694,9 +848,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					if (static_cast<int>(rscIdx) == scrollToIdx_)
 						SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
 
-					bool const  selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
-					float const thumbW   = gridThumbnailSize_.x;
-					float const thumbH   = gridThumbnailSize_.y;
+					bool const selected
+						= selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+					float const thumbW = gridThumbnailSize_.x;
+					float const thumbH = gridThumbnailSize_.y;
 
 					// Thumbnail image or placeholder.
 					if (rsc.isDir) {
@@ -705,7 +860,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 						// thumbKey precomputed at scan time; empty => not thumbnailable.
 						ImTextureID const thumb = rsc.thumbKey.empty()
 							? ImTextureID(0)
-							: m_thumbnails.get(rsc.thumbKey, currentDirectory_, rsc.name, rsc.isVideoThumb);
+							: m_thumbnails.get(rsc.thumbKey, currentDirectory_, rsc.name,
+								  rsc.isVideoThumb);
 						if (thumb)
 							draw_thumb_fitted(thumb, rsc, {thumbW, thumbH});
 						else
@@ -716,14 +872,16 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 					// Single-click selection.
 					if (hovered && IsMouseClicked(ImGuiMouseButton_Left)) {
-						bool const wantDir   = (flags_ & ImGuiFileBrowserFlags_SelectDirectory) != 0;
+						bool const wantDir = (flags_ & ImGuiFileBrowserFlags_SelectDirectory) != 0;
 						bool const canSelect = rsc.name != ".." && rsc.isDir == wantDir;
 						if (canSelect) {
-							bool const multiSel = (flags_ & ImGuiFileBrowserFlags_MultipleSelection) != 0
+							bool const multiSel
+								= (flags_ & ImGuiFileBrowserFlags_MultipleSelection) != 0
 								&& IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-							bool const ctrlHeld   = GetIO().KeyCtrl;
-							bool const shiftHeld  = GetIO().KeyShift;
-							bool const alreadySel = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+							bool const ctrlHeld  = GetIO().KeyCtrl;
+							bool const shiftHeld = GetIO().KeyShift;
+							bool const alreadySel
+								= selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
 							if (multiSel && ctrlHeld) {
 								// Ctrl+click: toggle this item
@@ -733,12 +891,13 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 									selectedFilenames_.insert(rsc.name);
 									rangeSelectionStart_ = static_cast<unsigned int>(rscIdx);
 								}
-							} else if (multiSel && shiftHeld && rangeSelectionStart_ < fileRecords_.size()) {
+							} else if (multiSel && shiftHeld
+								&& rangeSelectionStart_ < fileRecords_.size()) {
 								// Shift+click: fill range
-								unsigned int const first
-									= (std::min)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
-								unsigned int const last
-									= (std::max)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
+								unsigned int const first = (std::min)(rangeSelectionStart_,
+									static_cast<unsigned int>(rscIdx));
+								unsigned int const last  = (std::max)(rangeSelectionStart_,
+                                    static_cast<unsigned int>(rscIdx));
 								selectedFilenames_.clear();
 								for (unsigned int i = first; i <= last; ++i) {
 									if (fileRecords_[i].isDir != wantDir)
@@ -755,8 +914,9 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					if (IsMouseDoubleClicked(ImGuiMouseButton_Left) && hovered) {
 						if (rsc.isDir) {
 							shouldSetNewDir = true;
-							newDir
-								= (rsc.name != "..") ? (currentDirectory_ / rsc.name) : currentDirectory_.parent_path();
+							newDir          = (rsc.name != "..")
+										 ? (currentDirectory_ / rsc.name)
+										 : currentDirectory_.parent_path();
 						} else if (!(flags_ & ImGuiFileBrowserFlags_SelectDirectory)) {
 							selectedFilenames_ = {rsc.name};
 							isOk_              = true;
@@ -776,7 +936,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					if (selected) {
 						ImVec2 const p0 = GetItemRectMin();
 						ImVec2 const p1 = GetItemRectMax();
-						GetWindowDrawList()->AddRect(p0, p1, GetColorU32(ImGuiCol_ButtonHovered), 2.0f);
+						GetWindowDrawList()->AddRect(p0, p1, GetColorU32(ImGuiCol_ButtonHovered),
+							2.0f);
 					}
 					// Filename label below the thumbnail.
 					TextUnformatted(rsc.showName.c_str());
@@ -792,23 +953,24 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		// texture and we fill the cell directly — no letterbox bars, no distortion, full
 		// quality (identical to the hover preview). (Video thumbs keep a fixed-AR frame.)
 		if (useMasonryView) {
-			float const  availW   = GetContentRegionAvail().x;
-			float const  spacingX = GetStyle().ItemSpacing.x;
-			float const  spacingY = GetStyle().ItemSpacing.y;
-			float const  desiredW = std::max(80.0f, masonryThumbnailSize_.x);
+			float const availW   = GetContentRegionAvail().x;
+			float const spacingX = GetStyle().ItemSpacing.x;
+			float const spacingY = GetStyle().ItemSpacing.y;
+			float const desiredW = std::max(80.0f, masonryThumbnailSize_.x);
 			// Column count: a non-zero masonryColumns_ forces an exact value
 			// (driven by the run-config slider); 0 picks automatically using
 			// desiredW as a *maximum* per-column width hint.  The ceil-based
 			// auto-pick ensures a wide window gets multiple narrower columns
 			// rather than one giant column that dwarfs the visible region.
-			int const    cols     = (masonryColumns_ > 0)
-				? std::max(1, masonryColumns_)
-				: std::max(1, static_cast<int>(std::ceil((availW + spacingX) / (desiredW + spacingX))));
+			int const   cols     = (masonryColumns_ > 0)
+					  ? std::max(1, masonryColumns_)
+					  : std::max(1, static_cast<int>(std::ceil((availW + spacingX) / (desiredW + spacingX))));
 			// Distribute leftover slack evenly so the rightmost column hugs the edge.
-			float const  colW     = std::floor((availW - static_cast<float>(cols - 1) * spacingX) / static_cast<float>(cols));
+			float const colW     = std::floor((availW - static_cast<float>(cols - 1) * spacingX)
+					/ static_cast<float>(cols));
 
 			// Anchor of the masonry region (top-left of the BeginChild content).
-			ImVec2 const origin = GetCursorPos();
+			ImVec2 const       origin = GetCursorPos();
 			std::vector<float> colY(static_cast<std::size_t>(cols), 0.0f);
 
 			for (unsigned int rscIdx = 0; rscIdx < fileRecords_.size(); ++rscIdx) {
@@ -825,25 +987,26 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				if (!rsc.name.empty() && rsc.name.c_str()[0] == '$')
 					continue;
 				if (!lowerSearch.empty()) {
-					if (ToLower(u8StrToStr(rsc.name.u8string())).find(lowerSearch) == std::string::npos)
+					if (ToLower(u8StrToStr(rsc.name.u8string())).find(lowerSearch)
+						== std::string::npos)
 						continue;
 				}
 
 				// Pick the shortest column for this cell (ties: leftmost — std::min_element).
-				auto const  colIt   = std::min_element(colY.begin(), colY.end());
-				int const   col     = static_cast<int>(std::distance(colY.begin(), colIt));
-				float const aspect  = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
-				float const cellW   = colW;
-				float const cellH   = std::round(cellW / aspect);
-				float const labelH  = GetTextLineHeightWithSpacing();
-				float const slotH   = cellH + labelH + spacingY;
+				auto const  colIt  = std::min_element(colY.begin(), colY.end());
+				int const   col    = static_cast<int>(std::distance(colY.begin(), colIt));
+				float const aspect = std::max(0.25f, std::min(4.0f, aspect_for(rsc)));
+				float const cellW  = colW;
+				float const cellH  = std::round(cellW / aspect);
+				float const labelH = GetTextLineHeightWithSpacing();
+				float const slotH  = cellH + labelH + spacingY;
 
 				ImVec2 const slotPos {origin.x + static_cast<float>(col) * (colW + spacingX),
 					origin.y + colY[static_cast<std::size_t>(col)]};
 				SetCursorPos(slotPos);
 				PushID(static_cast<int>(rscIdx));
 				if (static_cast<int>(rscIdx) == scrollToIdx_)
-					SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
+					SetScrollHereY(1.0f); // A/D navigation: bring the new selection into view
 
 				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
@@ -867,9 +1030,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					if (canSelect) {
 						bool const multiSel = (flags_ & ImGuiFileBrowserFlags_MultipleSelection) != 0
 							&& IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-						bool const ctrlHeld   = GetIO().KeyCtrl;
-						bool const shiftHeld  = GetIO().KeyShift;
-						bool const alreadySel = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+						bool const ctrlHeld  = GetIO().KeyCtrl;
+						bool const shiftHeld = GetIO().KeyShift;
+						bool const alreadySel
+							= selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 						if (multiSel && ctrlHeld) {
 							if (alreadySel)
 								selectedFilenames_.erase(rsc.name);
@@ -877,11 +1041,12 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 								selectedFilenames_.insert(rsc.name);
 								rangeSelectionStart_ = static_cast<unsigned int>(rscIdx);
 							}
-						} else if (multiSel && shiftHeld && rangeSelectionStart_ < fileRecords_.size()) {
-							unsigned int const first
-								= (std::min)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
-							unsigned int const last
-								= (std::max)(rangeSelectionStart_, static_cast<unsigned int>(rscIdx));
+						} else if (multiSel && shiftHeld
+							&& rangeSelectionStart_ < fileRecords_.size()) {
+							unsigned int const first = (std::min)(rangeSelectionStart_,
+								static_cast<unsigned int>(rscIdx));
+							unsigned int const last  = (std::max)(rangeSelectionStart_,
+                                static_cast<unsigned int>(rscIdx));
 							selectedFilenames_.clear();
 							for (unsigned int i = first; i <= last; ++i) {
 								if (fileRecords_[i].isDir != wantDir)
@@ -897,8 +1062,9 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				if (IsMouseDoubleClicked(ImGuiMouseButton_Left) && hovered) {
 					if (rsc.isDir) {
 						shouldSetNewDir = true;
-						newDir
-							= (rsc.name != "..") ? (currentDirectory_ / rsc.name) : currentDirectory_.parent_path();
+						newDir          = (rsc.name != "..")
+									 ? (currentDirectory_ / rsc.name)
+									 : currentDirectory_.parent_path();
 					} else if (!(flags_ & ImGuiFileBrowserFlags_SelectDirectory)) {
 						selectedFilenames_ = {rsc.name};
 						isOk_              = true;
@@ -964,9 +1130,9 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				}
 
 				if (static_cast<int>(rscIndex) == scrollToIdx_)
-						SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
+					SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
 
-					bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
+				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
 #if IMGUI_VERSION_NUM >= 19100
 				const ImGuiSelectableFlags selectableFlag = ImGuiSelectableFlags_NoAutoClosePopups;
@@ -998,7 +1164,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 						rowHeight > 0.0f ? ImVec2(0.0f, rowHeight) : ImVec2(0.0f, 0.0f))) {
 					bool const wantDir     = flags_ & ImGuiFileBrowserFlags_SelectDirectory;
 					bool const canSelect   = rsc.name != ".." && rsc.isDir == wantDir;
-					bool const rangeSelect = canSelect && GetIO().KeyShift && rangeSelectionStart_ < fileRecords_.size()
+					bool const rangeSelect = canSelect && GetIO().KeyShift
+						&& rangeSelectionStart_ < fileRecords_.size()
 						&& (flags_ & ImGuiFileBrowserFlags_MultipleSelection)
 						&& IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 					bool const multiSelect = !rangeSelect && GetIO().KeyCtrl
@@ -1042,10 +1209,13 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 					}
 				}
 
-				if (IsMouseDoubleClicked(ImGuiMouseButton_Left) && IsItemHovered(ImGuiHoveredFlags_None)) {
+				if (IsMouseDoubleClicked(ImGuiMouseButton_Left)
+					&& IsItemHovered(ImGuiHoveredFlags_None)) {
 					if (rsc.isDir) {
 						shouldSetNewDir = true;
-						newDir = (rsc.name != "..") ? (currentDirectory_ / rsc.name) : currentDirectory_.parent_path();
+						newDir          = (rsc.name != "..")
+									 ? (currentDirectory_ / rsc.name)
+									 : currentDirectory_.parent_path();
 					} else if (!(flags_ & ImGuiFileBrowserFlags_SelectDirectory)) {
 						selectedFilenames_ = {rsc.name};
 						isOk_              = true;
@@ -1055,7 +1225,9 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				} else if (IsKeyPressed(ImGuiKey_GamepadFaceDown) && IsItemHovered()) {
 					if (rsc.isDir) {
 						shouldSetNewDir = true;
-						newDir = (rsc.name != "..") ? (currentDirectory_ / rsc.name) : currentDirectory_.parent_path();
+						newDir          = (rsc.name != "..")
+									 ? (currentDirectory_ / rsc.name)
+									 : currentDirectory_.parent_path();
 						SetKeyboardFocusHere(-1);
 					} else if (!(flags_ & ImGuiFileBrowserFlags_SelectDirectory)) {
 						selectedFilenames_ = {rsc.name};
@@ -1066,7 +1238,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				}
 
 				// Invoke the hover-file callback when the cursor rests on a regular file.
-				if (previewEnabled_ && hoverFileCallback_ && !rsc.isDir && IsItemHovered(ImGuiHoveredFlags_None)) {
+				if (previewEnabled_ && hoverFileCallback_ && !rsc.isDir
+					&& IsItemHovered(ImGuiHoveredFlags_None)) {
 					hoverFileCallback_(currentDirectory_ / rsc.name);
 				}
 
@@ -1126,8 +1299,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		}
 
 		PushItemWidth(-1);
-		if (InputText("", inputNameBuffer_.data(), inputNameBuffer_.size(), ImGuiInputTextFlags_CallbackResize,
-				ExpandInputBuffer, &inputNameBuffer_)) {
+		if (InputText("", inputNameBuffer_.data(), inputNameBuffer_.size(),
+				ImGuiInputTextFlags_CallbackResize, ExpandInputBuffer, &inputNameBuffer_)) {
 			if (inputNameBuffer_[0] != '\0') {
 				selectedFilenames_ = {u8StrToPath(inputNameBuffer_.data())};
 			} else {
@@ -1139,7 +1312,8 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 	}
 
 	if (!focusOnInputText && !editDir_) {
-		bool const selectAll = (flags_ & ImGuiFileBrowserFlags_MultipleSelection) && IsKeyPressed(ImGuiKey_A)
+		bool const selectAll = (flags_ & ImGuiFileBrowserFlags_MultipleSelection)
+			&& IsKeyPressed(ImGuiKey_A)
 			&& (IsKeyDown(ImGuiKey_LeftCtrl) || IsKeyDown(ImGuiKey_RightCtrl));
 		if (selectAll) {
 			bool const needDir = flags_ & ImGuiFileBrowserFlags_SelectDirectory;
@@ -1227,7 +1401,9 @@ bool ImGui::FileBrowser::SetDirectory(std::filesystem::path const& dir) {
 	return SetCurrentDirectoryInternal(dir, preferredFallback);
 }
 
-std::filesystem::path const& ImGui::FileBrowser::GetDirectory() const noexcept { return currentDirectory_; }
+std::filesystem::path const& ImGui::FileBrowser::GetDirectory() const noexcept {
+	return currentDirectory_;
+}
 
 std::filesystem::path ImGui::FileBrowser::GetSelected() const {
 	// when isOk_ is true, selectedFilenames_ may be empty if SelectDirectory
@@ -1308,7 +1484,9 @@ void ImGui::FileBrowser::SetTypeFilters(std::vector<std::string> const& _typeFil
 	typeFilterIndex_ = 0;
 }
 
-void ImGui::FileBrowser::SetCurrentTypeFilterIndex(int index) { typeFilterIndex_ = static_cast<unsigned int>(index); }
+void ImGui::FileBrowser::SetCurrentTypeFilterIndex(int index) {
+	typeFilterIndex_ = static_cast<unsigned int>(index);
+}
 
 void ImGui::FileBrowser::SetSortModeIndex(int index) {
 	if (index < 0) {
@@ -1340,7 +1518,8 @@ void ImGui::FileBrowser::SetRecentDirectories(std::vector<std::filesystem::path>
 		}
 
 		std::filesystem::path const absDir = absolute(dir);
-		auto const alreadyStored           = std::find(recentDirectories_.begin(), recentDirectories_.end(), absDir);
+		auto const                  alreadyStored
+			= std::find(recentDirectories_.begin(), recentDirectories_.end(), absDir);
 		if (alreadyStored == recentDirectories_.end()) {
 			recentDirectories_.push_back(absDir);
 		}
@@ -1349,7 +1528,9 @@ void ImGui::FileBrowser::SetRecentDirectories(std::vector<std::filesystem::path>
 	TouchRecentDirectory(currentDirectory_);
 }
 
-std::vector<std::filesystem::path> ImGui::FileBrowser::GetRecentDirectories() const { return recentDirectories_; }
+std::vector<std::filesystem::path> ImGui::FileBrowser::GetRecentDirectories() const {
+	return recentDirectories_;
+}
 
 void ImGui::FileBrowser::SetInputName(std::string_view input) {
 	assert((flags_ & ImGuiFileBrowserFlags_EnterNewFilename)
@@ -1366,12 +1547,13 @@ void ImGui::FileBrowser::SetContextMenuCallback(std::function<void(std::filesyst
 	contextMenuCallback_ = std::move(cb);
 }
 
-void ImGui::FileBrowser::SetRebuildThumbnailCallback(std::function<void(std::filesystem::path const&)> cb) {
+void ImGui::FileBrowser::SetRebuildThumbnailCallback(
+	std::function<void(std::filesystem::path const&)> cb) {
 	rebuildThumbnailCallback_ = std::move(cb);
 }
 
 void ImGui::FileBrowser::SetOpenFileCallback(std::function<void(std::filesystem::path const&)> cb) {
-	openFileCallback_ = std::move(cb);
+	 openFileCallback_ = std::move(cb);
 }
 
 void ImGui::FileBrowser::SetScrollStep(int px) noexcept { scrollStepPx_ = std::clamp(px, 1, 4000); }
@@ -1381,15 +1563,17 @@ void ImGui::FileBrowser::SetPreviewEnabled(bool enabled) noexcept { previewEnabl
 
 bool ImGui::FileBrowser::IsPreviewEnabled() const noexcept { return previewEnabled_; }
 
-void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir, std::string thumbnail_format,
-	std::string image_tier, std::string video_tier) {
+void ImGui::FileBrowser::Setup(vulkan_context* vk, std::filesystem::path thumb_dir,
+	std::string thumbnail_format, std::string image_tier, std::string video_tier) {
 	m_thumbnails.setup(vk, std::move(thumb_dir), std::move(thumbnail_format), std::move(image_tier),
 		std::move(video_tier));
 }
 
 void ImGui::FileBrowser::ClearThumbnailCache() { m_thumbnails.clear(); }
 
-void ImGui::FileBrowser::RebuildThumbnail(std::filesystem::path const& path) { m_thumbnails.evict(path); }
+void ImGui::FileBrowser::RebuildThumbnail(std::filesystem::path const& path) {
+	m_thumbnails.evict(path);
+}
 
 void ImGui::FileBrowser::ShutdownThumbnails() { m_thumbnails.shutdown(); }
 
@@ -1403,11 +1587,17 @@ ImGui::FileBrowser::ViewMode ImGui::FileBrowser::GetViewMode() const noexcept { 
 
 void ImGui::FileBrowser::SetGridThumbnailSize(ImVec2 size) noexcept { gridThumbnailSize_ = size; }
 
-void ImGui::FileBrowser::SetMasonryThumbnailSize(ImVec2 size) noexcept { masonryThumbnailSize_ = size; }
+void ImGui::FileBrowser::SetMasonryThumbnailSize(ImVec2 size) noexcept {
+	masonryThumbnailSize_ = size;
+}
 
-ImVec2 ImGui::FileBrowser::GetMasonryThumbnailSize() const noexcept { return masonryThumbnailSize_; }
+ImVec2 ImGui::FileBrowser::GetMasonryThumbnailSize() const noexcept {
+	return masonryThumbnailSize_;
+}
 
-void ImGui::FileBrowser::SetMasonryColumns(int columns) noexcept { masonryColumns_ = std::max(0, columns); }
+void ImGui::FileBrowser::SetMasonryColumns(int columns) noexcept {
+	masonryColumns_ = std::max(0, columns);
+}
 
 int ImGui::FileBrowser::GetMasonryColumns() const noexcept { return masonryColumns_; }
 
@@ -1421,9 +1611,13 @@ void ImGui::FileBrowser::SetKeepOpen(bool keepOpen) noexcept { keepOpen_ = keepO
 
 bool ImGui::FileBrowser::GetKeepOpen() const noexcept { return keepOpen_; }
 
-void ImGui::FileBrowser::SetMediaFilter(ImGui::FileBrowser::MediaFilter filter) noexcept { mediaFilter_ = filter; }
+void ImGui::FileBrowser::SetMediaFilter(ImGui::FileBrowser::MediaFilter filter) noexcept {
+	mediaFilter_ = filter;
+}
 
-ImGui::FileBrowser::MediaFilter ImGui::FileBrowser::GetMediaFilter() const noexcept { return mediaFilter_; }
+ImGui::FileBrowser::MediaFilter ImGui::FileBrowser::GetMediaFilter() const noexcept {
+	return mediaFilter_;
+}
 
 std::string ImGui::FileBrowser::ToLower(std::string const& s) {
 	std::string ret = s;
@@ -1461,6 +1655,10 @@ void ImGui::FileBrowser::ToolTip(std::string_view const& s) {
 void ImGui::FileBrowser::RequestReload() {
 	// Hand the heavy directory enumeration to the scanner thread. The previous
 	// listing stays on screen until PollScan() applies the finished result.
+	RebuildView();
+	ClearSelected() ;
+	m_thumbnails.release_textures();
+	RebuildThumbnail(currentDirectory_);
 	statusStr_ = "Scanning...";
 	m_scanner.request(currentDirectory_, (flags_ & ImGuiFileBrowserFlags_SkipItemsCausingError) != 0);
 }
@@ -1487,7 +1685,7 @@ void ImGui::FileBrowser::PollScan() {
 		if (!rec.isDir) {
 			auto const cls = FileBrowserThumbnailContext::classify(rec.name);
 			if (cls.thumbnailable) {
-				rec.thumbKey     = FileBrowserThumbnailContext::make_key(currentDirectory_ / rec.name);
+				rec.thumbKey = FileBrowserThumbnailContext::make_key(currentDirectory_ / rec.name);
 				rec.isVideoThumb = cls.is_video;
 			}
 		}
@@ -1514,22 +1712,23 @@ void ImGui::FileBrowser::RebuildView() {
 	// Sort entries (index 0 is always ".." and is kept in place). Pure CPU work
 	// on the already-loaded records — no directory I/O.
 	if (fileRecords_.size() > 2) {
-		std::sort(fileRecords_.begin() + 1, fileRecords_.end(), [this](FileRecord const& a, FileRecord const& b) -> bool {
-			// Directories always before files, regardless of field/direction.
-			if (a.isDir != b.isDir)
-				return a.isDir > b.isDir;
+		std::sort(fileRecords_.begin() + 1, fileRecords_.end(),
+			[this](FileRecord const& a, FileRecord const& b) -> bool {
+				// Directories always before files, regardless of field/direction.
+				if (a.isDir != b.isDir)
+					return a.isDir > b.isDir;
 
-			int const cmp = CompareByField(a, b);
-			if (cmp != 0)
-				return sortAscending_ ? (cmp < 0) : (cmp > 0);
+				int const cmp = CompareByField(a, b);
+				if (cmp != 0)
+					return sortAscending_ ? (cmp < 0) : (cmp > 0);
 
-			// Tie on the active field: stable secondary order by name (A-Z),
-			// kept ascending so equal-keyed rows read naturally in both
-			// directions.
-			auto const nameA = ToLower(u8StrToStr(a.name.u8string()));
-			auto const nameB = ToLower(u8StrToStr(b.name.u8string()));
-			return nameA < nameB;
-		});
+				// Tie on the active field: stable secondary order by name (A-Z),
+				// kept ascending so equal-keyed rows read naturally in both
+				// directions.
+				auto const nameA = ToLower(u8StrToStr(a.name.u8string()));
+				auto const nameB = ToLower(u8StrToStr(b.name.u8string()));
+				return nameA < nameB;
+			});
 	}
 
 	// Rebuild the set of tags present in this directory (for the filter combo).
@@ -1542,7 +1741,8 @@ void ImGui::FileBrowser::RebuildView() {
 		availableTags_.assign(tagSet.begin(), tagSet.end());
 		// Clear the active filter if the tag is no longer present.
 		if (!tagFilter_.empty()
-			&& std::find(availableTags_.begin(), availableTags_.end(), tagFilter_) == availableTags_.end())
+			&& std::find(availableTags_.begin(), availableTags_.end(), tagFilter_)
+				== availableTags_.end())
 			tagFilter_.clear();
 	}
 
@@ -1564,7 +1764,8 @@ int ImGui::FileBrowser::CompareByField(FileRecord const& a, FileRecord const& b)
 
 	switch (sortField_) {
 	case SortField::Type:
-		return threeWay(ToLower(u8StrToStr(a.extension.u8string())), ToLower(u8StrToStr(b.extension.u8string())));
+		return threeWay(ToLower(u8StrToStr(a.extension.u8string())),
+			ToLower(u8StrToStr(b.extension.u8string())));
 	case SortField::Size:
 		return threeWay(a.size, b.size);
 	case SortField::Modified:
@@ -1595,8 +1796,10 @@ void ImGui::FileBrowser::SetCurrentDirectoryUncatched(std::filesystem::path cons
 	// navigates (full-res image thumbnails are large). Skip on a same-folder refresh.
 	bool const dirChanged = (currentDirectory_ != target);
 	currentDirectory_     = target;
-	if (dirChanged)
+	if (dirChanged){
 		m_thumbnails.release_textures();
+		searchStr_ = "";
+	}
 	TouchRecentDirectory(currentDirectory_);
 	RequestReload();
 
@@ -1615,7 +1818,7 @@ void ImGui::FileBrowser::SetCurrentDirectoryUncatched(std::filesystem::path cons
 }
 
 bool ImGui::FileBrowser::SetCurrentDirectoryInternal(std::filesystem::path const& dir,
-	std::filesystem::path const&                                                  preferredFallback) {
+	std::filesystem::path const& preferredFallback) {
 	try {
 		SetCurrentDirectoryUncatched(dir);
 		return true;

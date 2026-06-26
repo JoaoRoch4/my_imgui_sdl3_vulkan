@@ -5,6 +5,7 @@
 
 
 
+
 vulkan_context::vulkan_context()
 	: allocator(nullptr)
 	, instance(VK_NULL_HANDLE)
@@ -25,7 +26,14 @@ vulkan_context::vulkan_context()
 #endif
 {
 }
-
+template <typename T>
+constexpr T convGb(T const val) {
+	return static_cast<T>(val / 1000000000.0);
+}
+template <typename T>
+constexpr T convMb(T const val) {
+	return static_cast<T>(val / 1000000.0);
+}
 void vulkan_context::check_result(VkResult err) {
 	if (err == VK_SUCCESS)
 		return;
@@ -35,21 +43,23 @@ void vulkan_context::check_result(VkResult err) {
 }
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-VKAPI_ATTR VkBool32 VKAPI_CALL
-vulkan_context::debug_report_fn(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objectType, uint64_t object,
-	size_t location, int32_t messageCode, const char *pLayerPrefix, const char *pMessage, void *pUserData) {
+VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_context::debug_report_fn(VkDebugReportFlagsEXT flags,
+	VkDebugReportObjectTypeEXT objectType, uint64_t object, size_t location, int32_t messageCode,
+	const char *pLayerPrefix, const char *pMessage, void *pUserData) {
 	(void)flags;
 	(void)object;
 	(void)location;
 	(void)messageCode;
 	(void)pUserData;
 	(void)pLayerPrefix;
-	fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n", objectType, pMessage);
+	fprintf(stderr, "[vulkan] Debug report from ObjectType: %i\nMessage: %s\n\n", objectType,
+		pMessage);
 	return VK_FALSE;
 }
 #endif
 
-bool vulkan_context::is_extension_available(const std::vector<VkExtensionProperties> &properties, const char *extension) {
+bool vulkan_context::is_extension_available(const std::vector<VkExtensionProperties> &properties,
+	const char                                                                       *extension) {
 	for (VkExtensionProperties const &p : properties)
 		if (strcmp(p.extensionName, extension) == 0)
 			return true;
@@ -101,7 +111,8 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		instance_extensions.push_back("VK_EXT_debug_report");
 #endif
 
-		APP_DEBUG_LOG("[vulkan_context] instance extensions requested: {}", instance_extensions.size());
+		APP_DEBUG_LOG("[vulkan_context] instance extensions requested: {}",
+			instance_extensions.size());
 		for (char const *ext : instance_extensions) {
 			(void)ext;
 			APP_DEBUG_LOG("[vulkan_context]   instance ext: {}", ext ? ext : "<null>");
@@ -118,16 +129,17 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 #endif
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-		auto f_vkCreateDebugReportCallbackEXT
-			= (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+		auto f_vkCreateDebugReportCallbackEXT = (PFN_vkCreateDebugReportCallbackEXT)
+			vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
 		IM_ASSERT(f_vkCreateDebugReportCallbackEXT != nullptr);
 		VkDebugReportCallbackCreateInfoEXT debug_report_ci = {};
-		debug_report_ci.sType                              = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+		debug_report_ci.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
 		debug_report_ci.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT
 			| VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT;
 		debug_report_ci.pfnCallback = debug_report_fn;
 		debug_report_ci.pUserData   = nullptr;
-		err = f_vkCreateDebugReportCallbackEXT(instance, &debug_report_ci, allocator, &debug_report_cb);
+		err = f_vkCreateDebugReportCallbackEXT(instance, &debug_report_ci, allocator,
+			&debug_report_cb);
 		check_result(err);
 #endif
 	}
@@ -135,7 +147,8 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 	// Select Physical Device (GPU)
 	physical_device = ImGui_ImplVulkanH_SelectPhysicalDevice(instance);
 	IM_ASSERT(physical_device != VK_NULL_HANDLE);
-	APP_DEBUG_LOG("[vulkan_context] selected physical device: {}", static_cast<void const *>(physical_device));
+	APP_DEBUG_LOG("[vulkan_context] selected physical device: {}",
+		static_cast<void const *>(physical_device));
 	uint32_t deviceCount = 0;
 	vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
 
@@ -148,30 +161,31 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 		std::cout << "GPU Name: " << deviceProperties.deviceName << std::endl;
 	}
-		// Select graphics queue family
-		queue_family = ImGui_ImplVulkanH_SelectQueueFamilyIndex(physical_device);
-		IM_ASSERT(queue_family != static_cast<uint32_t>(-1));
-		APP_DEBUG_LOG("[vulkan_context] selected queue family: {}", queue_family);
+	// Select graphics queue family
+	queue_family = ImGui_ImplVulkanH_SelectQueueFamilyIndex(physical_device);
+	IM_ASSERT(queue_family != static_cast<uint32_t>(-1));
+	APP_DEBUG_LOG("[vulkan_context] selected queue family: {}", queue_family);
 
-		// Create Logical Device
-		{
-			std::vector<char const *> requested_device_extensions;
-			requested_device_extensions.push_back("VK_KHR_swapchain");
-			// Required for Vulkan ↔ OpenGL/libplacebo zero-copy interop
-			requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
-			requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
-			requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME);
-			requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
-			// Live per-process VRAM budget (used to auto-size thumbnail texture resolution).
-			// Optional: filtered out below when the device lacks it, then available_vram_bytes()
-			// falls back to the static device-local heap size.
-			requested_device_extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+	// Create Logical Device
+	{
+		std::vector<char const *> requested_device_extensions;
+		requested_device_extensions.push_back("VK_KHR_swapchain");
+		// Required for Vulkan ↔ OpenGL/libplacebo zero-copy interop
+		requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
+		requested_device_extensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+		requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME);
+		requested_device_extensions.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+		// Live per-process VRAM budget (used to auto-size thumbnail texture resolution).
+		// Optional: filtered out below when the device lacks it, then available_vram_bytes()
+		// falls back to the static device-local heap size.
+		requested_device_extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-			uint32_t                           properties_count;
-			std::vector<VkExtensionProperties> properties;
-			vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &properties_count, nullptr);
-			properties.resize(properties_count);
-			vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &properties_count, properties.data());
+		uint32_t                           properties_count;
+		std::vector<VkExtensionProperties> properties;
+		vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &properties_count, nullptr);
+		properties.resize(properties_count);
+		vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &properties_count,
+			properties.data());
 #ifdef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
 		if (is_extension_available(properties, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME))
 			requested_device_extensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
@@ -197,9 +211,9 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 		// Record whether the budget extension survived the availability filter so
 		// available_vram_bytes() knows it may chain VkPhysicalDeviceMemoryBudgetPropertiesEXT.
-		memory_budget_enabled = std::any_of(device_extensions.begin(), device_extensions.end(),
-			[](char const *e) { return strcmp(e, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0; });
-
+		if(memory_budget_enabled)
+		memory_budget_enabled =  std::any_of(device_extensions.begin(), device_extensions.end(),			[](char const *e) { return strcmp(e, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0; });
+		else APP_DEBUG_LOG("memory buget is Disabled");
 		APP_DEBUG_LOG("[vulkan_context] device extensions enabled: {}", device_extensions.size());
 		for (char const *ext : device_extensions) {
 			(void)ext;
@@ -208,16 +222,16 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 		std::array<float, 1>                   queue_priority = {1.0f};
 		std::array<VkDeviceQueueCreateInfo, 1> queue_info     = {};
-		queue_info[0].sType                                   = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queue_info[0].queueFamilyIndex                        = queue_family;
-		queue_info[0].queueCount                              = 1;
-		queue_info[0].pQueuePriorities                        = queue_priority.data();
-		VkDeviceCreateInfo create_info                        = {};
-		create_info.sType                                     = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		create_info.queueCreateInfoCount                      = static_cast<uint32_t>(queue_info.size());
-		create_info.pQueueCreateInfos                         = queue_info.data();
-		create_info.enabledExtensionCount                     = static_cast<uint32_t>(device_extensions.size());
-		create_info.ppEnabledExtensionNames                   = device_extensions.data();
+		queue_info[0].sType                 = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queue_info[0].queueFamilyIndex      = queue_family;
+		queue_info[0].queueCount            = 1;
+		queue_info[0].pQueuePriorities      = queue_priority.data();
+		VkDeviceCreateInfo create_info      = {};
+		create_info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		create_info.queueCreateInfoCount    = static_cast<uint32_t>(queue_info.size());
+		create_info.pQueueCreateInfos       = queue_info.data();
+		create_info.enabledExtensionCount   = static_cast<uint32_t>(device_extensions.size());
+		create_info.ppEnabledExtensionNames = device_extensions.data();
 
 		// libplacebo's imported-device path (zero-copy video) requires the
 		// Vulkan 1.2 features hostQueryReset and timelineSemaphore.  Query
@@ -225,10 +239,10 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		// still runs (via the software video path) on GPUs/drivers that lack
 		// them rather than failing vkCreateDevice outright.
 		VkPhysicalDeviceVulkan12Features vk12_supported = {};
-		vk12_supported.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-		VkPhysicalDeviceFeatures2 features_query        = {};
-		features_query.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		features_query.pNext                            = &vk12_supported;
+		vk12_supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		VkPhysicalDeviceFeatures2 features_query = {};
+		features_query.sType                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		features_query.pNext                     = &vk12_supported;
 		vkGetPhysicalDeviceFeatures2(physical_device, &features_query);
 
 		// Base features to enable, chained via VkPhysicalDeviceFeatures2.pNext
@@ -239,13 +253,17 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		features_enable.sType                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		if (bc_textures_enabled) {
 			features_enable.features.textureCompressionBC = VK_TRUE;
-			APP_DEBUG_LOG("[vulkan_context] textureCompressionBC enabled (BC1 thumbnails available)");
+			APP_DEBUG_LOG(
+				"[vulkan_context] textureCompressionBC enabled (BC1 thumbnails "
+				"available)");
 		} else {
-			APP_DEBUG_LOG("[vulkan_context] textureCompressionBC unavailable — BC1 thumbnails disabled");
+			APP_DEBUG_LOG(
+				"[vulkan_context] textureCompressionBC unavailable — BC1 thumbnails "
+				"disabled");
 		}
 
 		VkPhysicalDeviceVulkan12Features vk12_enable = {};
-		vk12_enable.sType                            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		vk12_enable.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
 		if (vk12_supported.hostQueryReset && vk12_supported.timelineSemaphore) {
 			vk12_enable.hostQueryReset    = VK_TRUE;
 			vk12_enable.timelineSemaphore = VK_TRUE;
@@ -269,11 +287,29 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 
 	// Create Descriptor Pool
 	{
+		// Fetch the raw available VRAM from the driver
+		// Inside your vulkan_context initialization function:
 
-		// Reserve a chunk of VRAM up front to keep memory headroom predictable
-		// for this application workload. Best-effort only: failure is logged.
-		constexpr uint64_t m_buget = 1024ULL * 512ULL;
-		constexpr VkDeviceSize k_vram_reserve_size = static_cast<VkDeviceSize>(m_buget);
+		// 1. Fetch the real-time available VRAM bytes from the GPU heaps
+		vram_reserve_bytes = available_vram_bytes();
+
+		// 2. Apply a 90% budget allocation factor, leaving a 10% safety buffer for the Operating
+		// System
+		constexpr double const budget_factor = 0.90;
+		double const calculated_size = vram_reserve_bytes * budget_factor;
+
+		// 3. Store the final rounded value inside your member variable
+		k_vram_reserve_size = std::trunc<VkDeviceSize>(calculated_size);
+
+		// 4. Log the final configuration details in Gigabytes
+		APP_DEBUG_LOG("[vulkan_context] Total VRAM detected: {}GB",
+			convGb<uint64_t>(this->vram_reserve_bytes));
+		APP_DEBUG_LOG("[vulkan_context] Reserved application budget (90%): {}GB",
+			convGb<uint64_t>(this->k_vram_reserve_size));
+		APP_DEBUG_LOG("[vulkan_context] OS safety buffer overhead (10%): {}GB",
+			convGb<uint64_t>(this->vram_reserve_bytes - this->k_vram_reserve_size));
+
+		
 
 		VkBufferCreateInfo reserve_buffer_info = {};
 		reserve_buffer_info.sType              = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -281,7 +317,8 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		reserve_buffer_info.usage              = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 		reserve_buffer_info.sharingMode        = VK_SHARING_MODE_EXCLUSIVE;
 
-		VkResult reserve_err = vkCreateBuffer(device, &reserve_buffer_info, allocator, &vram_reserve_buffer);
+		VkResult reserve_err
+			= vkCreateBuffer(device, &reserve_buffer_info, allocator, &vram_reserve_buffer);
 		if (reserve_err == VK_SUCCESS) {
 			VkMemoryRequirements reserve_mem_req {};
 			vkGetBufferMemoryRequirements(device, vram_reserve_buffer, &reserve_mem_req);
@@ -289,23 +326,26 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 			VkPhysicalDeviceMemoryProperties mem_props {};
 			vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
 
-			auto find_memory_type = [&](uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *out_index) {
-				for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
-					bool const type_supported = (type_bits & (1u << i)) != 0;
-					bool const flags_match    = (mem_props.memoryTypes[i].propertyFlags & required) == required;
-					if (type_supported && flags_match) {
-						*out_index = i;
-						return true;
+			auto find_memory_type =
+				[&](uint32_t type_bits, VkMemoryPropertyFlags required, uint32_t *out_index) {
+					for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
+						bool const type_supported = (type_bits & (1u << i)) != 0;
+						bool const flags_match
+							= (mem_props.memoryTypes[i].propertyFlags & required) == required;
+						if (type_supported && flags_match) {
+							*out_index = i;
+							return true;
+						}
 					}
-				}
-				return false;
-			};
+					return false;
+				};
 
 			uint32_t memory_type_index = 0;
 			bool     memory_type_found = find_memory_type(reserve_mem_req.memoryTypeBits,
 					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &memory_type_index);
 			if (!memory_type_found)
-				memory_type_found = find_memory_type(reserve_mem_req.memoryTypeBits, 0, &memory_type_index);
+				memory_type_found
+					= find_memory_type(reserve_mem_req.memoryTypeBits, 0, &memory_type_index);
 
 			if (memory_type_found) {
 				VkMemoryAllocateInfo reserve_alloc_info = {};
@@ -313,9 +353,11 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 				reserve_alloc_info.allocationSize       = reserve_mem_req.size;
 				reserve_alloc_info.memoryTypeIndex      = memory_type_index;
 
-				reserve_err = vkAllocateMemory(device, &reserve_alloc_info, allocator, &vram_reserve_memory);
+				reserve_err = vkAllocateMemory(device, &reserve_alloc_info, allocator,
+					&vram_reserve_memory);
 				if (reserve_err == VK_SUCCESS) {
-					reserve_err = vkBindBufferMemory(device, vram_reserve_buffer, vram_reserve_memory, 0);
+					reserve_err
+						= vkBindBufferMemory(device, vram_reserve_buffer, vram_reserve_memory, 0);
 					if (reserve_err == VK_SUCCESS) {
 						vram_reserve_bytes  = reserve_mem_req.size;
 						vram_reserve_active = true;
@@ -346,75 +388,130 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		// ImGui_ImplVulkan_AddTexture(view, layout). The pool MUST therefore carry
 		// those types — a COMBINED_IMAGE_SAMPLER-only pool yields OUT_OF_POOL_MEMORY on
 		// strict drivers. COMBINED_IMAGE_SAMPLER is kept for any legacy use.
-		std::array<VkDescriptorPoolSize, 3> pool_sizes = {VkDescriptorPoolSize {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8192},
+		std::array<VkDescriptorPoolSize, 3> pool_sizes = {
+			VkDescriptorPoolSize {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 8192},
 			VkDescriptorPoolSize {VK_DESCRIPTOR_TYPE_SAMPLER, 1024},
 			VkDescriptorPoolSize {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1024}};
-		VkDescriptorPoolCreateInfo          pool_info  = {};
-		pool_info.sType                                = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		VkDescriptorPoolCreateInfo pool_info = {};
+		pool_info.sType                      = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		// Crucial: Allows freeing sets (RemoveTexture) so evicted thumbnails recycle.
-		pool_info.flags                                = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-		pool_info.maxSets                              = 8192;
-		pool_info.poolSizeCount                        = static_cast<uint32_t>(pool_sizes.size());
-		pool_info.pPoolSizes                           = pool_sizes.data();
+		pool_info.flags                      = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+		pool_info.maxSets                    = 8192;
+		pool_info.poolSizeCount              = static_cast<uint32_t>(pool_sizes.size());
+		pool_info.pPoolSizes                 = pool_sizes.data();
 
 		err = vkCreateDescriptorPool(device, &pool_info, allocator, &descriptor_pool);
 		check_result(err);
 	}
 
 	APP_DEBUG_LOG("[vulkan_context] setup done");
-	}
+}
+
 
 VkDeviceSize vulkan_context::available_vram_bytes() const {
-	if (physical_device == VK_NULL_HANDLE)
+	if (physical_device == VK_NULL_HANDLE) {
+		APP_DEBUG_LOG("[vulkan_context] Cannot check VRAM: Physical device handle is null.");
 		return 0;
+	}
 
-	// Chain the budget struct only when the extension is enabled; otherwise the driver
-	// leaves it untouched and we use the static heap size instead.
+	// Prepare the memory budget extension structure (VK_EXT_memory_budget)
 	VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {};
-	budget.sType                                     = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+	budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
 
+	// Prepare the core Vulkan 1.1 memory properties structure
 	VkPhysicalDeviceMemoryProperties2 props2 = {};
-	props2.sType                             = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-	if (memory_budget_enabled)
-		props2.pNext = &budget;
+	props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
 
+	// Chain the budget structure only if the extension was successfully enabled at device creation
+	if (memory_budget_enabled) {
+		props2.pNext = &budget;
+	}
+
+	// Query the driver for current memory statistics
 	vkGetPhysicalDeviceMemoryProperties2(physical_device, &props2);
 	VkPhysicalDeviceMemoryProperties const &mp = props2.memoryProperties;
 
-	// Take the largest DEVICE_LOCAL heap — the GPU's VRAM. (On UMA/iGPU this is shared
-	// system memory, which is the correct budget there too.)
-	VkDeviceSize ideal = 0;
+	VkDeviceSize total_available_vram = 0;
+
+	// Iterate through all memory heaps exposed by the hardware
 	for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
+		// We only care about DEVICE_LOCAL heaps (VRAM or integrated shared system memory)
 		if ((mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0)
 			continue;
-		VkDeviceSize avail = mp.memoryHeaps[i].size; // safe baseline = total heap size
-		if (memory_budget_enabled && budget.heapBudget[i] != 0) {
-			// heapBudget = what the OS will currently let THIS process use; subtract the
-			// amount already allocated for the live free figure.
-			VkDeviceSize const used = budget.heapUsage[i];
-			avail                   = budget.heapBudget[i] > used ? budget.heapBudget[i] - used : 0;
-		}
-		constexpr double discountPerCent = 0.15;
-		const double res = avail - (avail * discountPerCent);
-		ideal = static_cast<VkDeviceSize>(std::round(res));
-	}
-	return ideal;
-}
 
-void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width, int height) const {
+		// Safe baseline fall-back: the static total size of the heap
+		VkDeviceSize heap_avail = mp.memoryHeaps[i].size;
+
+		// If the budget extension is active and reporting valid data
+		if (memory_budget_enabled && budget.heapBudget[i] != 0) {
+			VkDeviceSize const used = budget.heapUsage[i];
+			// Prevent underflow if the OS reports a usage slightly higher than the budget
+			heap_avail              = budget.heapBudget[i] > used ? budget.heapBudget[i] - used : 0;
+
+			APP_DEBUG_LOG("[vulkan_context] Heap [{}]: Budget: {}GB, Used: {}GB, Free: {}GB", i,
+				convGb<uint64_t>(budget.heapBudget[i]), convGb<uint64_t>(used),
+				convGb<uint64_t>(heap_avail));
+		} else {
+			APP_DEBUG_LOG("[vulkan_context] Heap [{}] (Fallback): Static Size: {}GB", i,
+				convGb<uint64_t>(heap_avail));
+		}
+
+		// Accumulate free VRAM across all local heaps (handles multi-heap/multi-GPU architectures
+		// correctly)
+		total_available_vram += heap_avail;
+	}
+
+	APP_DEBUG_LOG("[vulkan_context] Total raw available VRAM: {}GB",
+		convGb<uint64_t>(total_available_vram));
+	return total_available_vram;
+}
+/**
+ * @brief Calculates the usable VRAM by applying a percentage-based budget scaling factor to the raw
+ * available VRAM.
+ * @param budget_percentage Floating-point ratio between 0.0 and 1.0 (e.g., 0.85 for reserving an
+ * 85% budget, leaving a 15% safety buffer).
+ * @return The scaled budget in bytes.
+ */
+VkDeviceSize vulkan_context::usable_vram_with_budget(double const budget_percentage) const {
+	// Fetch the current absolute free VRAM reported by the driver
+	VkDeviceSize const vram_available = available_vram_bytes();
+
+	if (vram_available == 0) {
+		APP_DEBUG_LOG("[vulkan_context] Usable VRAM calculation skipped: No VRAM available.");
+		return 0;
+	}
+
+	// Clamp the percentage input to stay strictly within safe bounds [0.0, 1.0]
+	double const clamped_percentage
+		= budget_percentage < 0.0 ? 0.0 : (budget_percentage > 1.0 ? 1.0 : budget_percentage);
+
+	// Apply the scaling factor using floating point math, then cast back to VkDeviceSize
+	double const       calculated_budget = static_cast<double>(vram_available) * clamped_percentage;
+	VkDeviceSize const final_budget      = static_cast<VkDeviceSize>(calculated_budget);
+
+	// Log the calculated budget reservation info using your convGb template
+	APP_DEBUG_LOG("[vulkan_context] VRAM scaling applied: {:.1f}% budget factor",
+		clamped_percentage * 100.0);
+	APP_DEBUG_LOG("[vulkan_context] Reserved usable VRAM: {}GB (Safety Buffer: {}GB)",
+		convGb<uint64_t>(final_budget), convGb<uint64_t>(vram_available - final_budget));
+
+	return final_budget;
+}
+void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR surface, int width,
+	int height) const {
 	VkBool32 res;
 	vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, queue_family, surface, &res);
 	if (res != VK_TRUE) {
-		fprintf(stderr, "Error no WSI support on physical device 0\n");
+		fprintf(stderr, "[vulkan_context] Error no WSI support on physical device 0\n");
 		exit(-1);
 	}
 
-	std::array<VkFormat, 4> requestSurfaceImageFormat
-		= {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8_UNORM, VK_FORMAT_R8G8B8_UNORM};
-	VkColorSpaceKHR const requestSurfaceColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-	wd->Surface                                    = surface;
-	wd->SurfaceFormat                              = ImGui_ImplVulkanH_SelectSurfaceFormat(physical_device, wd->Surface,
-									 requestSurfaceImageFormat.data(), requestSurfaceImageFormat.size(), requestSurfaceColorSpace);
+	std::array<VkFormat, 4> requestSurfaceImageFormat = {VK_FORMAT_B8G8R8A8_UNORM,
+		VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8_UNORM, VK_FORMAT_R8G8B8_UNORM};
+	VkColorSpaceKHR const   requestSurfaceColorSpace  = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
+	wd->Surface                                       = surface;
+	wd->SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(physical_device, wd->Surface,
+		requestSurfaceImageFormat.data(), requestSurfaceImageFormat.size(), requestSurfaceColorSpace);
 
 #ifdef APP_USE_UNLIMITED_FRAME_RATE
 	std::array<VkPresentModeKHR, 3> present_modes
@@ -422,32 +519,32 @@ void vulkan_context::setup_window(ImGui_ImplVulkanH_Window *wd, VkSurfaceKHR sur
 #else
 	std::array<VkPresentModeKHR, 1> present_modes = {VK_PRESENT_MODE_FIFO_KHR};
 #endif
-	wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface, present_modes.data(),
-		static_cast<int>(present_modes.size()));
+	wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface,
+		present_modes.data(), static_cast<int>(present_modes.size()));
 
 	IM_ASSERT(min_image_count >= 2);
-	ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical_device, device, wd, queue_family, allocator, width,
-		height, min_image_count, 0);
+	ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical_device, device, wd, queue_family,
+		allocator, width, height, min_image_count, 0);
 }
 
 void vulkan_context::set_vsync(ImGui_ImplVulkanH_Window *wd, bool vsync) {
 	if (vsync) {
 		std::array<VkPresentModeKHR, 1> modes = {VK_PRESENT_MODE_FIFO_KHR};
-		wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface, modes.data(),
-			static_cast<int>(modes.size()));
+		wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface,
+			modes.data(), static_cast<int>(modes.size()));
 	} else {
-		std::array<VkPresentModeKHR, 3> modes
-			= {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR};
-		wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface, modes.data(),
-			static_cast<int>(modes.size()));
+		std::array<VkPresentModeKHR, 3> modes = {
+			VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR};
+		wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(physical_device, wd->Surface,
+			modes.data(), static_cast<int>(modes.size()));
 	}
 	swap_chain_rebuild = true;
 }
 
 void vulkan_context::resize_window(ImGui_ImplVulkanH_Window *wd, int width, int height) {
 	ImGui_ImplVulkan_SetMinImageCount(min_image_count);
-	ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical_device, device, wd, queue_family, allocator, width,
-		height, min_image_count, 0);
+	ImGui_ImplVulkanH_CreateOrResizeWindow(instance, physical_device, device, wd, queue_family,
+		allocator, width, height, min_image_count, 0);
 	wd->FrameIndex     = 0;
 	swap_chain_rebuild = false;
 }
@@ -469,8 +566,8 @@ void vulkan_context::cleanup() {
 	vkDestroyDescriptorPool(device, descriptor_pool, allocator);
 
 #ifdef APP_USE_VULKAN_DEBUG_REPORT
-	auto f_vkDestroyDebugReportCallbackEXT
-		= (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+	auto f_vkDestroyDebugReportCallbackEXT = (PFN_vkDestroyDebugReportCallbackEXT)
+		vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
 	f_vkDestroyDebugReportCallbackEXT(instance, debug_report_cb, allocator);
 #endif
 
@@ -484,7 +581,8 @@ void vulkan_context::cleanup_window(ImGui_ImplVulkanH_Window *wd) const {
 	vkDestroySurfaceKHR(instance, wd->Surface, allocator);
 }
 
-void vulkan_context::frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data, ImVec4 const &clear_color) {
+void vulkan_context::frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data,
+	ImVec4 const &clear_color) {
 	wd->ClearValue.color.float32[0] = clear_color.x * clear_color.w;
 	wd->ClearValue.color.float32[1] = clear_color.y * clear_color.w;
 	wd->ClearValue.color.float32[2] = clear_color.z * clear_color.w;
@@ -494,8 +592,8 @@ void vulkan_context::frame_render(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw
 		= wd->FrameSemaphores[static_cast<int>(wd->SemaphoreIndex)].ImageAcquiredSemaphore;
 	VkSemaphore render_complete_semaphore
 		= wd->FrameSemaphores[static_cast<int>(wd->SemaphoreIndex)].RenderCompleteSemaphore;
-	VkResult err = vkAcquireNextImageKHR(device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE,
-		&wd->FrameIndex);
+	VkResult err = vkAcquireNextImageKHR(device, wd->Swapchain, UINT64_MAX,
+		image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
 	if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
 		swap_chain_rebuild = true;
 	if (err == VK_ERROR_OUT_OF_DATE_KHR)
@@ -574,7 +672,8 @@ void vulkan_context::frame_present(ImGui_ImplVulkanH_Window *wd) {
 	wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
 }
 
-VkResult vulkan_context::queue_submit(uint32_t submit_count, VkSubmitInfo const *submits, VkFence fence) {
+VkResult
+vulkan_context::queue_submit(uint32_t submit_count, VkSubmitInfo const *submits, VkFence fence) {
 	std::scoped_lock lock(queue_mutex);
 	return vkQueueSubmit(queue, submit_count, submits, fence);
 }

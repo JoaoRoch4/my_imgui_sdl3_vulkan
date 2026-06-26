@@ -61,8 +61,8 @@ void generate_image_thumbnail(const std::filesystem::path &file,
 
     stbir_resize_uint8_linear(pixels, src_w, src_h, 0,
                                dst.data(),
-                               FileThumbnailCache::k_thumb_w,
-                               FileThumbnailCache::k_thumb_h,
+                               static_cast<int>(FileThumbnailCache::k_thumb_w),
+                               static_cast<int>(FileThumbnailCache::k_thumb_h),
                                0, STBIR_RGBA);
 
     if (is_webp)
@@ -73,11 +73,11 @@ void generate_image_thumbnail(const std::filesystem::path &file,
     std::error_code ec;
     std::filesystem::create_directories(out_png.parent_path(), ec);
     stbi_write_png(out_png.string().c_str(),
-                   FileThumbnailCache::k_thumb_w,
-                   FileThumbnailCache::k_thumb_h,
+    static_cast<int>(FileThumbnailCache::k_thumb_w),
+    static_cast<int>(FileThumbnailCache::k_thumb_h),
                    k_channels,
                    dst.data(),
-                   FileThumbnailCache::k_thumb_w * k_channels);
+                   static_cast<int>(FileThumbnailCache::k_thumb_w * k_channels));
 }
 
 } // namespace
@@ -394,7 +394,7 @@ void FileThumbnailCache::generate_thumbnail(const std::filesystem::path &file,
         }
 
         if (frame_ready.exchange(false)) {
-            int    size[2] = {k_thumb_w, k_thumb_h};
+            Uint64    size[2] = {k_thumb_w, k_thumb_h};
             size_t stride  = static_cast<size_t>(k_thumb_w) * 4;
 
             mpv_render_param rp[] = {
@@ -420,8 +420,8 @@ void FileThumbnailCache::generate_thumbnail(const std::filesystem::path &file,
         std::error_code ec;
         std::filesystem::create_directories(out_png.parent_path(), ec);
         stbi_write_png(out_png.string().c_str(),
-                       k_thumb_w, k_thumb_h, 4,
+        static_cast<int>(k_thumb_w), static_cast<int>(k_thumb_h), 4,
                        buf.data(),
-                       k_thumb_w * 4);
+                       static_cast<int>(k_thumb_w * 4));
     }
 }
