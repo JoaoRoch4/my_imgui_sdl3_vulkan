@@ -4,6 +4,7 @@
 
 #include "file_browser_thread.hpp"
 #include "file_browser_thumbnail_context.hpp"
+#include <array>
 
 class vulkan_context;
 
@@ -222,7 +223,7 @@ class FileBrowser {
 	[[nodiscard]] bool GetKeepOpen() const noexcept;
 
 	// Media type filter (combo box in the toolbar).
-	enum class MediaFilter { All, Videos, Images, Media };
+	enum class MediaFilter { All, Media, Videos, Images, Gifs, Videos_Gifs};
 	void			  SetMediaFilter(MediaFilter filter) noexcept;
 	[[nodiscard]] MediaFilter GetMediaFilter() const noexcept;
 

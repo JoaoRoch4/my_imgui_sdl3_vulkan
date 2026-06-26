@@ -37,7 +37,7 @@ class vulkan_context {
 
 	/// True when VK_EXT_memory_budget was enabled on the device, so available_vram_bytes()
 	/// can report the live per-process budget instead of the static heap size.
-	bool memory_budget_enabled = false;
+	bool memory_budget_enabled = true;
 
 	/// Best-effort largest device-local (VRAM) heap's currently-available bytes. Uses the
 	/// VK_EXT_memory_budget live budget when present (accounts for other apps' usage),

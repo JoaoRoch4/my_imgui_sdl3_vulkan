@@ -11,8 +11,8 @@
 
 
 
-#define THUMB_LOG APP_DEBUG_LOG
-#define  THUMB_DEBUG APP_DEBUG_LOG
+#define THUMB_LOG(fmt, ...) APP_DEBUG_LOG_SPAM("[file_browser_thumbnail_context] " fmt, ##__VA_ARGS__)
+#define  THUMB_DEBUG(fmt, ...)  THUMB_LOG
 
 
 namespace {
@@ -149,10 +149,10 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 	// query is best-effort (VK_EXT_memory_budget live budget, else the device-local heap
 	// size); a 0 result keeps the default. Tiers, not a formula, so the value is predictable.
 	if (vk) {
-		VkDeviceSize const avail = vk->available_vram_bytes();
+		VkDeviceSize const avail = vk->vram_reserve_bytes;
 		double const       gib   = static_cast<double>(avail) / (1024.0 * 1024.0 * 1024.0);
 		if (avail == 0)
-			m_image_max_edge = k_image_max_edge_default;
+			m_image_max_edge = 2048;
 		else if (gib < 1.5)
 			m_image_max_edge = 1024;
 		else if (gib < 3.0)
@@ -162,7 +162,7 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 		else if (gib < 12.0)
 			m_image_max_edge = 3072;
 		else
-			m_image_max_edge = 4096;
+			m_image_max_edge = 2048;
 		// IMAGE quality tier caps the VRAM-auto value (images stay lossless RGBA — compressing
 		// them is the banding we deliberately avoid; resolution is the quality/VRAM lever).
 		if (image_tier == "high")

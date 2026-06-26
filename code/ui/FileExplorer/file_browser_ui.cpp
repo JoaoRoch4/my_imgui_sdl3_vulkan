@@ -1,10 +1,11 @@
 #include "pch.hpp"
 
 
-#include "file_browser_ui.hpp"
-#include "file_browser_thumbnail_context.hpp"
 #include "Memory_management.hpp"
+#include "file_browser_thumbnail_context.hpp"
+#include "file_browser_ui.hpp"
 #include <memory>
+#include <utility>
 
 
 ImGui::FileBrowser::FileBrowser(ImGuiFileBrowserFlags flags, std::filesystem::path defaultDirectory)
@@ -117,8 +118,8 @@ float ImGui::FileBrowser::GetSelectedThumbnailAspectRatio() const noexcept {
 	std::string const pathKey = selectedFilenames_.begin()->string();
 
 	// Fetch the thumbnail context instance using the proper static subsystem accessor
-	auto const static fbc = MemoryManagement::GetInstance<FileBrowserThumbnailContext>();
-		if (!fbc) {
+	auto static const fbc = MemoryManagement::GetInstance<FileBrowserThumbnailContext>();
+	if (!fbc) {
 		return 64.0f / 36.0f;
 	}
 
@@ -492,7 +493,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 	SameLine();
 	SetNextItemWidth(90.0f);
 	{
-		static char const* mediaLabels[] = {"All", "Videos", "Images","Media"};
+
+		static char const* mediaLabels[] = {
+			"All", "Media", "Videos", "Images",
+			"Gifs", "Videos + Gifs"};
 		int                mfIdx         = static_cast<int>(mediaFilter_);
 		if (Combo("##fb_media", &mfIdx, mediaLabels, IM_ARRAYSIZE(mediaLabels)))
 			mediaFilter_ = static_cast<MediaFilter>(mfIdx);
@@ -542,13 +546,13 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 		PopItemWidth();
 	}
 
-	
+
 	{
 		BeginChild("ch", ImVec2(0, -reserveHeight), true,
 			(flags_ & ImGuiFileBrowserFlags_NoModal) ? ImGuiWindowFlags_AlwaysHorizontalScrollbar : 0);
 		ScopeGuard endChild([] { EndChild(); });
 
-		ImGui::FileBrowser* fb =this;
+		ImGui::FileBrowser* fb = this;
 		auto const          calculateHeight
 			= fb ? fb->GetHeightEvaluator() : ImGui::FileBrowser::ThumbnailHeightEvaluator {};
 		// Shift + mouse-wheel scales thumbnails when the file list is hovered.
@@ -559,19 +563,20 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				float const factor = (wheel > 0.0f) ? 1.1f : (1.0f / 1.1f);
 				// Per-mode clamp envelope (min, max) + size-field selector.
 				float       minW   = 24.0f;
-				float       maxW   =  std::numeric_limits<float>::max();
+				float       maxW   = std::numeric_limits<float>::max();
 				ImVec2*     sz     = &thumbnailSize_;
-				bool        keepAr = true; // false for masonry — only column width matters
+				bool        keepAr = false; // false for masonry — only column width matters
 				if (viewMode_ == ViewMode::Grid) {
 					minW = 64.0f;
-					maxW = std::numeric_limits<float>::max();;
-					sz   = &gridThumbnailSize_;
+					maxW = std::numeric_limits<float>::max();
+					;
+					sz = &gridThumbnailSize_;
 				} else if (viewMode_ == ViewMode::Masonry) {
-					minW   = 80.0f;
-					maxW   = std::numeric_limits<float>::max();
-				;
+					minW = 80.0f;
+					maxW = std::numeric_limits<float>::max();
+					;
 					sz     = &masonryThumbnailSize_;
-					keepAr = true;
+					keepAr = false;
 				}
 				float const newW = std::clamp(sz->x * factor, minW, maxW);
 				sz->x            = newW;
@@ -586,36 +591,41 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 
 		// Returns true when the file should be shown given the current mediaFilter_.
 		auto const isMediaMatched = [this](std::filesystem::path const& ext) -> bool {
-
 			std::string e = ext.string();
 			std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) {
 				return static_cast<char>(std::tolower(c));
 			});
 			switch (mediaFilter_) {
 
-			case MediaFilter::Videos: return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv"
-					|| e == ".flv" || e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
+				case MediaFilter::Media:
+				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp"
+					|| e == ".gif" || e == ".avif" || e == ".heic" || e == ".heif" || e == ".mp4"
+					|| e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv" || e == ".flv"
+					|| e == ".webm" || e == ".m4v" || e == ".ts";
+
+			case MediaFilter::Videos:
+				return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv"
+					|| e == ".flv" || e == ".webm" || e == ".m4v" || e == ".ts";
 
 			case MediaFilter::Images:
 				return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp"
 					|| e == ".gif" || e == ".avif" || e == ".heic" || e == ".heif";
-			case MediaFilter::Media:
-			return e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".bmp"
-					|| e == ".gif" || e == ".avif" || e == ".heic" || e == ".heif" || e == ".mp4"
-					|| e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv" || e == ".flv"
-					|| e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif";
+		
+			case MediaFilter::Gifs:
+				return e == ".gif";
+			case MediaFilter::Videos_Gifs:
+			return e == ".mp4" || e == ".mkv" || e == ".avi" || e == ".mov" || e == ".wmv"
+					|| e == ".flv" || e == ".webm" || e == ".m4v" || e == ".ts" || e == ".gif"; 
 			case MediaFilter::All:
 				return true;
 			}
-
-	
 		};
 
 		bool const useGridView
 			= (viewMode_ == ViewMode::Grid) && m_thumbnails.is_setup() && showThumbnails_;
 		bool const useMasonryView
 			= (viewMode_ == ViewMode::Masonry) && m_thumbnails.is_setup() && showThumbnails_;
-			
+
 
 		// Per-record aspect ratio used by the masonry view (width / height of
 		// the cell). Images carry their native (w, h) from scan time
@@ -749,10 +759,10 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 							&& ToLower(u8StrToStr(r.name.u8string())).find(lowerSearch)
 								== std::string::npos)
 							return false;
-						return true;
+						return false;
 					};
-					int const n   = static_cast<int>(fileRecords_.size());
-					int       cur = -1;
+					auto const n   = static_cast<int>(fileRecords_.size());
+					int        cur = -1;
 					if (!selectedFilenames_.empty()) {
 						auto const& sel = *selectedFilenames_.begin();
 						for (int i = 0; i < n; ++i)
@@ -1130,7 +1140,7 @@ void ImGui::FileBrowser::Display() { // SUPER HOT MUST BE IN ITS OWN THREAD
 				}
 
 				if (static_cast<int>(rscIndex) == scrollToIdx_)
-					SetScrollHereY(0.5f); // A/D navigation: bring the new selection into view
+					SetScrollHereY(1.0f); // A/D navigation: bring the new selection into view
 
 				bool const selected = selectedFilenames_.find(rsc.name) != selectedFilenames_.end();
 
@@ -1553,7 +1563,7 @@ void ImGui::FileBrowser::SetRebuildThumbnailCallback(
 }
 
 void ImGui::FileBrowser::SetOpenFileCallback(std::function<void(std::filesystem::path const&)> cb) {
-	 openFileCallback_ = std::move(cb);
+	openFileCallback_ = std::move(cb);
 }
 
 void ImGui::FileBrowser::SetScrollStep(int px) noexcept { scrollStepPx_ = std::clamp(px, 1, 4000); }
@@ -1656,7 +1666,7 @@ void ImGui::FileBrowser::RequestReload() {
 	// Hand the heavy directory enumeration to the scanner thread. The previous
 	// listing stays on screen until PollScan() applies the finished result.
 	RebuildView();
-	ClearSelected() ;
+	ClearSelected();
 	m_thumbnails.release_textures();
 	RebuildThumbnail(currentDirectory_);
 	statusStr_ = "Scanning...";
@@ -1796,7 +1806,7 @@ void ImGui::FileBrowser::SetCurrentDirectoryUncatched(std::filesystem::path cons
 	// navigates (full-res image thumbnails are large). Skip on a same-folder refresh.
 	bool const dirChanged = (currentDirectory_ != target);
 	currentDirectory_     = target;
-	if (dirChanged){
+	if (dirChanged) {
 		m_thumbnails.release_textures();
 		searchStr_ = "";
 	}

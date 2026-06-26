@@ -30,7 +30,8 @@ decode_stb(std::filesystem::path const &file, int desired_channels = 4) {
 	// which is exactly what a thumbnail needs — and it never seeks, so it can't hit the
 	// ffmpegthumbnailer "Seeking in video failed" path.
 	stbi_uc *pixels 
-		= stbi_load(file.string().c_str(), &width, &height, &channels, desired_channels);	if (pixels == nullptr || width <= 0 || height <= 0) {
+		= stbi_load(file.string().c_str(), &width, &height, &channels, desired_channels);	
+		if (pixels == nullptr || width <= 0 || height <= 0) {
 		if (pixels != nullptr)
 			stbi_image_free(pixels);
 		return std::unexpected(img::ImageError::DecodeFailed);

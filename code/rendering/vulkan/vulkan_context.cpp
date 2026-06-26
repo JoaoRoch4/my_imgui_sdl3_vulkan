@@ -291,15 +291,9 @@ void vulkan_context::setup(std::vector<char const *> instance_extensions) {
 		// Inside your vulkan_context initialization function:
 
 		// 1. Fetch the real-time available VRAM bytes from the GPU heaps
-		vram_reserve_bytes = available_vram_bytes();
+		vram_reserve_bytes = usable_vram_with_budget(0.85);
 
-		// 2. Apply a 90% budget allocation factor, leaving a 10% safety buffer for the Operating
-		// System
-		constexpr double const budget_factor = 0.90;
-		double const calculated_size = vram_reserve_bytes * budget_factor;
-
-		// 3. Store the final rounded value inside your member variable
-		k_vram_reserve_size = std::trunc<VkDeviceSize>(calculated_size);
+	
 
 		// 4. Log the final configuration details in Gigabytes
 		APP_DEBUG_LOG("[vulkan_context] Total VRAM detected: {}GB",

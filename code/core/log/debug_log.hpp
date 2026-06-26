@@ -49,6 +49,7 @@ class AsyncSpamLogger {
 				if (current_line != m_last_line) {
 					std::println("{}", current_line);
 					m_last_line = std::move(current_line);
+					std::cout << "\33[2K\r" << std::flush;
 				}
 			}
 		}
@@ -67,6 +68,7 @@ class AsyncSpamLogger {
 			{
 				std::lock_guard<std::mutex> lock(m_mutex);
 				m_queue.push(std::move(log_msg));
+				std::cout << "\33[2K\r" << std::flush;
 			}
 			m_cv.notify_one();
 		}
@@ -76,10 +78,10 @@ class AsyncSpamLogger {
 #define APP_DEBUG_LOG(...)     std::println(__VA_ARGS__)
 #define APP_DEBUG_LOG_POP_LINE std::cout << "\33[2K\r" << std::flush;
 #define APP_DEBUG_LOG_RED_PUSH std::cout << "\033[31m";
-#define APP_DEBUG_LOG_RED_POP  std::cout << "\033[0m" << std::endl;
+#define APP_DEBUG_LOG_RED_POP  std::cout << "\033[0m" << std::endl
 #define APP_DEBUG_LOG_RED_LINE(...)                                                                \
 	APP_DEBUG_LOG_RED_PUSH                                                                         \
-	std::println(__VA_ARGS__);                                                                     \
+	APP_DEBUG_LOG(__VA_ARGS__);                                                                     \
 	APP_DEBUG_LOG_RED_POP
 
 #define APP_DEBUG_LOG_SPAM(...)                                                                    \

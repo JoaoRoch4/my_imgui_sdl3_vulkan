@@ -88,7 +88,7 @@ class FileBrowserThumbnailContext {
 		// window width, so it is visually lossless at display size. Videos ignore it.
 		// Auto-sized from available VRAM in setup(); this is the fallback when the GPU can't
 		// report its memory.
-		static constexpr uint64_t k_image_max_edge_default = 4096;
+		static constexpr uint64_t k_image_max_edge_default = 2048;
 		static constexpr uint64_t k_max_uploads_per_frame = 4;
 		static constexpr uint64_t k_retire_frames         = 3;
 		// Cap on live GPU thumbnail textures. Beyond this, the least-recently-used are
@@ -177,9 +177,9 @@ class FileBrowserThumbnailContext {
 		bool                  m_setup = false;
 
 		Backend            m_backend = Backend::Png; // resolved in setup()
-		uint64_t                m_image_max_edge = k_image_max_edge_default; // auto-sized from VRAM + image tier
-		uint64_t                m_thumb_w = k_thumb_w_default; // video BC1 letterbox size (video tier)
-		uint64_t                m_thumb_h = k_thumb_h_default;
+		uint64_t                m_image_max_edge; // auto-sized from VRAM + image tier
+		uint64_t                m_thumb_w; // video BC1 letterbox size (video tier)
+		uint64_t                m_thumb_h;
 		ThumbnailBlobCache m_blob;                   // BC1 backend store (single blob + index)
 
 		std::unordered_map<std::string, Entry, StringHash, std::equal_to<>> m_entries; // render-thread only

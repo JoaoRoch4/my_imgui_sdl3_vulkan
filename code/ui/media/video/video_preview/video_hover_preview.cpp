@@ -4,10 +4,11 @@
 #include "video_hover_preview.hpp"
 #include "managed_thread.hpp"
 #include "vulkan_context.hpp"
-#include "debug_log.hpp"
-#include <bit>
 
-#define  _Debug APP_DEBUG_LOG
+
+#define _Debug(fmt, ...) std::println("[VideoHoverPreview] " fmt, ##__VA_ARGS__)
+
+
 
 #include <stb_image.h>
 #include <stb_image_write.h>
@@ -117,10 +118,7 @@ void VideoHoverPreview::init_mpv() {
 		"bestvideo[height<=1080]+bestaudio/best[height<=1080]/best");
 	// Network buffering
 	mpv_set_option_string(m_mpv, "cache", "yes");
-	mpv_set_option_string(m_mpv, "demuxer-max-bytes", "150MiB");
-	mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "50MiB");
-	mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "30");
-	mpv_set_option_string(m_mpv, "stream-buffer-size", "4MiB");
+
 
 
 	mpv_initialize(m_mpv);
@@ -144,8 +142,6 @@ void VideoHoverPreview::init_mpv() {
 // ============================================================
 
 void VideoHoverPreview::start_thread() {
-
-    int  w_N = 0, h_N = 0;
     _Debug("start_thread");
 
     if (m_thread)
@@ -156,20 +152,11 @@ void VideoHoverPreview::start_thread() {
     // once-per-iteration automatic heartbeat keeps the watchdog fed.
     ManagedThread::Config cfg;
     cfg.name    = "VidHoverPrev";
-   
     cfg.timeout = std::chrono::milliseconds(5000);
     cfg.policy  = ThreadOverwatch::RecoveryPolicy::RestartOnTimeout;
     m_thread    = std::make_unique<ManagedThread>(
-        cfg, [this, &w_N, &h_N](const std::stop_token & /*st*/, ManagedThread & /*self*/) {
+        cfg, [this](const std::stop_token & /*st*/, ManagedThread & /*self*/) {
             mpv_event *ev = mpv_wait_event(m_mpv, 0.01);
-    
-
-            if (mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w_N) == 0
-				&& mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h_N) == 0 && w_N > 0 && h_N > 0) {
-
-				preview_size = ImVec2 {static_cast<float>(w_N), static_cast<float>(h_N)};
-                has_val = true;
-                }
 
             if (ev && ev->event_id == MPV_EVENT_VIDEO_RECONFIG) {
                 m_waiting.store(false);
@@ -177,7 +164,6 @@ void VideoHoverPreview::start_thread() {
                 if (mpv_get_property(m_mpv, "width", MPV_FORMAT_INT64, &w) == 0 &&
                     mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h) == 0 && w > 0 && h > 0) {
                     last_source_size = ImVec2{static_cast<float>(w), static_cast<float>(h)};
-                   // preview_size = ImVec2 {static_cast<float>(w), static_cast<float>(h)};
                 }
             }
 
@@ -189,8 +175,7 @@ void VideoHoverPreview::start_thread() {
 
             std::lock_guard lock(m_buf_mutex);
 
-			std::array<int, 2>   sizearr    = (has_val) ? std::array {w_N, h_N} : std::array{m_w, m_h};
-            int size[] {sizearr[0], sizearr[1]};
+            int    size[2] = {m_w, m_h};
             size_t stride  = static_cast<size_t>(m_w) * 4;
 
             mpv_render_param rp[] = {
