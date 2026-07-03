@@ -65,7 +65,8 @@ void ConfigRuntimeUiContext::DrawUi(ConfigRuntime* cfg) {
 void ConfigRuntimeUiContext::RenderImagePreviewSizeSection(ConfigRuntime* cfg) {
 	if (ImGui::CollapsingHeader("Image Preview Size", ImGuiTreeNodeFlags_DefaultOpen)) {
 		cfg->DrawPreviewSizeControl("Image Hover Preview Size", "##image_hover_preview_size",
-			ImageViewerPanel::hover_preview_size);
+			ImageViewerPanel::hover_preview_size,
+			std::max(m_default_image_hover_preview_size.x, m_default_image_hover_preview_size.y));
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Original##img_orig")) {
 			ImageViewerPanel::hover_preview_size = m_default_image_hover_preview_size;
@@ -82,8 +83,9 @@ void ConfigRuntimeUiContext::RenderImagePreviewSizeSection(ConfigRuntime* cfg) {
  */
 void ConfigRuntimeUiContext::RenderVideoPreviewSizeSection(ConfigRuntime* cfg) {
 	if (ImGui::CollapsingHeader("Video Preview Size", ImGuiTreeNodeFlags_DefaultOpen)) {
+		// 1.0x reference == the shipped VideoHoverPreview::preview_size default long edge (3000).
 		if (cfg->DrawPreviewSizeControl("Hover Preview Size", "##hover_preview_size",
-				cfg->m_pending_hover_size))
+				cfg->m_pending_hover_size, 3000.0f))
 			VideoHoverPreview::preview_size = cfg->m_pending_hover_size;
 
 		{
@@ -102,8 +104,9 @@ void ConfigRuntimeUiContext::RenderVideoPreviewSizeSection(ConfigRuntime* cfg) {
 			}
 		}
 
+		// 1.0x reference == the shipped VideoSeekPreview::preview_size default long edge (320).
 		if (cfg->DrawPreviewSizeControl("Seek Preview Size", "##seek_preview_size",
-				cfg->m_pending_seek_size))
+				cfg->m_pending_seek_size, 320.0f))
 			VideoSeekPreview::preview_size = cfg->m_pending_seek_size;
 	}
 }
@@ -233,15 +236,15 @@ void ConfigRuntimeUiContext::RenderVideoPlaybackSection(ConfigRuntime* cfg) {
  * are safely rendered in a disabled read-only state.
  * * @param cfg Pointer to the active runtime configuration model instance.
  */
- // In: config_runtime_ui_context.cpp
+// In: config_runtime_ui_context.cpp
 
- /**
-  * @brief Renders the "File Explorer Thumbnail Size" layout section.
-  * * Exposes controllers for sizing individual interface elements in List, Grid,
-  * and Masonry browser screens. If the explorer subsystem is offline, widgets
-  * are safely rendered in a disabled read-only state.
-  * * @param cfg Pointer to the active runtime configuration model instance.
-  */
+/**
+ * @brief Renders the "File Explorer Thumbnail Size" layout section.
+ * * Exposes controllers for sizing individual interface elements in List, Grid,
+ * and Masonry browser screens. If the explorer subsystem is offline, widgets
+ * are safely rendered in a disabled read-only state.
+ * * @param cfg Pointer to the active runtime configuration model instance.
+ */
 // In: config_runtime_ui_context.cpp
 
 /**
@@ -347,9 +350,7 @@ void ConfigRuntimeUiContext::RenderFileExplorerThumbnailSizeSection(ConfigRuntim
 		if (fb == nullptr)
 			ImGui::TextDisabled("Open the File Explorer to edit these.");
 	}
-
-	
-  }
+}
 
 /**
  * @brief Renders the "Thumbnail Cache" layout section.

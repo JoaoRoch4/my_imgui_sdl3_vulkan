@@ -6,13 +6,19 @@
 #include "image_job_system.hpp"
 #include "image_ops.hpp" // img::ops::encode_bc1 (mpv video fallback in bc1 mode)
 #include "thumbnail_generator.hpp"
+#include "thumbnail_image_io.hpp" // stb_image.h: stbi_load_gif_from_memory (animated GIF frames)
 #include "vulkan_bc1_encoder.hpp" // GPU BC1 encoder singleton (setup/shutdown/pump)
-#include "vulkan_texture.hpp"     // pulls vulkan_context.hpp (bc_textures_enabled)
+#include "vulkan_texture.hpp" // pulls vulkan_context.hpp (bc_textures_enabled)
+
+#include <bit>
+#include <cstdlib> // std::free (stb delays array)
+#include <fstream>
 
 
 
-#define THUMB_LOG(fmt, ...) APP_DEBUG_LOG_SPAM("[file_browser_thumbnail_context] " fmt, ##__VA_ARGS__)
-#define  THUMB_DEBUG(fmt, ...)  THUMB_LOG
+#define THUMB_LOG(fmt, ...)                                                                        \
+	APP_DEBUG_LOG_SPAM("[file_browser_thumbnail_context] " fmt, ##__VA_ARGS__)
+#define THUMB_DEBUG(fmt, ...) THUMB_LOG
 
 
 namespace {
@@ -27,9 +33,9 @@ std::string px_summary(img::ImageBuffer const &b) {
 	for (std::uint8_t v : b.data)
 		mx = std::max(mx, v);
 	std::size_t const mid = (b.data.size() / 2) & ~static_cast<std::size_t>(3);
-	return std::format("{}x{} ch{} max={} mid=({},{},{},{})", b.width, b.height, b.channels, static_cast<int>(mx),
-		static_cast<int>(b.data[mid]), static_cast<int>(b.data[mid + 1]), static_cast<int>(b.data[mid + 2]),
-		static_cast<int>(b.data[mid + 3]));
+	return std::format("{}x{} ch{} max={} mid=({},{},{},{})", b.width, b.height, b.channels,
+		static_cast<int>(mx), static_cast<int>(b.data[mid]), static_cast<int>(b.data[mid + 1]),
+		static_cast<int>(b.data[mid + 2]), static_cast<int>(b.data[mid + 3]));
 }
 
 std::uint64_t fnv1a_hash(std::string const &s) {
@@ -59,8 +65,9 @@ bool is_image_ext(std::filesystem::path const &p) {
 
 bool is_video_ext(std::filesystem::path const &p) {
 	std::string const e = lower_ext(p);
-	return e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v" || e == ".wmv"
-		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv";
+	return e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v"
+		|| e == ".wmv" || e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts"
+		|| e == ".3gp" || e == ".ogv";
 }
 
 } // namespace
@@ -72,17 +79,19 @@ bool FileBrowserThumbnailContext::is_thumbnailable(std::filesystem::path const &
 	return is_image_ext(path) || is_video_ext(path);
 }
 
-FileBrowserThumbnailContext::Classification FileBrowserThumbnailContext::classify(std::filesystem::path const &path) {
+FileBrowserThumbnailContext::Classification
+FileBrowserThumbnailContext::classify(std::filesystem::path const &path) {
 	// Lower the extension once and test both categories, instead of is_image_ext +
 	// is_video_ext each re-allocating the lowered extension (the old per-frame cost).
 	std::string const e = lower_ext(path);
 	Classification    c;
-	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif" || e == ".avif" || e == ".heic"
-		|| e == ".heif") {
+	if (e == ".jpg" || e == ".jpeg" || e == ".png" || e == ".webp" || e == ".gif" || e == ".avif"
+		|| e == ".heic" || e == ".heif") {
 		c.thumbnailable = true;
-	} else if (e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi" || e == ".m4v" || e == ".wmv"
-		|| e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg" || e == ".m2ts" || e == ".3gp" || e == ".ogv"
-	 ) {
+		c.is_gif        = (e == ".gif"); // eligible for inline animated playback
+	} else if (e == ".mp4" || e == ".mkv" || e == ".webm" || e == ".mov" || e == ".avi"
+		|| e == ".m4v" || e == ".wmv" || e == ".flv" || e == ".ts" || e == ".mpg" || e == ".mpeg"
+		|| e == ".m2ts" || e == ".3gp" || e == ".ogv") {
 		c.thumbnailable = true;
 		c.is_video      = true;
 	}
@@ -94,8 +103,8 @@ std::string FileBrowserThumbnailContext::make_key(std::filesystem::path const &p
 }
 
 // Add to: file_browser_thumbnail_context.hpp
-[[nodiscard]] bool
-FileBrowserThumbnailContext::GetLoadedTextureDimensions(std::string const &key, int &outW, int &outH) const noexcept {
+[[nodiscard]] bool FileBrowserThumbnailContext::GetLoadedTextureDimensions(std::string const &key,
+	int &outW, int &outH) const noexcept {
 	if (auto const it = m_entries.find(key); it != m_entries.end()) {
 		if (it->second.texture) {
 			outW = it->second.texture->width;
@@ -129,19 +138,20 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 	// BC1 block-compressed into a shared blob, while IMAGE thumbs decode to lossless RGBA
 	// with no disk cache (BC1 bands too hard on flat-shaded art; see Entry::use_bc1). It
 	// requires device BC support; otherwise everything falls back to the portable PNG path.
-	const bool want_bc1 = (thumbnail_format == "bc1");
-	m_backend = (want_bc1 && vk && vk->bc_textures_enabled) ? Backend::Bc1 : Backend::Png;
+	bool const want_bc1 = (thumbnail_format == "bc1");
+	m_backend           = (want_bc1 && vk && vk->bc_textures_enabled) ? Backend::Bc1 : Backend::Png;
 	if (m_backend == Backend::Bc1) {
 		constexpr std::uint64_t k_cap_bytes = 256ull * 1024ull * 1024ull; // ~256 MB live cap
 		// Per-resolution blob dir so changing the video tier never reads stale-sized blocks
 		// (old-resolution blobs simply become unused rather than corrupting an upload).
-		std::string const blob_dir = "bc1_" + std::to_string(m_thumb_w) + "x" + std::to_string(m_thumb_h);
+		std::string const       blob_dir
+			= "bc1_" + std::to_string(m_thumb_w) + "x" + std::to_string(m_thumb_h);
 		m_blob.open(m_thumb_dir / blob_dir, k_cap_bytes);
-		APP_DEBUG_LOG("[thumbnail_context] backend=bc1 hybrid; video tier={} ({}x{})", video_tier, m_thumb_w,
-			m_thumb_h);
+		APP_DEBUG_LOG("[thumbnail_context] backend=bc1 hybrid; video tier={} ({}x{})", video_tier,
+			m_thumb_w, m_thumb_h);
 	} else {
-		APP_DEBUG_LOG("[thumbnail_context] backend=png (format='{}', bc_supported={})", thumbnail_format,
-			vk ? vk->bc_textures_enabled : false);
+		APP_DEBUG_LOG("[thumbnail_context] backend=png (format='{}', bc_supported={})",
+			thumbnail_format, vk ? vk->bc_textures_enabled : false);
 	}
 
 	// Auto-size the image-decode resolution cap from available VRAM: more memory -> allow
@@ -172,7 +182,9 @@ void FileBrowserThumbnailContext::setup(vulkan_context *vk, std::filesystem::pat
 		else if (image_tier == "low")
 			m_image_max_edge = std::min<uint64_t>(m_image_max_edge, 768);
 		// "original" keeps the full VRAM-auto cap.
-		APP_DEBUG_LOG("[thumbnail_context] image tier={} -> max_edge={} (VRAM ~{:.2f} GiB, budget_ext={})",
+		APP_DEBUG_LOG(
+			"[thumbnail_context] image tier={} -> max_edge={} (VRAM ~{:.2f} GiB, "
+			"budget_ext={})",
 			image_tier, m_image_max_edge, gib, vk->memory_budget_enabled);
 	}
 
@@ -211,11 +223,15 @@ void FileBrowserThumbnailContext::shutdown() {
 		for (auto &[k, e] : m_entries)
 			if (e.texture)
 				e.texture->unload(*m_vk);
+		for (auto &[k, g] : m_gifs)
+			if (g.texture)
+				g.texture->unload(*m_vk);
 		for (auto &r : m_retire)
 			if (r.texture)
 				r.texture->unload(*m_vk);
 	}
 	m_entries.clear();
+	m_gifs.clear();
 	m_retire.clear();
 	{
 		std::lock_guard lk(m_video_mutex);
@@ -236,7 +252,8 @@ std::filesystem::path FileBrowserThumbnailContext::png_for(std::string const &ke
 	return m_thumb_dir / (std::string(hex) + ".png");
 }
 
-void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file, Entry &e, bool decode_as_video) {
+void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file, Entry &e,
+	bool decode_as_video) {
 	// One composite pool job that dispatches to the two thumbnail engines:
 	//   cache HIT  -> ThumbnailReproducer::reload  (stb decode of the already-sized PNG);
 	//   cache MISS -> ThumbnailGenerator::generate (video: ffmpegthumbnailer, image/gif: stb,
@@ -266,9 +283,9 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	//     persist. Full quality, identical to the hover preview.
 	//   * VIDEO no-BC fallback (png_path set) -> reload the cached PNG, else letterbox-generate
 	//     into m_thumb_w x m_thumb_h and persist, exactly as before.
-	bool const full_image = e.png_path.empty();
-	Uint64 const  max_edge   = m_image_max_edge;
-	e.img_future          = img::ImageJobSystem::instance().submit(
+	bool const   full_image = e.png_path.empty();
+	Uint64 const max_edge   = m_image_max_edge;
+	e.img_future            = img::ImageJobSystem::instance().submit(
         [file, out = e.png_path, decode_as_video, full_image, max_edge, tw, th]() -> ImgResult {
             if (full_image)
                 return ThumbnailGenerator::generate_image_full(file, max_edge);
@@ -281,7 +298,8 @@ void FileBrowserThumbnailContext::submit_image(std::filesystem::path const &file
 	e.state = State::Generating;
 }
 
-void FileBrowserThumbnailContext::on_video_done(std::string const &key, std::vector<std::uint8_t> rgba, bool ok) {
+void FileBrowserThumbnailContext::on_video_done(std::string const &key,
+	std::vector<std::uint8_t> rgba, bool ok) {
 	THUMB_LOG("video_done key={} ok={} bytes={}", key, ok, rgba.size());
 	ImgResult res = std::unexpected(img::ImageError::DecodeFailed);
 	if (ok && rgba.size() == static_cast<std::size_t>(m_thumb_w) * m_thumb_h * 4) {
@@ -329,11 +347,18 @@ void FileBrowserThumbnailContext::enforce_texture_cap() {
 	}
 }
 
-void FileBrowserThumbnailContext::begin_frame() {
+void FileBrowserThumbnailContext::begin_frame(float dt_seconds) {
 	if (!m_setup)
 		return;
 	++m_frame;
 	m_uploads_this_frame = 0;
+
+	// GIF animation timing: clamp dt so a long stall (tab-out, breakpoint) doesn't fast-forward
+	// every GIF. Promote the hover hint the UI noted last frame, then bound resident GIF RAM.
+	m_dt_ms       = static_cast<double>(std::clamp(dt_seconds, 0.0f, 0.1f)) * 1000.0;
+	m_hovered_gif = std::move(m_hovered_gif_next);
+	m_hovered_gif_next.clear();
+	prune_gifs();
 
 	// GPU BC1 encoder: drain completed dispatches from prior frames and start a
 	// new batch of any pending submissions. Cheap when the encoder is idle.
@@ -366,10 +391,11 @@ void FileBrowserThumbnailContext::begin_frame() {
 				// mpv fallback delivered RGBA; encode to BC1 here (rare path) so the
 				// upload + blob store go through the same upload_bc1 chokepoint.
 				if (auto enc = img::ops::encode_bc1(*res); enc && !enc->empty()) {
-					it->second.bc1_blocks = std::move(*enc);
-					it->second.have_bc1   = true;
-					it->second.from_blob  = false;
-					it->second.state      = State::PixelsReady;
+					it->second.bc1_blocks  = std::move(*enc);
+					it->second.have_bc1    = true;
+					it->second.from_blob   = false;
+					it->second.state       = State::PixelsReady;
+					it->second.ready_frame = m_frame;
 				} else {
 					it->second.state = State::Failed;
 				}
@@ -377,6 +403,7 @@ void FileBrowserThumbnailContext::begin_frame() {
 				it->second.pixels      = std::move(*res);
 				it->second.have_pixels = true;
 				it->second.state       = State::PixelsReady;
+				it->second.ready_frame = m_frame;
 			}
 		} else {
 			it->second.state = State::Failed;
@@ -384,6 +411,15 @@ void FileBrowserThumbnailContext::begin_frame() {
 	}
 
 	enforce_texture_cap(); // bound live textures (LRU) so huge folders can't exhaust the GPU
+
+	// Upload PixelsReady still thumbnails fairly (longest-waiting first) within the per-frame
+	// budget, BEFORE the view loop samples them — decoupled from per-row draw order.
+	flush_image_uploads();
+
+	// Push the current frame of each animating GIF to the GPU, fairly and bounded, BEFORE the
+	// view loop samples them. Decoupled from the still-thumbnail upload budget so a screenful of
+	// GIFs all advance (see flush_gif_uploads); tick_gif (per row) only advances the clock + flags.
+	flush_gif_uploads();
 }
 
 ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
@@ -396,6 +432,7 @@ ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
 				e.pixels      = std::move(*res);
 				e.have_pixels = true;
 				e.state       = State::PixelsReady;
+				e.ready_frame = m_frame; // stamp for flush_image_uploads fairness
 				THUMB_LOG("img decoded -> PixelsReady [{}]", px_summary(e.pixels));
 			} else {
 				e.state = State::Failed;
@@ -409,67 +446,291 @@ ImTextureID FileBrowserThumbnailContext::poll_entry(Entry &e) {
 		if (e.bc1_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
 			Bc1Result res = e.bc1_future.get();
 			if (res && !res->empty()) {
-				e.bc1_blocks = std::move(*res);
-				e.have_bc1   = true;
-				e.from_blob  = false;
-				e.state      = State::PixelsReady;
+				e.bc1_blocks  = std::move(*res);
+				e.have_bc1    = true;
+				e.from_blob   = false;
+				e.state       = State::PixelsReady;
+				e.ready_frame = m_frame;
 			} else {
 				e.state = State::Failed;
 			}
 		}
 	}
 
-	// Upload at most k_max_uploads_per_frame textures per frame so a fresh grid of
-	// ready thumbnails can't stall a single frame.
-	if (e.state == State::PixelsReady && e.use_bc1 && e.have_bc1
-		&& m_uploads_this_frame < k_max_uploads_per_frame) {
-		auto tex = std::make_unique<VulkanTexture>();
-		if (tex->upload_bc1(e.bc1_blocks, m_thumb_w, m_thumb_h, *m_vk)) {
-			// Persist to the blob on first upload (a blob hit is already stored).
-			if (!e.from_blob)
-				m_blob.store(e.blob_key, e.bc1_blocks, m_thumb_w, m_thumb_h);
-			e.texture = std::move(tex);
-			e.state   = State::Ready;
-			++m_uploads_this_frame;
-		} else {
-			e.state = State::Failed;
-		}
-		e.bc1_blocks.clear();
-		e.bc1_blocks.shrink_to_fit();
-		e.have_bc1 = false;
-	} else if (e.state == State::PixelsReady && !e.use_bc1 && e.have_pixels
-		&& m_uploads_this_frame < k_max_uploads_per_frame) {
-		THUMB_LOG("upload pixels [{}]", px_summary(e.pixels));
-		auto tex = std::make_unique<VulkanTexture>();
-		if (tex->upload(e.pixels, *m_vk)) {
-			e.texture = std::move(tex);
-			e.state   = State::Ready;
-			++m_uploads_this_frame;
-			THUMB_LOG("upload OK  imgui_id={:#x}", static_cast<std::uint64_t>(e.texture->imgui_id()));
-		} else {
-			e.state = State::Failed;
-			THUMB_LOG("upload FAIL");
-		}
-		e.pixels      = img::ImageBuffer {}; // release CPU pixels either way
-		e.have_pixels = false;
-	}
-
+	// NOTE: the GPU upload is intentionally NOT here. It is batched into flush_image_uploads()
+	// (begin_frame) so a screenful of ready thumbnails uploads fairly within the per-frame budget
+	// — the same decoupled, longest-waiting-first scheduling the animated GIFs use.
 	if (e.state == State::Ready && e.texture)
 		return e.texture->imgui_id();
 	return 0;
 }
 
+void FileBrowserThumbnailContext::flush_image_uploads() {
+	if (!m_vk)
+		return;
+
+	std::vector<Entry *> pending;
+	pending.reserve(m_entries.size());
+	for (auto &[k, e] : m_entries)
+		if (e.state == State::PixelsReady
+			&& ((e.use_bc1 && e.have_bc1) || (!e.use_bc1 && e.have_pixels)))
+			pending.push_back(&e);
+	if (pending.empty())
+		return;
+
+	// Longest-waiting first: the thumbnail that has been ready (awaiting GPU) the longest uploads
+	// first, so none is perpetually starved by entries drawn before it.
+	std::sort(pending.begin(), pending.end(), [](Entry const *a, Entry const *b) {
+		return a->ready_frame < b->ready_frame;
+	});
+
+	for (Entry *e : pending) {
+		if (m_uploads_this_frame >= k_max_uploads_per_frame)
+			break;
+
+		if (e->use_bc1 && e->have_bc1) {
+			auto tex = std::make_unique<VulkanTexture>();
+			if (tex->upload_bc1(e->bc1_blocks, m_thumb_w, m_thumb_h, *m_vk)) {
+				// Persist to the blob on first upload (a blob hit is already stored).
+				if (!e->from_blob)
+					m_blob.store(e->blob_key, e->bc1_blocks, m_thumb_w, m_thumb_h);
+				e->texture = std::move(tex);
+				e->state   = State::Ready;
+				++m_uploads_this_frame;
+			} else {
+				e->state = State::Failed;
+			}
+			e->bc1_blocks.clear();
+			e->bc1_blocks.shrink_to_fit();
+			e->have_bc1 = false;
+		} else { // lossless RGBA route
+			THUMB_LOG("upload pixels [{}]", px_summary(e->pixels));
+			auto tex = std::make_unique<VulkanTexture>();
+			if (tex->upload(e->pixels, *m_vk)) {
+				e->texture = std::move(tex);
+				e->state   = State::Ready;
+				++m_uploads_this_frame;
+			} else {
+				e->state = State::Failed;
+			}
+			e->pixels      = img::ImageBuffer {}; // release CPU pixels either way
+			e->have_pixels = false;
+		}
+	}
+}
+
+// ── Inline animated-GIF playback ──────────────────────────────────────────────
+FileBrowserThumbnailContext::GifFrames
+FileBrowserThumbnailContext::decode_gif_frames(std::filesystem::path const &file) {
+	GifFrames out;
+
+	std::ifstream f(file, std::ios::binary | std::ios::ate);
+	if (!f)
+		return out;
+	std::streamsize const len = f.tellg();
+	if (len <= 0)
+		return out;
+	std::vector<char> bytes(static_cast<std::size_t>(len));
+	f.seekg(0);
+	if (!f.read(bytes.data(), len))
+		return out;
+
+	// stb decodes ALL frames into one w*h*frames*4 RGBA allocation and fills `delays`
+	// (already in milliseconds: stb stores the GCE 1/100s value times 10).
+	int     *delays = nullptr;
+	int      w = 0, h = 0, frames = 0, comp = 0;
+	stbi_uc *data = stbi_load_gif_from_memory(std::bit_cast<stbi_uc const *>(bytes.data()),
+		static_cast<int>(len), &delays, &w, &h, &frames, &comp, 4);
+	if (data == nullptr || w <= 0 || h <= 0 || frames <= 0) {
+		if (data != nullptr)
+			stbi_image_free(data);
+		if (delays != nullptr)
+			std::free(delays); // NOLINT(cppcoreguidelines-no-malloc) — stb allocates with malloc
+		return out;
+	}
+
+	out.w                   = w;
+	out.h                   = h;
+	out.count               = frames;
+	std::size_t const total = static_cast<std::size_t>(w) * static_cast<std::size_t>(h)
+		* static_cast<std::size_t>(frames) * 4u;
+	out.rgba.assign(data, data + total);
+	out.delays_ms.resize(static_cast<std::size_t>(frames));
+	for (int i = 0; i < frames; ++i) {
+		int const d = delays ? delays[i] : 100;
+		out.delays_ms[static_cast<std::size_t>(i)] = (d > 0) ? std::max(20, d) : 100; // floor avoids
+																					  // 0ms spin
+	}
+
+	stbi_image_free(data);
+	if (delays != nullptr)
+		std::free(delays); // NOLINT(cppcoreguidelines-no-malloc)
+	return out;
+}
+
+bool FileBrowserThumbnailContext::gif_should_animate(std::string_view key) const {
+	switch (m_gif_playback) {
+	case GifPlayback::AllVisible:
+	case GifPlayback::Hybrid:
+		return true; // every visible GIF animates (Hybrid throttles non-hovered in tick_gif)
+	case GifPlayback::HoverOnly:
+		return key == m_hovered_gif;
+	}
+	return false;
+}
+
+ImTextureID FileBrowserThumbnailContext::tick_gif(std::string_view key,
+	std::filesystem::path const &file, bool hovered) {
+	auto it = m_gifs.find(key);
+	if (it == m_gifs.end()) {
+		// First sight while this GIF wants to animate: kick off an async multi-frame decode.
+		it                = m_gifs.try_emplace(std::string(key)).first;
+		it->second.future = img::ImageJobSystem::instance().submit(
+			[file]() -> GifFrames { return decode_gif_frames(file); }, img::Priority::Normal);
+	}
+	GifAnim &g  = it->second;
+	g.last_used = m_frame;
+
+	if (g.state == GifAnim::St::Decoding && g.future.valid()
+		&& g.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+		g.frames = g.future.get();
+		g.state  = g.frames.ok() ? GifAnim::St::Ready : GifAnim::St::Failed;
+	}
+	if (g.state != GifAnim::St::Ready)
+		return 0; // still decoding (or failed) — caller falls back to the still thumbnail
+
+	// Advance the animation clock. Hybrid throttles non-hovered GIFs to half rate so a folder
+	// full of them stays cheap; HoverOnly only ever reaches here for the hovered GIF.
+	double const rate = (m_gif_playback == GifPlayback::Hybrid && !hovered) ? 0.5 : 1.0;
+	if (g.frames.count > 1) {
+		g.accum_ms += m_dt_ms * rate;
+		int guard   = 0; // bound the catch-up loop after a long stall / tab-out
+		while (g.accum_ms >= g.frames.delays_ms[static_cast<std::size_t>(g.cur)] && guard++ < 240) {
+			g.accum_ms -= g.frames.delays_ms[static_cast<std::size_t>(g.cur)];
+			g.cur       = (g.cur + 1) % g.frames.count;
+		}
+	}
+
+	// Flag the new frame for the fair upload pass (flush_gif_uploads, run in begin_frame) rather
+	// than uploading here. Uploading in this greedy per-row path let the first few GIFs drawn
+	// consume the whole per-frame budget, freezing every GIF after them. Return the current
+	// texture (possibly the previous frame for one frame) so the GIF stays visible meanwhile.
+	g.dirty = (g.uploaded != g.cur) || !g.texture;
+
+	return g.texture ? g.texture->imgui_id() : 0;
+}
+
+// Fair, bounded upload of every dirty GIF's current frame. Longest-waiting GIFs (oldest
+// last_upload) go first, so with more animating GIFs than the per-frame budget every GIF
+// still advances over successive frames — no permanent starvation. Runs on the render
+// thread in begin_frame, using its OWN budget (not the still-thumbnail one).
+void FileBrowserThumbnailContext::flush_gif_uploads() {
+	if (!m_vk)
+		return;
+
+	std::vector<GifAnim *> pending;
+	pending.reserve(m_gifs.size());
+	for (auto &[k, g] : m_gifs)
+		if (g.state == GifAnim::St::Ready && g.dirty)
+			pending.push_back(&g);
+	if (pending.empty())
+		return;
+
+	std::sort(pending.begin(), pending.end(), [](GifAnim const *a, GifAnim const *b) {
+		return a->last_upload < b->last_upload;
+	});
+
+	std::size_t budget = k_max_gif_uploads_per_frame;
+	for (GifAnim *g : pending) {
+		if (budget == 0)
+			break;
+
+		img::ImageBuffer buf;
+		buf.width    = g->frames.w;
+		buf.height   = g->frames.h;
+		buf.channels = 4;
+		std::size_t const fsz
+			= static_cast<std::size_t>(g->frames.w) * static_cast<std::size_t>(g->frames.h) * 4u;
+		std::size_t const off = static_cast<std::size_t>(g->cur) * fsz;
+		buf.data.assign(g->frames.rgba.begin() + static_cast<std::ptrdiff_t>(off),
+			g->frames.rgba.begin() + static_cast<std::ptrdiff_t>(off + fsz));
+
+		// One frame ever resident in VRAM: the previous texture is retired (freed after the
+		// GPU drains), not freed inline.
+		auto tex = std::make_unique<VulkanTexture>();
+		if (tex->upload(buf, *m_vk)) {
+			if (g->texture)
+				m_retire.push_back({std::move(g->texture), k_retire_frames});
+			g->texture     = std::move(tex);
+			g->uploaded    = g->cur;
+			g->dirty       = false;
+			g->last_upload = m_frame;
+			--budget;
+		}
+	}
+}
+
+void FileBrowserThumbnailContext::prune_gifs() {
+	if (m_gifs.size() <= k_max_gif_anims)
+		return;
+	// Retire the least-recently-used GIFs (by last get() frame) down to the cap, freeing their
+	// frame RAM. Visible GIFs were touched this frame, so they are never pruned here.
+	std::vector<decltype(m_gifs)::iterator> its;
+	its.reserve(m_gifs.size());
+	for (auto it = m_gifs.begin(); it != m_gifs.end(); ++it)
+		its.push_back(it);
+	std::sort(its.begin(), its.end(), [](auto const &a, auto const &b) {
+		return a->second.last_used < b->second.last_used;
+	});
+	std::size_t const to_drop = m_gifs.size() - k_max_gif_anims;
+	for (std::size_t i = 0; i < to_drop; ++i) {
+		if (its[i]->second.texture)
+			m_retire.push_back({std::move(its[i]->second.texture), k_retire_frames});
+		m_gifs.erase(its[i]);
+	}
+}
+
+void FileBrowserThumbnailContext::note_gif_hover(std::string_view key) {
+	if (!key.empty())
+		m_hovered_gif_next.assign(key);
+}
+
+void FileBrowserThumbnailContext::refresh_gifs() {
+	if (!m_setup)
+		return;
+	// Retire the current-frame textures (freed after the GPU drains) and drop the decoded
+	// frame RAM. Each GIF re-decodes/animates or reverts to its still thumbnail on the next
+	// get(), per the now-current playback mode.
+	for (auto &[k, g] : m_gifs)
+		if (g.texture)
+			m_retire.push_back({std::move(g.texture), k_retire_frames});
+	m_gifs.clear();
+	m_hovered_gif.clear();
+	m_hovered_gif_next.clear();
+}
+
 ImTextureID FileBrowserThumbnailContext::get(std::filesystem::path const &path) {
 	if (!m_setup || !is_thumbnailable(path))
 		return 0; // skip non-image/-video files (replaces app_coordinator's is_thumb_path)
-	return get(key_for(path), path.parent_path(), path.filename(), is_video_ext(path));
+	Classification const c = classify(path);
+	return get(key_for(path), path.parent_path(), path.filename(), c.is_video, c.is_gif);
 }
 
 ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesystem::path const &dir,
-	std::filesystem::path const &name,
-	bool                         is_video) { // super hot — render thread, per file, per frame
+	std::filesystem::path const &name, bool is_video,
+	bool is_gif) { // super hot — render thread, per file, per frame
 	if (!m_setup)
 		return 0;
+
+	// Animated GIF: when the active playback mode wants this GIF to move, return its current
+	// frame. A 0 (still decoding) falls through to the still path below, so the GIF shows its
+	// frame-0 thumbnail until the frames are ready.
+	if (is_gif && gif_should_animate(key)) {
+		bool const        hovered = (key == m_hovered_gif);
+		ImTextureID const anim    = tick_gif(key, dir / name, hovered);
+		if (anim)
+			return anim;
+	}
 
 	// Heterogeneous find: the common case (entry already exists) costs one hash of the
 	// precomputed key with NO temporary std::string. Only a genuine cache miss — the
@@ -499,10 +760,11 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 			if (e.blob_key == 0)
 				e.blob_key = ThumbnailBlobCache::make_key(file);
 			if (auto stored = m_blob.lookup(e.blob_key)) {
-				e.bc1_blocks = std::move(stored->blocks);
-				e.have_bc1   = true;
-				e.from_blob  = true;
-				e.state      = State::PixelsReady;
+				e.bc1_blocks  = std::move(stored->blocks);
+				e.have_bc1    = true;
+				e.from_blob   = true;
+				e.state       = State::PixelsReady;
+				e.ready_frame = m_frame;
 			} else {
 				e.is_video        = false;
 				e.source_is_video = is_video; // fresh video may fall back to mpv on decode failure
@@ -525,8 +787,9 @@ ImTextureID FileBrowserThumbnailContext::get(std::string_view key, std::filesyst
 				e.png_path.clear();
 			}
 
-			THUMB_LOG("{} key={} video={} have_png={} png={}", e.state == State::Cached ? "RELOAD" : "NEW",
-				it->first, is_video, have_png, e.png_path.filename().string());
+			THUMB_LOG("{} key={} video={} have_png={} png={}",
+				e.state == State::Cached ? "RELOAD" : "NEW", it->first, is_video, have_png,
+				e.png_path.filename().string());
 			// Both source kinds decode on the ImageJobSystem pool and deliver via e.img_future, so
 			// e.is_video stays false (poll_entry only polls the future when is_video == false, else
 			// the decoded pixels are never picked up and the thumb stays blank). e.source_is_video
@@ -569,6 +832,13 @@ void FileBrowserThumbnailContext::evict(std::filesystem::path const &path) {
 	}
 	// Images keep neither a blob nor a PNG (no cache), so there is nothing else to remove.
 	m_entries.erase(it);
+
+	// Drop any animated-GIF state for this key too, so a rebuilt thumbnail re-decodes its frames.
+	if (auto git = m_gifs.find(key_for(path)); git != m_gifs.end()) {
+		if (git->second.texture)
+			m_retire.push_back({std::move(git->second.texture), k_retire_frames});
+		m_gifs.erase(git);
+	}
 }
 
 void FileBrowserThumbnailContext::clear() {
@@ -586,6 +856,11 @@ void FileBrowserThumbnailContext::clear() {
 	}
 	m_entries.clear();
 
+	for (auto &[k, g] : m_gifs)
+		if (g.texture)
+			m_retire.push_back({std::move(g.texture), k_retire_frames});
+	m_gifs.clear();
+
 	// BC1 video blob: wipe the whole blob + index in one shot (no-op when never opened).
 	if (m_backend == Backend::Bc1)
 		m_blob.clear();
@@ -599,10 +874,16 @@ void FileBrowserThumbnailContext::release_textures() {
 	// live until the LRU cap could pin hundreds of MB. Unlike clear(), this keeps the on-disk
 	// caches (video BC1 blob / PNG) — only the in-memory entries + live textures are dropped,
 	// so re-entering a folder re-decodes images (cheap) and reloads video thumbs from the blob.
-	m_reproducer.clear_pending();                    // abandon in-flight decodes for the old dir
+	m_reproducer.clear_pending(); // abandon in-flight decodes for the old dir
 	img::ImageJobSystem::instance().clear_pending();
 	for (auto &[k, e] : m_entries)
 		if (e.texture)
 			m_retire.push_back({std::move(e.texture), k_retire_frames}); // free after GPU drains
 	m_entries.clear();
+
+	// Drop the old folder's animated-GIF frames (RAM) + their textures too.
+	for (auto &[k, g] : m_gifs)
+		if (g.texture)
+			m_retire.push_back({std::move(g.texture), k_retire_frames});
+	m_gifs.clear();
 }

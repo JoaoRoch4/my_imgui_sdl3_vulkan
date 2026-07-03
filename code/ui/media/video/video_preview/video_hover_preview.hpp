@@ -13,7 +13,7 @@ class VideoHoverPreview {
 		/// further clamped to a fraction of the screen, so it never overflows.
 		/// NOTE: display-only — it does NOT size the GPU capture buffer, so changing
 		/// it at runtime never reallocates Vulkan resources.
-		static inline ImVec2 preview_size = {960, 540};
+		static inline ImVec2 preview_size = {3000, 3000};
 
 		/// FIXED resolution of the mpv SW render target / Vulkan texture / saved
 		/// thumbnail. Decoupled from preview_size so the popup can be resized to the

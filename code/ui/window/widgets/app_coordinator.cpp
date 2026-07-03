@@ -424,6 +424,7 @@ void AppCoordinator::apply_file_explorer_layout(ImGui::FileBrowser &fb, WindowSt
 	fb.SetSortAscending(state.file_explorer_sort_ascending);
 	fb.SetViewMode(static_cast<ImGui::FileBrowser::ViewMode>(state.file_explorer_view_mode));
 	fb.SetMediaFilter(static_cast<ImGui::FileBrowser::MediaFilter>(state.file_explorer_media_filter));
+	fb.SetGifPlayback(static_cast<ImGui::FileBrowser::GifPlayback>(state.file_explorer_gif_playback));
 	fb.SetPreviewEnabled(state.file_explorer_preview);
 	fb.SetShowThumbnails(state.file_explorer_show_thumbnails);
 	fb.SetKeepOpen(state.file_explorer_keep_open);
@@ -446,6 +447,7 @@ void AppCoordinator::export_file_explorer_layout(ImGui::FileBrowser &fb, WindowS
 	state->file_explorer_sort_ascending  = fb.GetSortAscending();
 	state->file_explorer_view_mode       = static_cast<int>(fb.GetViewMode());
 	state->file_explorer_media_filter    = static_cast<int>(fb.GetMediaFilter());
+	state->file_explorer_gif_playback    = static_cast<int>(fb.GetGifPlayback());
 	state->file_explorer_preview         = fb.IsPreviewEnabled();
 	state->file_explorer_show_thumbnails = fb.GetShowThumbnails();
 	state->file_explorer_keep_open       = fb.GetKeepOpen();

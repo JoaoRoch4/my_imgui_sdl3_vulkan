@@ -96,37 +96,40 @@ class ConfigRuntime {
 		/// frame the section is visible — keep it cheap and null-safe.
 		void SetFileBrowserProvider(std::function<ImGui::FileBrowser*()> provider);
 
-		/// Draw a labelled DragFloat2 + preset buttons. Returns true if size changed.
-		bool DrawPreviewSizeControl(char const* title, char const* drag_id, ImVec2& size);
+		/// Draw a labelled single SCALE slider (a multiplier) + multiplier presets that
+		/// resize `size` while preserving its current aspect ratio. `base_long_edge` is the
+		/// 1.0x reference (the control's default long edge). Returns true if size changed.
+		bool DrawPreviewSizeControl(char const* title, char const* drag_id, ImVec2& size,
+			float base_long_edge);
 
 	private:
 
-		ImVec2                         m_pending_hover_size;
-		ImVec2                         m_pending_seek_size;
-		int                            m_pending_video_resume_threshold_seconds;
-		int                            m_applied_video_resume_threshold_seconds;
-		float                          m_pending_hold_speed_multiplier;
-		int                            m_pending_seek_step_seconds;
-		std::function<void()>          m_on_clear_thumbnail_cache;
-		std::function<void()>          m_on_clear_file_explorer_cache;
-		std::function<void()>          m_on_clear_video_cache;
-		std::function<void()>          m_on_rebuild_video_cache;
-		std::function<void()>          m_on_clear_history_metadata;
-		std::function<void()>          m_on_delete_all_cache_and_state;
-		std::function<void()>          m_on_reopen_app;
-		std::function<void(int)>       m_on_video_resume_threshold_changed;
-		bool                           m_pending_hover_preview_enabled;
-		int                            m_pending_hover_preview_delay_ms;
-		bool                           m_pending_hover_preview_sound;
-		std::function<void(bool, int)> m_on_hover_preview_changed;
-		int                            m_pending_global_playback_mode;
-		bool                           m_pending_global_loop_enabled;
-		std::function<void(int, bool)> m_on_video_playback_changed;
-		bool                           m_pending_vsync_enabled;
-		std::function<void(bool)>      m_on_vsync_changed;
-		std::string                    m_pending_thumbnail_format;
-		std::string                    m_pending_image_thumbnail_tier;
-		std::string                    m_pending_video_thumbnail_tier;
-		std::function<void()>          m_on_restart_all_threads;
+		ImVec2                               m_pending_hover_size;
+		ImVec2                               m_pending_seek_size;
+		int                                  m_pending_video_resume_threshold_seconds;
+		int                                  m_applied_video_resume_threshold_seconds;
+		float                                m_pending_hold_speed_multiplier;
+		int                                  m_pending_seek_step_seconds;
+		std::function<void()>                m_on_clear_thumbnail_cache;
+		std::function<void()>                m_on_clear_file_explorer_cache;
+		std::function<void()>                m_on_clear_video_cache;
+		std::function<void()>                m_on_rebuild_video_cache;
+		std::function<void()>                m_on_clear_history_metadata;
+		std::function<void()>                m_on_delete_all_cache_and_state;
+		std::function<void()>                m_on_reopen_app;
+		std::function<void(int)>             m_on_video_resume_threshold_changed;
+		bool                                 m_pending_hover_preview_enabled;
+		int                                  m_pending_hover_preview_delay_ms;
+		bool                                 m_pending_hover_preview_sound;
+		std::function<void(bool, int)>       m_on_hover_preview_changed;
+		int                                  m_pending_global_playback_mode;
+		bool                                 m_pending_global_loop_enabled;
+		std::function<void(int, bool)>       m_on_video_playback_changed;
+		bool                                 m_pending_vsync_enabled;
+		std::function<void(bool)>            m_on_vsync_changed;
+		std::string                          m_pending_thumbnail_format;
+		std::string                          m_pending_image_thumbnail_tier;
+		std::string                          m_pending_video_thumbnail_tier;
+		std::function<void()>                m_on_restart_all_threads;
 		std::function<ImGui::FileBrowser*()> m_fb_provider;
 };

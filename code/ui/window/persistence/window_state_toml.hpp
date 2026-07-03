@@ -160,6 +160,7 @@ struct WindowStateToml {
   std::vector<std::string> file_explorer_recent_directories;
   int  file_explorer_view_mode      = 0; // 0=List, 1=Grid, 2=Masonry
   int  file_explorer_media_filter   = 0; // 0=All, 1=Videos, 2=Images
+  int  file_explorer_gif_playback   = 0; // 0=HoverOnly, 1=AllVisible, 2=Hybrid
   bool file_explorer_preview        = true;
   bool file_explorer_show_thumbnails = true;
   bool file_explorer_keep_open      = false;

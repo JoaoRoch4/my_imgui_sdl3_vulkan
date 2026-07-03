@@ -97,6 +97,8 @@ std::string FieldCommentFor(const std::string &section_name,
     return "# File Explorer view mode: 0=List, 1=Grid, 2=Masonry.";
   if (key == "file_explorer_media_filter")
     return "# File Explorer media filter: 0=All, 1=Videos, 2=Images.";
+  if (key == "file_explorer_gif_playback")
+    return "# Inline GIF playback: 0=hover-only, 1=all-visible, 2=hybrid.";
   if (key == "file_explorer_preview")
     return "# Enable hover preview in File Explorer.";
   if (key == "file_explorer_show_thumbnails")
