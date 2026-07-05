@@ -26,18 +26,16 @@ target_include_directories(imgui SYSTEM PUBLIC
     ${IMGUI_DIR}/misc/freetype
     ${IMGUI_DIR}/misc/cpp
 )
-# Private: FreeType + PlutoSVG rasteriser headers (still system pkg-config).
+# Private: FreeType rasteriser headers.
 target_include_directories(imgui SYSTEM PRIVATE
     ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
 )
 # SDL3 / Vulkan headers for the imgui_impl_sdl3 / imgui_impl_vulkan backends.
-target_link_libraries(imgui PRIVATE SDL3::SDL3 Vulkan::Headers)
-
+target_link_libraries(imgui PRIVATE SDL3::SDL3 Vulkan::Headers plutosvg::plutosvg Freetype::Freetype)
 target_compile_definitions(imgui PRIVATE IMGUI_ENABLE_FREETYPE_PLUTOSVG)
 target_compile_options(imgui PRIVATE
     ${FREETYPE_CFLAGS_OTHER}
-    ${PLUTOSVG_CFLAGS_OTHER}
     -w
 )
 app_profilable_treatment(imgui)

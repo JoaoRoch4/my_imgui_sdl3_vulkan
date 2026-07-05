@@ -35,6 +35,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #  which the launch config's ASAN_OPTIONS sets.)
 option(ENABLE_SANITIZERS "Build the app target with ASan+UBSan (Debug config only)" ON)
 
+option(PLUTOSVG_ENABLE_FREETYPE "Enable FreeType integration in local plutosvg build" ON)
+
 # Emit compile_commands.json (clangd / tooling) for every configure, not just the
 # `all` preset. Harmless redundancy when the preset already sets it; the safety net
 # is for bare `cmake -S . -B <dir>` invocations that don't go through the preset.
@@ -51,31 +53,11 @@ set(CMAKE_DEBUG_POSTFIX "_d")
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
 
 # ── Dependency discovery ──────────────────────────────────────────────────────
-# Only the deps with NO vendored source are resolved here: FreeType2 / PlutoSVG /
-# EGL / GL via pkg-config, and reflectcpp / WebP / CURL via CMake find_package.
-# Everything else is compiled from source under thirdparty/<lib>/ (added below).
+# Only the deps with NO vendored source are resolved here: FreeType, EGL, GL via pkg-config,
+# and reflectcpp / WebP / CURL via CMake find_package. PlutoVG/PlutoSVG are built from
+# source under external/.
 find_package(PkgConfig REQUIRED)
-# Still resolved from the system (no vendored source): FreeType, PlutoSVG, EGL, GL.
 pkg_check_modules(FREETYPE REQUIRED freetype2)
-pkg_check_modules(PLUTOSVG REQUIRED plutosvg)
-# ── LOCAL OVERRIDE: FreeType-enabled plutosvg ─────────────────────────────────
-# The system plutosvg (/usr/local) was built with PLUTOSVG_ENABLE_FREETYPE=OFF, so
-# plutosvg_ft_svg_hooks() returns NULL and FreeType cannot rasterise the SVG/COLR
-# glyphs in NotoColorEmoji (FT_Err_Missing_SVG_Hooks, 158) — color emoji then render
-# as missing-glyph boxes. Link a locally-rebuilt FreeType-enabled static archive
-# instead (built from /home/joao/dev/plutosvg with -DPLUTOSVG_ENABLE_FREETYPE=ON).
-# Override the path with -DPLUTOSVG_FT_LIBRARY=<path>; falls back to system if absent.
-# NOTE: absolute path outside the repo — not portable; vendor into thirdparty/ later.
-set(PLUTOSVG_FT_LIBRARY "/home/joao/dev/plutosvg/build-ft/libplutosvg.a"
-    CACHE FILEPATH "FreeType-enabled libplutosvg.a (PLUTOSVG_ENABLE_FREETYPE=ON)")
-if(EXISTS "${PLUTOSVG_FT_LIBRARY}")
-    # Swap the bare 'plutosvg' entry for the absolute FT-enabled archive; 'plutovg'
-    # stays after it (plutosvg.a references plutovg/FT symbols → must precede them).
-    list(TRANSFORM PLUTOSVG_LIBRARIES REPLACE "^plutosvg$" "${PLUTOSVG_FT_LIBRARY}")
-    message(STATUS "plutosvg: FreeType-enabled override -> ${PLUTOSVG_FT_LIBRARY}")
-else()
-    message(WARNING "PLUTOSVG_FT_LIBRARY missing (${PLUTOSVG_FT_LIBRARY}); color emoji disabled")
-endif()
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GL REQUIRED gl)
 # fontconfig: portable, per-distro font discovery for the ImGui fallback chain
@@ -338,7 +320,6 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
     # implot / stb targets; SDL3 / Vulkan / mpv / libplacebo headers arrive from
     # their from-source targets (SDL3::SDL3, Vulkan::Headers, mpv::mpv,
     # placebo::placebo) — see target_link_libraries below.
-    ${FREETYPE_INCLUDE_DIRS}
     ${PLUTOSVG_INCLUDE_DIRS}
     ${FONTCONFIG_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
@@ -382,10 +363,6 @@ target_compile_options(example_sdl3_vulkan PRIVATE
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-fomit-frame-pointer>
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-ffunction-sections>
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:Clang>>:-fdata-sections>
-
-    # Pass through any extra flags reported by pkg-config (FreeType / PlutoSVG)
-    ${FREETYPE_CFLAGS_OTHER}
-    ${PLUTOSVG_CFLAGS_OTHER}
 
     $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<BOOL:$<COMPILE_LANGUAGE:Header>>>>:-save-temps=obj>
     $<$<AND:$<CXX_COMPILER_ID:GNU>,$<NOT:$<BOOL:$<COMPILE_LANGUAGE:Header>>>>:-masm=att>
@@ -438,8 +415,6 @@ $<$<CONFIG:RelWithDebInfo>:__APP_FORCE_LOGS>
 # GNU ld searches by default but LLD does not — without these the LLD link fails
 # to find SDL3 / plutosvg / plutovg.
 target_link_directories(example_sdl3_vulkan PRIVATE
-    ${FREETYPE_LIBRARY_DIRS}
-    ${PLUTOSVG_LIBRARY_DIRS}
     ${FONTCONFIG_LIBRARY_DIRS}
     ${EGL_LIBRARY_DIRS}
     ${GL_LIBRARY_DIRS}
@@ -453,9 +428,9 @@ target_link_libraries(example_sdl3_vulkan PRIVATE
     SDL3::SDL3         # from-source SDL3            (thirdparty/sdl3)
     vulkan             # from-source Vulkan loader   (thirdparty/vulkan-loader)
     Vulkan::Headers    # Vulkan API headers (interface)
-    ${FREETYPE_LIBRARIES}
-    ${PLUTOSVG_LIBRARIES}
     ${FONTCONFIG_LIBRARIES}   # FcFontMatch / FcPatternCreate — see load_fonts() discovery
+    Freetype::Freetype
+    plutosvg::plutosvg
     reflectcpp::reflectcpp
     WebP::webp    
     CURL::libcurl
@@ -587,6 +562,11 @@ target_include_directories(image_job_tests SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/external/mpv/include
     ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
     ${CMAKE_SOURCE_DIR}/external/libwebp/src/
+    ${CMAKE_SOURCE_DIR}/external/plutovg/source
+    ${CMAKE_SOURCE_DIR}/external/plutosvg/source
+    ${CMAKE_SOURCE_DIR}/external/freetype2/include
+
+    
     ${_ffmpeg_test_inc}
     ${_ffthumb_test_inc}
 )

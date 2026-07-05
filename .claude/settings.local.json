@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build build/debug)",
+      "Bash(ls -la build/debug/window_state.toml 2>/dev/null && grep -n \"show_file_explorer_window\\\\|file_explorer_last_directory\\\\|file_explorer_show_thumbnails\\\\|file_explorer_view_mode\" build/debug/window_state.toml 2>/dev/null; echo \"---thumbs dir---\"; ls build/debug/thumbs 2>/dev/null | head; echo \"---sample images on system---\"; ls ~/Pictures 2>/dev/null | head)",
+      "Read(//home/joao/Pictures/**)",
+      "Bash(git --no-pager log --oneline -5)",
+      "Bash(git rev-list *)",
+      "Bash(awk '{print \"behind origin:\", $1, \" ahead of origin:\", $2}')",
+      "Bash(git --no-pager diff --name-only)",
+      "Bash(git --no-pager diff --name-only -- code/rendering/vulkan/ code/ui/media/video/player/ code/ui/window/widgets/app_coordinator.cpp)",
+      "Skill(commit-commands:commit-push-pr)",
+      "Skill(commit-commands:commit-push-pr:*)",
+      "Bash(git checkout *)",
+      "Bash(git rm *)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "mcp__vscode-debugger__debug_status",
+      "mcp__vscode-debugger__debug_list_sessions",
+      "mcp__vscode-debugger__debug_get_stack_trace",
+      "mcp__vscode-debugger__debug_get_output",
+      "mcp__vscode-debugger__debug_get_threads"
+    ]
+  },
+  "enabledPlugins": {
+    "mcp-server-dev@claude-plugins-official": true
+  }
+}
