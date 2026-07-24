@@ -3,7 +3,9 @@
 # from the SDL3::SDL3 and Vulkan::Headers targets (added before this dir).
 # FreeType/PlutoSVG include dirs are inherited from the root scope (their
 # pkg_check_modules run before this subdirectory is added).
-set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
+# IMGUI_VERSION is the single source of truth, set at the root scope; recompute
+# IMGUI_DIR from it (external/imgui-<version>) rather than hardcoding the version.
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-${IMGUI_VERSION})
 
 add_library(imgui STATIC
     ${IMGUI_DIR}/imgui.cpp
@@ -33,7 +35,12 @@ target_include_directories(imgui SYSTEM PRIVATE
 )
 # SDL3 / Vulkan headers for the imgui_impl_sdl3 / imgui_impl_vulkan backends.
 target_link_libraries(imgui PRIVATE SDL3::SDL3 Vulkan::Headers plutosvg::plutosvg Freetype::Freetype)
-target_compile_definitions(imgui PRIVATE IMGUI_ENABLE_FREETYPE_PLUTOSVG)
+target_compile_definitions(imgui
+    PRIVATE IMGUI_ENABLE_FREETYPE_PLUTOSVG
+    # Expose ImVec2/ImVec4 operator+ - * etc. to EVERY consumer (app code writes
+    # `window->Pos + delta`). imgui's own .cpp files #ifndef-guard this macro, so
+    # PUBLIC here causes no redefinition; it just reaches the app + test TUs.
+    PUBLIC  IMGUI_DEFINE_MATH_OPERATORS)
 target_compile_options(imgui PRIVATE
     ${FREETYPE_CFLAGS_OTHER}
     -w

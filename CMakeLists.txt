@@ -3,15 +3,30 @@ cmake_minimum_required(VERSION 3.20)
 
 # ── vcpkg ─────────────────────────────────────────────────────────────────────
 # Disable manifest mode so vcpkg doesn't auto-install during configure.
-# Toolchain defaults to the global vcpkg install; can be overridden via -D.
 set(VCPKG_MANIFEST_MODE OFF CACHE BOOL "" FORCE)
+
+# vcpkg location + triplet are configurable — no hardcoded home path. Resolution
+# order: -DVCPKG_ROOT=... > $VCPKG_ROOT env > ~/vcpkg. Override the triplet with
+# -DVCPKG_TARGET_TRIPLET=... (defaults to the Linux x64 triplet).
+if(NOT DEFINED VCPKG_ROOT)
+    if(DEFINED ENV{VCPKG_ROOT})
+        set(VCPKG_ROOT "$ENV{VCPKG_ROOT}" CACHE PATH "vcpkg root directory")
+    else()
+        set(VCPKG_ROOT "$ENV{HOME}/vcpkg" CACHE PATH "vcpkg root directory")
+    endif()
+endif()
+if(NOT DEFINED VCPKG_TARGET_TRIPLET)
+    set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg target triplet")
+endif()
+
+# Toolchain defaults to the resolved vcpkg install; overridable via -DCMAKE_TOOLCHAIN_FILE.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "/home/joao/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
+    set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "")
 endif()
 
 # Search both the global vcpkg prefix and the project-local vcpkg overlay.
-list(APPEND CMAKE_PREFIX_PATH "/home/joao/vcpkg/installed/x64-linux")
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/x64-linux")
+list(APPEND CMAKE_PREFIX_PATH "${VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
+list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}")
 
 # ── Project ───────────────────────────────────────────────────────────────────
 project(example_sdl3_vulkan CXX)
@@ -46,11 +61,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # coexist (CMAKE_<CONFIG>_POSTFIX applies to libraries only, e.g. libimgui_d.a).
 set(CMAKE_DEBUG_POSTFIX "_d")
 
+# ── External dependency versions (single source of truth) ─────────────────────
+# Override any of these with -D<VAR>=... at configure time.
+set(IMGUI_VERSION          "1.92.8-docking" CACHE STRING "Dear ImGui checkout (external/imgui-<version>)")
+set(VULKAN_HEADERS_VERSION "1.4.350"        CACHE STRING "Vulkan-Headers version (satisfies the loader's find_package check)")
+
 # ── External library paths ────────────────────────────────────────────────────
 # ImGui fork lives outside this repo. Kept here only for the IMGUI_FONTS_DIR
 # compile definition below; the imgui build itself now lives in thirdparty/imgui/
 # (IMPLOT_DIR / STB_DIR likewise moved into their thirdparty/<lib> folders).
-set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-${IMGUI_VERSION})
 
 # ── Dependency discovery ──────────────────────────────────────────────────────
 # Only the deps with NO vendored source are resolved here: FreeType, EGL, GL via pkg-config,
@@ -58,6 +78,9 @@ set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/external/imgui-1.92.8-docking)
 # source under external/.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FREETYPE REQUIRED freetype2)
+# Freetype::Freetype imported target (system freetype-devel) — linked directly by
+# the app + imgui, and reused by the from-source plutosvg build (FreeType-enabled).
+find_package(Freetype REQUIRED)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GL REQUIRED gl)
 # fontconfig: portable, per-distro font discovery for the ImGui fallback chain
@@ -82,8 +105,10 @@ find_package(CURL REQUIRED)
 # configure resolves the system libplacebo and the API version diverges at link.
 add_subdirectory(thirdparty/sdl3)
 add_subdirectory(thirdparty/vulkan-loader)
-add_subdirectory(thirdparty//WebP)
+add_subdirectory(thirdparty/WebP)
 add_subdirectory(thirdparty/taglib)
+add_subdirectory(thirdparty/plutovg)             # plutovg::plutovg  (before plutosvg + imgui)
+add_subdirectory(thirdparty/plutosvg)            # plutosvg::plutosvg (FreeType-enabled)
 add_subdirectory(thirdparty/imgui)
 add_subdirectory(thirdparty/implot)
 add_subdirectory(thirdparty/stb)
@@ -324,6 +349,11 @@ target_include_directories(example_sdl3_vulkan SYSTEM PRIVATE
     ${FONTCONFIG_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
     ${GL_INCLUDE_DIRS}
+    # image_ops.cpp calls libav* directly (decode_file / encode_png / thumbnails), so the
+    # app needs our from-source FFmpeg 8.0 install headers — the same per-$<CONFIG> tree
+    # the image_tests / image_job_tests targets already include. Built before the app by
+    # build.sh's media-stack pre-pass (and pulled per-config by the mpv EP dependency).
+    ${CMAKE_BINARY_DIR}/thirdparty/ffmpeg/$<CONFIG>/install/include
 )
 
 # ── Compile options ───────────────────────────────────────────────────────────
@@ -508,8 +538,8 @@ target_include_directories(image_tests PRIVATE
 # doctest + libwebp headers marked SYSTEM so their warnings (e.g. doctest's
 # <ciso646> include) stay out of our build; our own test warnings remain visible.
 target_include_directories(image_tests SYSTEM PRIVATE
-    ${CMAKE_SOURCE_DIR}/external/doctest
-    WebP::webp    
+    ${CMAKE_SOURCE_DIR}/external/doctest/doctest
+    ${CMAKE_SOURCE_DIR}/external/libwebp/src   # WebP headers (WebP::webp is a target, not an include dir)
     ${_ffmpeg_test_inc}    # our FFmpeg 8.0 headers (not the /usr/local shadow install)
     ${_ffthumb_test_inc}   # <libffmpegthumbnailer/...>
 )
@@ -551,7 +581,7 @@ target_include_directories(image_job_tests PRIVATE
 )
 target_include_directories(image_job_tests SYSTEM PRIVATE
     $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
-    ${CMAKE_SOURCE_DIR}/external/doctest
+    ${CMAKE_SOURCE_DIR}/external/doctest/doctest
     # pch.hpp pulls SDL3 / Vulkan / mpv / libplacebo headers. Use the vendored
     # *source* header dirs for those so this test compiles without dragging in the
     # heavy mpv / libplacebo ExternalProject builds. FFmpeg is the exception: it must
@@ -562,9 +592,10 @@ target_include_directories(image_job_tests SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/external/mpv/include
     ${CMAKE_SOURCE_DIR}/external/libplacebo/src/include
     ${CMAKE_SOURCE_DIR}/external/libwebp/src/
+    ${CMAKE_SOURCE_DIR}/external/plutovg/include
     ${CMAKE_SOURCE_DIR}/external/plutovg/source
     ${CMAKE_SOURCE_DIR}/external/plutosvg/source
-    ${CMAKE_SOURCE_DIR}/external/freetype2/include
+    ${FREETYPE_INCLUDE_DIRS}
 
     
     ${_ffmpeg_test_inc}
@@ -606,7 +637,7 @@ target_include_directories(thumbnail_blob_tests PRIVATE
 )
 target_include_directories(thumbnail_blob_tests SYSTEM PRIVATE
     $<TARGET_PROPERTY:example_sdl3_vulkan,INCLUDE_DIRECTORIES>
-    ${CMAKE_SOURCE_DIR}/external/doctest
+    ${CMAKE_SOURCE_DIR}/external/doctest/doctest
     ${CMAKE_SOURCE_DIR}/external/SDL/include
     ${CMAKE_SOURCE_DIR}/external/Vulkan-Headers/include
     ${CMAKE_SOURCE_DIR}/external/mpv/include

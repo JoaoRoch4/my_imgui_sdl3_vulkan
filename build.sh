@@ -72,8 +72,15 @@ binary_path() {
 
 # ── steps ─────────────────────────────────────────────────────────────────────
 configure() {
-    if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
-        log "Configuring preset '$PRESET' (first run)..."
+    # (Re)configure when the build tree is absent OR incompletely generated. Keying
+    # only on CMakeCache.txt is a trap: a configure that fails AFTER writing the cache
+    # but BEFORE generating the per-config *.ninja files leaves a cache with no
+    # build-Debug.ninja, and every later build then dies with
+    #   ninja: error: loading 'build-Debug.ninja': No such file or directory
+    # while configure() keeps skipping (cache present). Also require the generated
+    # ninja file so a half-configured tree self-heals on the next run.
+    if [[ ! -f "$BUILD_DIR/CMakeCache.txt" || ! -f "$BUILD_DIR/build-Debug.ninja" ]]; then
+        log "Configuring preset '$PRESET'..."
         cmake --preset "$PRESET"
     fi
 }
@@ -131,9 +138,25 @@ rebuild_clean_app() {
     rm -f "$bin"
 }
 
+# The app + test TUs #include INSTALLED headers from the media ExternalProjects
+# (FFmpeg's <libavcodec/*>, <mpv/client.h>, libplacebo). Those targets are per-config
+# and EXCLUDE_FROM_ALL, pulled only by the app's LINK_DEPENDS — which orders the LINK,
+# not the COMPILE. So a fresh parallel `cmake --build` races the PCH/objects ahead of
+# the header install and dies on "'mpv/client.h' file not found". Build the media
+# stack for this config FIRST (mpv_ep pulls ffmpeg_ep + libplacebo_ep; the thumbnailer
+# EP supplies libffmpegthumbnailer.a) so every installed header exists before the app
+# compiles. Idempotent: ninja skips already-built stamps.
+prebuild_media_stack() {
+    local name="$1"
+    log "Pre-building media stack for ${C_DIM}$name${C_OFF} (ffmpeg + libplacebo + mpv + thumbnailer)"
+    cmake --build "$BUILD_DIR" --config "$name" \
+        --target "mpv_ep_${name}" "ffmpegthumbnailer_ep_${name}"
+}
+
 build_config() {
     local cfg="$1" name
     name="$(config_name "$cfg")"
+    prebuild_media_stack "$name"
     log "Building ${C_DIM}$name${C_OFF}  ->  $(binary_path "$cfg")"
     cmake --build "$BUILD_DIR" --config "$name"
     ok "Built $name"

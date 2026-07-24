@@ -18,7 +18,7 @@ set(BUILD_WSI_WAYLAND_SUPPORT ON  CACHE BOOL "" FORCE)
 # CONFIG package) that variable is empty, making the loader's version-check if()
 # error out. Provide it explicitly (matching the Vulkan-Headers tag) so the check
 # is a harmless no-op.
-set(VulkanHeaders_VERSION 1.4.350)
+set(VulkanHeaders_VERSION ${VULKAN_HEADERS_VERSION})
 add_subdirectory(
     ${CMAKE_SOURCE_DIR}/external/Vulkan-Loader
     ${CMAKE_BINARY_DIR}/thirdparty/vulkan-loader/build
