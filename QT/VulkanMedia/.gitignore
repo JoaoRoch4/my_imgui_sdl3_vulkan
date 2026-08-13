@@ -1,0 +1,6 @@
+build/
+build*/
+.qmlls.ini
+.qtcreator/
+CMakeLists.txt.user*
+*.autosave
