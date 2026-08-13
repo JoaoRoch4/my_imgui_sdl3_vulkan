@@ -21,6 +21,21 @@ function modified(date) {
     return Qt.formatDateTime(date, "yyyy-MM-dd hh:mm")
 }
 
+// Player positions and durations arrive as milliseconds; -1 means "not known
+// yet" (MediaPlayer reports that until the media is loaded).
+function duration(ms) {
+    if (ms === undefined || ms === null || ms < 0)
+        return "—:—"
+    const total = Math.floor(ms / 1000)
+    const s = total % 60
+    const m = Math.floor(total / 60) % 60
+    const h = Math.floor(total / 3600)
+    const ss = s < 10 ? "0" + s : "" + s
+    if (h > 0)
+        return h + ":" + (m < 10 ? "0" + m : "" + m) + ":" + ss
+    return m + ":" + ss
+}
+
 function elideMiddle(text, max) {
     if (!text || text.length <= max)
         return text || ""

@@ -24,6 +24,9 @@ ApplicationWindow {
     property int viewMode: 1
     property var closedTabs: []
     property var openPanels: ["files", "details", "console"]
+    //! Clip currently loaded in the video panel. Not persisted — reopening the
+    //! app should not silently start decoding whatever was last played.
+    property string videoPath: ""
 
     readonly property var panelTitles: ({
         files: "Files", images: "Images", video: "Video", downloads: "Downloads",
@@ -87,6 +90,20 @@ ApplicationWindow {
             tabs.currentIndex = existing
         else
             addTab(panel)
+    }
+
+    /*! Video rows open in the video panel; everything else keeps the old
+        folder-entering behaviour. Stub rows name paths that do not exist — they
+        are left to the player's error state rather than special-cased here, so
+        the failure a user sees is the real one. */
+    function activateItem(index) {
+        const item = fsModel.get(index)
+        if (item.kind === "video") {
+            videoPath = item.path
+            openPanel("video")
+            return
+        }
+        fsModel.enter(index)
     }
 
     function indexOfTab(panel) {
@@ -405,12 +422,18 @@ ApplicationWindow {
                             fsModel: fsModel
                             folderName: fsModel.folderName
                             filter: toolbar.searchText
-                            onItemActivated: (index) => fsModel.enter(index)
+                            onItemActivated: (index) => window.activateItem(index)
                             onContextAction: (action) => window.runAction(action)
                         }
                     }
                     Page { PlaceholderPanel { anchors.fill: parent; title: qsTr("Image viewer"); glyph: "🖼" } }
-                    Page { VideoPanel { anchors.fill: parent } }
+                    Page {
+                        VideoPanel {
+                            anchors.fill: parent
+                            path: window.videoPath
+                            onActionRequested: (action) => window.runAction(action)
+                        }
+                    }
                     Page { PlaceholderPanel { anchors.fill: parent; title: qsTr("Downloads"); glyph: "⤓" } }
                     Page { PlaceholderPanel { anchors.fill: parent; title: qsTr("Console"); glyph: "▤" } }
                     Page { PlaceholderPanel { anchors.fill: parent; title: qsTr("Runtime config"); glyph: "⚙" } }

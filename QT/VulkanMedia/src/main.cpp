@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 
@@ -17,6 +18,11 @@ int main(int argc, char *argv[])
     // Basic is the only fully themeable built-in style; Fusion would override
     // the palette defined in Theme.qml.
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+
+    // Qt Multimedia's FFmpeg backend prints a version banner at info level on
+    // every launch. Only the banner is dropped — warnings and errors from the
+    // category still reach stderr, which the headless smoke test depends on.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.multimedia.ffmpeg.info=false"));
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnails"), new ThumbnailProvider);

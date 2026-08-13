@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Concurrent)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Concurrent Multimedia)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -64,6 +64,7 @@ target_link_libraries(appVulkanMedia PRIVATE
     Qt6::Qml
     Qt6::QuickControls2
     Qt6::Concurrent
+    Qt6::Multimedia
 )
 
 install(TARGETS appVulkanMedia
