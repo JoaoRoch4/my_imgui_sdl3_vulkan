@@ -7,7 +7,8 @@
 > **Revisão do mesmo dia:** os componentes `v143` foram instalados depois da
 > primeira redação, e as §1 e §1.1 foram refeitas em cima da máquina já com eles.
 > A conclusão anterior de que "`v143` não funciona no VS 2026" **estava errada** —
-> ver §1.1. As §2–§9 não foram reverificadas nesta revisão.
+> ver §1.1. Foram revisadas §1, §1.1 e §7a; as demais seções seguem como na
+> primeira redação e não foram reverificadas.
 
 ## 0. Antes de tudo: o que `.slnx` é e o que não é
 
@@ -80,7 +81,7 @@ para ler o `_MSC_FULL_VER`:
 |---|---|---|---|---|
 | `v145` (padrão) | `VC\v180\` | 14.51.36231 | 195136256 | ✅ compila e roda |
 | `v143` | `VC\v170\` | 14.44.35207 | 194435228 | ✅ compila e roda |
-| `ClangCL` | `VC\v180\` | headers do 14.51 | 195136256 | ✅ compila e roda |
+| `ClangCL` | `VC\v180\` | `VC\Tools\Llvm\x64\bin\clang-cl.exe` + `lld-link.exe` | 195136256 | ✅ compila e roda |
 | `v142` | `VC\v160\` | — | — | ❌ `MSB8020` |
 | `v141` | `VC\v150\` | — | — | ❌ `MSB8020` |
 
@@ -246,6 +247,10 @@ CL.exe /c /W4 /MP /D APP_USE_UNLIMITED_FRAME_RATE /std:c++23preview /permissive-
 ```
 
 Repare que `stdcpp23` vira `/std:c++23preview` no MSVC 14.5x — é o esperado.
+
+⚠ **O `v145` acima é o padrão genérico.** Para a solução do `QT/VulkanMedia`,
+troque por `v143` + `VCToolsVersion` fixo — o Qt instalado é `msvc2022_64`. Ver
+§7a; o porquê está na §1.1.
 
 `%(X)` preserva o que já estava — o análogo do "append" do CMake.
 Um `Directory.Build.targets` (mesmo lugar) faz o mesmo *depois* dos projetos, útil
