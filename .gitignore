@@ -21,7 +21,11 @@
 # Editor/OS
 .vscode/
 .idea/
+.vs/
+.run/
 .DS_Store
+desktop.ini
+Thumbs.db
 
 # Generic binaries
 *.o
