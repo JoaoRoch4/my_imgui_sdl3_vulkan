@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "vs2026-debug",
+      "displayName": "Visual Studio 2026 x64 Debug",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build/vs2026",
+      "architecture": {
+        "value": "x64"
+      },
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-vs2026-debug",
+      "displayName": "Build VulkanMedia Debug (VS 2026)",
+      "configurePreset": "vs2026-debug",
+      "configuration": "Debug",
+      "targets": [
+        "appVulkanMedia"
+      ]
+    }
+  ]
+}

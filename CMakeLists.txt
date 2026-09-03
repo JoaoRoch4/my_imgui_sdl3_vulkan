@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 
 # ── vcpkg ─────────────────────────────────────────────────────────────────────
@@ -30,6 +30,25 @@ list(APPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGE
 
 # ── Project ───────────────────────────────────────────────────────────────────
 project(example_sdl3_vulkan CXX)
+
+option(BUILD_VULKAN_MEDIA_ONLY "Configure only the Qt VulkanMedia application" OFF)
+
+if(BUILD_VULKAN_MEDIA_ONLY)
+    add_subdirectory(QT/VulkanMedia)
+
+    if(CMAKE_CONFIGURATION_TYPES)
+        add_custom_target(all_configs
+            COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Debug
+            COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config Release
+            COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --config RelWithDebInfo
+            COMMENT "Building all VulkanMedia configurations"
+            VERBATIM
+        )
+    endif()
+
+    return()
+endif()
+
 # Per-library build glue lives under thirdparty/<lib>/; shared helpers below.
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(ProfilableTreatment)
@@ -226,6 +245,8 @@ add_executable(example_sdl3_vulkan
     code/main/main.hpp
     code/core/Memory_management.hpp
 )
+# Visual Studio generators: make the app target the default startup project.
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT example_sdl3_vulkan)
 
 # ── Compute shader compilation (BC1 GPU encoder) ──────────────────────────────
 # Drives bc1_encode.comp -> SPIR-V -> C++ header (uint32_t array) via

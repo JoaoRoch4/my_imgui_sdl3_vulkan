@@ -16,6 +16,8 @@ qt_add_executable(appVulkanMedia
     src/thumbnailprovider.h    src/thumbnailprovider.cpp
 )
 
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT appVulkanMedia)
+
 # The generated qmltyperegistrations.cpp includes the QML_ELEMENT headers by
 # bare name, so src/ has to be on the include path.
 target_include_directories(appVulkanMedia PRIVATE src)

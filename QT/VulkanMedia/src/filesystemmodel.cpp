@@ -12,6 +12,7 @@ namespace {
 
 const QStringList kImageSuffixes = {"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff",
                                     "exr", "dpx", "tga", "gif", "avif", "heic"};
+// cspell:ignore webm
 const QStringList kVideoSuffixes = {"mp4", "mkv", "mov", "webm", "avi", "m4v", "mxf", "wmv"};
 const QStringList kAudioSuffixes = {"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac"};
 
@@ -57,20 +58,20 @@ QList<FileSystemModel::Entry> FileSystemModel::stubEntries()
         {"plates",                    "folder", 0,          "",      ""},
         {"renders",                   "folder", 0,          "",      ""},
         {"audio_stems",               "folder", 0,          "",      ""},
-        {"beach_sunset_0001.exr",     "image",  48234496,   "",      "4096 Ã— 2160"},
-        {"beach_sunset_0002.exr",     "image",  48591360,   "",      "4096 Ã— 2160"},
-        {"beach_sunset_0003.exr",     "image",  47992832,   "",      "4096 Ã— 2160"},
-        {"city_night_grade.png",      "image",  12648448,   "",      "3840 Ã— 2160"},
-        {"portrait_ref_a.jpg",        "image",  3244032,    "",      "2400 Ã— 3600"},
-        {"portrait_ref_b.jpg",        "image",  3391488,    "",      "2400 Ã— 3600"},
-        {"texture_atlas_01.png",      "image",  8912896,    "",      "2048 Ã— 2048"},
-        {"texture_atlas_02.png",      "image",  9175040,    "",      "2048 Ã— 2048"},
-        {"hdri_studio_4k.exr",        "image",  67108864,   "",      "4096 Ã— 2048"},
-        {"drone_pass_a.mp4",          "video",  486539264,  "2:14",  "3840 Ã— 2160"},
-        {"drone_pass_b.mp4",          "video",  392167424,  "1:48",  "3840 Ã— 2160"},
-        {"interview_master.mkv",      "video",  1288490188, "18:32", "1920 Ã— 1080"},
-        {"timelapse_rooftop.mov",     "video",  734003200,  "0:42",  "4096 Ã— 2160"},
-        {"vfx_comp_v07.mov",          "video",  912261120,  "0:09",  "2048 Ã— 1152"},
+        {"beach_sunset_0001.exr",     "image",  48234496,   "",      "4096 × 2160"},
+        {"beach_sunset_0002.exr",     "image",  48591360,   "",      "4096 × 2160"},
+        {"beach_sunset_0003.exr",     "image",  47992832,   "",      "4096 × 2160"},
+        {"city_night_grade.png",      "image",  12648448,   "",      "3840 × 2160"},
+        {"portrait_ref_a.jpg",        "image",  3244032,    "",      "2400 × 3600"},
+        {"portrait_ref_b.jpg",        "image",  3391488,    "",      "2400 × 3600"},
+        {"texture_atlas_01.png",      "image",  8912896,    "",      "2048 × 2048"},
+        {"texture_atlas_02.png",      "image",  9175040,    "",      "2048 × 2048"},
+        {"hdri_studio_4k.exr",        "image",  67108864,   "",      "4096 × 2048"},
+        {"drone_pass_a.mp4",          "video",  486539264,  "2:14",  "3840 × 2160"},
+        {"drone_pass_b.mp4",          "video",  392167424,  "1:48",  "3840 × 2160"},
+        {"interview_master.mkv",      "video",  1288490188, "18:32", "1920 × 1080"},
+        {"timelapse_rooftop.mov",     "video",  734003200,  "0:42",  "4096 × 2160"},
+        {"vfx_comp_v07.mov",          "video",  912261120,  "0:09",  "2048 × 1152"},
         {"room_tone.wav",             "audio",  52428800,   "4:56",  ""},
         {"voiceover_take3.flac",      "audio",  31457280,   "2:03",  ""},
         {"shotlist.md",               "other",  4096,       "",      ""},
@@ -82,7 +83,7 @@ QList<FileSystemModel::Entry> FileSystemModel::stubEntries()
     int i = 0;
     for (const Seed &s : seeds) {
         Entry e;
-        // fromUtf8, not fromLatin1: the seeds carry non-ASCII (the Ã— in
+        // fromUtf8, not fromLatin1: the seeds carry non-ASCII (the × in
         // dimensions).
         e.name = QString::fromUtf8(s.name);
         e.kind = QString::fromUtf8(s.kind);

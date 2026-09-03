@@ -1,87 +1,169 @@
 {
-    "version": 6,
-    "cmakeMinimumRequired": {
-        "major": 3,
-        "minor": 25,
-        "patch": 0
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "all",
+      "displayName": "All configs (Ninja Multi-Config: Debug, Release, RelWithDebInfo)",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build/all",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_LINKER_TYPE": "LLD",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_MESSAGE_LOG_LEVEL": "VERBOSE"
+      }
     },
-    "configurePresets": [
-        {
-            "name": "all",
-            "displayName": "All configs (Ninja Multi-Config: Debug, Release, RelWithDebInfo)",
-            "generator": "Ninja Multi-Config",
-            "binaryDir": "${sourceDir}/build/all",
-            "cacheVariables": {
-                "CMAKE_C_COMPILER": "clang",
-                "CMAKE_CXX_COMPILER": "clang++",
-                "CMAKE_LINKER_TYPE": "LLD",
-                "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CMAKE_MESSAGE_LOG_LEVEL": "VERBOSE"
-            }
-        },
-        {
-            "name": "Custom configure preset",
-            "displayName": "Custom configure preset",
-            "description": "Sets Ninja generator, build and install directory",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
-            }
+    {
+      "name": "vs2026",
+      "displayName": "All configs (Visual Studio 18 2026: Debug, Release, RelWithDebInfo)",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build/vs2026",
+      "architecture": {
+        "value": "x64"
+      },
+      "cacheVariables": {
+        "BUILD_VULKAN_MEDIA_ONLY": "ON",
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_MESSAGE_LOG_LEVEL": "VERBOSE"
+      }
+    },
+    {
+      "name": "Custom configure preset",
+      "displayName": "Custom configure preset",
+      "description": "Sets Ninja generator, build and install directory",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
+      }
+    },
+    {
+      "hidden": true,
+      "name": "Qt",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}"
+      },
+      "vendor": {
+        "qt-project.org/Qt": {
+          "checksum": "wVa86FgEkvdCTVp1/nxvrkaemJc="
         }
-    ],
-    "buildPresets": [
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-all",
+      "displayName": "Build ALL configs (-> build/debug, build/release, build/release-log)",
+      "configurePreset": "all",
+      "targets": [
+        "all_configs"
+      ]
+    },
+    {
+      "name": "build-debug",
+      "displayName": "Build Debug only (-> build/debug)",
+      "configurePreset": "all",
+      "configuration": "Debug"
+    },
+    {
+      "name": "build-release",
+      "displayName": "Build Release only (-> build/release)",
+      "configurePreset": "all",
+      "configuration": "Release"
+    },
+    {
+      "name": "build-release-log",
+      "displayName": "Build RelWithDebInfo only (-> build/release-log)",
+      "configurePreset": "all",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "build-vs2026-debug",
+      "displayName": "Build VulkanMedia Debug (VS 2026)",
+      "configurePreset": "vs2026",
+      "configuration": "Debug",
+      "targets": [
+        "appVulkanMedia"
+      ]
+    },
+    {
+      "name": "build-vs2026-release",
+      "displayName": "Build VulkanMedia Release (VS 2026)",
+      "configurePreset": "vs2026",
+      "configuration": "Release",
+      "targets": [
+        "appVulkanMedia"
+      ]
+    },
+    {
+      "name": "build-vs2026-release-log",
+      "displayName": "Build VulkanMedia RelWithDebInfo (VS 2026)",
+      "configurePreset": "vs2026",
+      "configuration": "RelWithDebInfo",
+      "targets": [
+        "appVulkanMedia"
+      ]
+    },
+    {
+      "name": "build-vs2026-all",
+      "displayName": "Build ALL configs via all_configs target (VS 2026)",
+      "configurePreset": "vs2026",
+      "targets": [
+        "all_configs"
+      ]
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "all",
+      "displayName": "Configure + build all three configs (Debug, Release, RelWithDebInfo)",
+      "steps": [
         {
-            "name": "build-all",
-            "displayName": "Build ALL configs (-> build/debug, build/release, build/release-log)",
-            "configurePreset": "all",
-            "targets": [
-                "all_configs"
-            ]
+          "type": "configure",
+          "name": "all"
         },
         {
-            "name": "build-debug",
-            "displayName": "Build Debug only (-> build/debug)",
-            "configurePreset": "all",
-            "configuration": "Debug"
+          "type": "build",
+          "name": "build-debug"
         },
         {
-            "name": "build-release",
-            "displayName": "Build Release only (-> build/release)",
-            "configurePreset": "all",
-            "configuration": "Release"
+          "type": "build",
+          "name": "build-release"
         },
         {
-            "name": "build-release-log",
-            "displayName": "Build RelWithDebInfo only (-> build/release-log)",
-            "configurePreset": "all",
-            "configuration": "RelWithDebInfo"
+          "type": "build",
+          "name": "build-release-log"
         }
-    ],
-    "workflowPresets": [
+      ]
+    },
+    {
+      "name": "vs2026-all",
+      "displayName": "Configure + build all three configs with VS 2026",
+      "steps": [
         {
-            "name": "all",
-            "displayName": "Configure + build all three configs (Debug, Release, RelWithDebInfo)",
-            "steps": [
-                {
-                    "type": "configure",
-                    "name": "all"
-                },
-                {
-                    "type": "build",
-                    "name": "build-debug"
-                },
-                {
-                    "type": "build",
-                    "name": "build-release"
-                },
-                {
-                    "type": "build",
-                    "name": "build-release-log"
-                }
-            ]
+          "type": "configure",
+          "name": "vs2026"
+        },
+        {
+          "type": "build",
+          "name": "build-vs2026-all"
         }
-    ]
+      ]
+    }
+  ],
+  "vendor": {
+    "qt-project.org/Presets": {
+      "checksum": "7b2JO64HIB2RUPOQMQ/AisrYWk8="
+    }
+  }
 }

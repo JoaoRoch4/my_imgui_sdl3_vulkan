@@ -10,6 +10,10 @@
         "toml"
       ]
     },
-    "taglib"
+    "taglib",
+    {
+      "name": "cppwinrt",
+      "platform": "windows"
+    }
   ]
 }
