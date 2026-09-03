@@ -89,7 +89,7 @@ QList<FileSystemModel::Entry> FileSystemModel::stubEntries()
         e.kind = QString::fromUtf8(s.kind);
         e.path = QStringLiteral("/media/reference/") + e.name;
         e.size = s.size;
-        e.modified = base.addSecs(-i * 4273);
+        e.modified = base.addSecs(static_cast<qint64>(-i) * 4273);
         e.duration = QString::fromUtf8(s.duration);
         e.dimensions = QString::fromUtf8(s.dimensions);
         const QString suffix = QFileInfo(e.name).suffix();
