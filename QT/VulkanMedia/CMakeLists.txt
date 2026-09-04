@@ -69,6 +69,14 @@ target_link_libraries(appVulkanMedia PRIVATE
     Qt6::Multimedia
 )
 
+if(MSVC)
+    get_filename_component(QT6_INSTALL_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
+    set_target_properties(appVulkanMedia PROPERTIES
+        VS_DEBUGGER_ENVIRONMENT "PATH=${QT6_INSTALL_PREFIX}/bin;%PATH%
+QML2_IMPORT_PATH=${QT6_INSTALL_PREFIX}/qml"
+    )
+endif()
+
 install(TARGETS appVulkanMedia
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
