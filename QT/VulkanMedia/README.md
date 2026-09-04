@@ -16,6 +16,24 @@ Requires Qt 6.5+ (developed against 6.11), CMake 3.21+, a C++20 compiler.
 Modules used: `Core Gui Quick Qml QuickControls2 Concurrent` — all part of Qt,
 **no third-party dependencies**.
 
+### On Windows
+
+Windows/MSVC work lives on the **`qt-windows-msvc`** branch. Build it through the
+`vs2026` preset rather than the commands above — the top-level `CMakeLists.txt` is
+Linux-only, which is why that preset sets `BUILD_VULKAN_MEDIA_ONLY=ON`:
+
+```powershell
+git switch qt-windows-msvc
+$env:QTDIR = "C:\Qt\6.11.2\msvc2022_64"
+cmake --preset vs2026
+cmake --build build/vs2026 --config Debug --target appVulkanMedia
+```
+
+The same configure step also writes `build/vs2026/example_sdl3_vulkan.slnx`, which
+is what you open in Visual Studio 2026. Toolset choice, the two VS installations on
+a typical machine and the traps between them are documented in
+[`docs/windows-msvc-context.md`](../../docs/windows-msvc-context.md).
+
 Headless smoke test (the way this scaffold is verified in CI-like settings):
 
 ```sh

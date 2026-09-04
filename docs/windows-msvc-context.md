@@ -12,6 +12,10 @@
 
 ## 0. O resumo em cinco linhas
 
+O trabalho de Windows/MSVC vive no branch **`qt-windows-msvc`** (`git switch
+qt-windows-msvc`). O `main` carrega este documento para referência; mudanças de
+Windows pertencem ao branch. Índice geral em [`README.md`](README.md).
+
 | | |
 |---|---|
 | Toolset do repositório | **`v145`** — a geração **v180**, MSVC **14.51.36231**, `_MSC_FULL_VER 195136256` |
