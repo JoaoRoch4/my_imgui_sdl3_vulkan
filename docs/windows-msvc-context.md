@@ -6,7 +6,9 @@
 >
 > Substitui o antigo `docs/vs2026-slnx-port.md` (port manual `.slnx`/MSBuild), que partia de
 > duas premissas hoje falsas: que só havia uma instalação do VS, e que o CMake não servia
-> para o alvo Qt. Ver §1 e §4.
+> para o alvo Qt. Ver §1 e §4. Aquele arquivo não está mais neste branch; se precisar
+> consultá-lo, ele sobrevive no branch `qtwinmsv-broken-backup`
+> (`git show qtwinmsv-broken-backup:docs/vs2026-slnx-port.md`).
 
 ## 0. O resumo em cinco linhas
 
