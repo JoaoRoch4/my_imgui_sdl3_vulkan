@@ -4,6 +4,10 @@
 > `_MSC_FULL_VER` — nunca deduzindo do nome do toolset. Números envelhecem; cada seção traz
 > o comando que reconfere. **Se a máquina discordar deste arquivo, a máquina está certa.**
 >
+> E ela discorda rápido: **entre duas medições no mesmo dia**, o Enterprise ganhou o toolset
+> `v143` e a pasta `14.29.30133`, e a tabela da §1.1 virou outra. Instalar um componente no
+> VS Installer reescreve metade deste documento. Rode a §8 antes de confiar nele.
+>
 > Substitui o antigo `docs/vs2026-slnx-port.md` (port manual `.slnx`/MSBuild), que partia de
 > duas premissas hoje falsas: que só havia uma instalação do VS, e que o CMake não servia
 > para o alvo Qt. Ver §1 e §4. Aquele arquivo não está mais neste branch; se precisar
@@ -34,10 +38,19 @@ Esta é a armadilha nº 1 da máquina, e não existia quando o guia anterior foi
 | `installationVersion` | `18.9.12120.119` | `18.10.12120.281` |
 | `catalog_productDisplayVersion` | `18.9.2` | **`Insiders [12120.281]`** |
 | Toolsets em `VC\v180\` | `ClangCL`, `v145` | `ClangCL`, `v145` |
-| Toolsets em `VC\v170\` | **`v143`** | **vazio** |
-| Pastas em `VC\Tools\MSVC` | 14.29.30133, 14.42.34433, 14.44.35207, 14.50.35717, 14.51.36231, 14.52.36615 | 14.44.35207, 14.50.35717, 14.51.36231, 14.52.36629 |
+| Toolsets em `VC\v170\` | `v143` | `v143` |
+| Toolsets em `VC\v150\` / `v160\` | vazios | vazios |
+| Pastas em `VC\Tools\MSVC` | 14.29.30133, 14.42.34433, 14.44.35207, 14.50.35717, 14.51.36231, **14.52.36615** | 14.29.30133, 14.44.35207, 14.50.35717, 14.51.36231, **14.52.36629** |
+| `…VCToolsVersion.default.txt` | 14.51.36231 | 14.51.36231 |
+| `…VCToolsVersion.v145.default.txt` | 14.51.36231 | 14.51.36231 |
+| `…VCToolsVersion.v143.default.txt` | **14.42.34433** | **14.44.35207** |
+| `…VCToolsVersion.Preview.txt` | 14.52.36615 | 14.52.36629 |
 
-**As duas ferramentas escolhem instalações diferentes:**
+As duas instalações **não compartilham** as pastas de toolchain: o Preview difere
+(`…36615` vs `…36629`), o Community tem um `14.42.34433` que o Enterprise não tem, e os
+arquivos `.default.txt` do `v143` apontam para versões **diferentes** em cada uma.
+
+**E as duas ferramentas escolhem instalações diferentes:**
 
 - `vswhere -latest` → **Enterprise** (é a de maior versão);
 - o gerador do CMake → **Community**, gravado no cache como
@@ -48,22 +61,42 @@ Ou seja: o `cl.exe` do seu Developer Shell **não é** necessariamente o `cl.exe
 
 ### 1.1 Medição: o que cada instalação aceita
 
-Compilado e executado com um `.vcxproj` mínimo, um `printf("%d", _MSC_FULL_VER)`:
+Compilado **e executado** com o `.vcxproj` mínimo da §8, imprimindo `_MSC_FULL_VER`:
 
-| Instalação | `-p:PlatformToolset=` | Resultado | `_MSC_FULL_VER` | MSVC |
+| Instalação | `-p:PlatformToolset=` | Resultado | `_MSC_FULL_VER` | MSVC efetivo |
 |---|---|---|---|---|
-| Community | `v145` | ✅ compila e roda | `195136256` | 14.51.36231 |
-| Community | `v143` | ✅ compila e roda | `194435228` | 14.44.35207 |
-| Enterprise | `v145` | ✅ compila e roda | `195136256` | 14.51.36231 |
-| Enterprise | `v143` | ❌ **`MSB8020`** | — | — |
+| Community | `v145` | ✅ compila e roda | `195136256` | 14.51 |
+| Community | `v143` | ✅ compila e roda | `194435228` | **14.44** |
+| Community | `ClangCL` | ✅ compila e roda | `195136256` | 14.51 + `clang-cl` |
+| Community | `v142` | ❌ `MSB8020` | — | — |
+| Community | `v180` | ❌ `MSB8020` | — | — |
+| Enterprise | `v145` | ✅ compila e roda | `195136256` | 14.51 |
+| Enterprise | `v143` | ✅ compila e roda | `194435228` | **14.44** |
+| Enterprise | `ClangCL` | ✅ compila e roda | `195136256` | 14.51 + `clang-cl` |
+| Enterprise | `v142` | ❌ `MSB8020` | — | — |
+| Enterprise | `v180` | ❌ `MSB8020` | — | — |
 
-O `MSB8020` do Enterprise tem causa concreta e verificável sem compilar:
-`MSBuild\Microsoft\VC\v170\Platforms\x64\PlatformToolsets\` está **vazio** nessa instalação.
-`v141`/`v142` falham nas duas pelo mesmo motivo (`v150\` e `v160\` vazios).
+**Isto mudou hoje.** Numa medição anterior do mesmo dia, o `v143` falhava com `MSB8020` no
+Enterprise, porque `MSBuild\Microsoft\VC\v170\Platforms\x64\PlatformToolsets\` estava vazio
+lá. Instalado o componente, passou a funcionar. É exatamente por isso que a pasta
+`PlatformToolsets` é o teste barato (§8) e o build é o teste que vale.
 
-> **Consequência prática:** `v145` é o único toolset presente nas **duas** instalações.
-> Qualquer coisa fixada em `v143` compila só no Community — e quebra no dia em que o
-> Developer Shell abrir no Enterprise.
+`v141`/`v142` continuam falhando nas duas pelo mesmo motivo — `VC\v150\` e `VC\v160\` estão
+vazios. E `MSB8020` aqui **não** significa "não instalado no disco": a pasta
+`VC\Tools\MSVC\14.29.30133` existe nas duas instalações e mesmo assim não há como alcançá-la,
+porque nenhum `PlatformToolset` selecionável aponta para ela.
+
+> **Consequência prática:** `v145`, `v143` e `ClangCL` funcionam nas duas instalações.
+> Este repositório usa `v145` porque é o **padrão** que o gerador do CMake escolhe (§3) —
+> não porque os outros faltem. Se você fixar um toolset, fixe sabendo que a disponibilidade
+> dele muda quando alguém mexe no VS Installer.
+
+### 1.2 `_MSVC_LANG` = `201402` em todas as combinações
+
+Todas as dez linhas acima, sem `/std`, saíram com `_MSVC_LANG=201402` — **C++14**. O padrão
+default do MSVC não é o padrão do compilador mais novo. Este repositório não depende disso
+(o CMake passa `/std:c++20` via `<LanguageStandard>stdcpp20`, §3), mas qualquer `.vcxproj`
+escrito à mão sem `<LanguageStandard>` compila em C++14 sem avisar.
 
 ## 2. `v180` é a pasta; `v145` é o alias
 
@@ -73,13 +106,12 @@ MSBuild — `MSBuild\Microsoft\VC\v180\` — onde moram os toolsets daquela gera
 ```
 VC\v150\  (vazio)          <- seria o v141
 VC\v160\  (vazio)          <- seria o v142
-VC\v170\  -> v143          <- só no Community
-VC\v180\  -> v145, ClangCL <- nas duas
+VC\v170\  -> v143
+VC\v180\  -> v145, ClangCL
 ```
 
 Escrever `<PlatformToolset>v180</PlatformToolset>` dá **`MSB8020`** — medido, nas duas
-instalações, com o mesmo `.vcxproj` mínimo da §1.1. **O alias da geração v180 é `v145`** — e
-é ele que este repositório usa.
+instalações (§1.1). **O alias da geração v180 é `v145`** — e é ele que este repositório usa.
 
 ### 2.1 Os quatro números da mesma coisa
 
@@ -92,13 +124,23 @@ Citar "a versão do MSVC" sem dizer qual das numerações não significa nada:
 | `_MSC_FULL_VER` no binário | versão do compilador | `195136256` | `194435228` |
 | `_MSC_VER` | idem, truncado | `1951` | `1944` |
 
-O `_MSC_FULL_VER` do v145 (`…36256`) **não bate** com o nome da pasta (`…36231`), e isso é
-normal — são espaços de numeração distintos, não erro de transcrição.
+O `_MSC_FULL_VER` **não bate com o nome da pasta** em nenhum dos dois (`…36256` vs `…36231`;
+`…35228` vs `…35207`), e isso é normal — são espaços de numeração distintos, não erro de
+transcrição.
 
-Pegadinha herdada: `Microsoft.VCToolsVersion.v143.default.txt` hoje declara `14.44.35207`
-(coincide com o build real), mas já declarou `14.42.34433` enquanto o MSBuild usava 14.44.
-Se a versão exata importar, **fixe `VCToolsVersion` explicitamente** em vez de confiar no
-arquivo `.default.txt`.
+**A pegadinha de reprodutibilidade está viva no Community.** Lá,
+`Microsoft.VCToolsVersion.v143.default.txt` declara `14.42.34433`, mas o build com `v143`
+saiu com o compilador **14.44** (`_MSC_FULL_VER=194435228`) — o arquivo `.default.txt`
+mente. No Enterprise o mesmo arquivo declara `14.44.35207` e coincide. Se a versão exata
+importar (ABI com binários de terceiros, Qt inclusive), **fixe `VCToolsVersion`
+explicitamente** em vez de confiar no `.default.txt`:
+
+```xml
+<PropertyGroup>
+  <PlatformToolset>v143</PlatformToolset>
+  <VCToolsVersion>14.44.35207</VCToolsVersion>
+</PropertyGroup>
+```
 
 ## 3. Como o repositório é configurado hoje (verificado)
 
@@ -128,8 +170,9 @@ sai com:
 | `<RuntimeLibrary>` | `MultiThreadedDebugDLL` / `MultiThreadedDLL` (`/MDd`, `/MD`) |
 | `<WindowsTargetPlatformVersion>` | `10.0.28000.0` |
 
-Nenhum toolset está fixado no preset — o `v145` acima é o **padrão** que o gerador escolheu.
-Para tornar isso explícito (e imune à instalação que for selecionada), acrescente ao preset:
+Nenhum toolset está fixado no preset — o `v145` acima é o **padrão** que o gerador escolheu,
+e o cache confirma (`CMAKE_GENERATOR_TOOLSET:INTERNAL=` vazio). Para tornar isso explícito,
+acrescente ao preset:
 
 ```jsonc
 "toolset": "v145"
@@ -153,6 +196,12 @@ cmake --preset vs2026                        # configure
 cmake --build build/vs2026 --config Debug --target appVulkanMedia
 .\build\vs2026\QT\VulkanMedia\Debug\appVulkanMedia.exe
 ```
+
+As duas primeiras linhas foram executadas em 03/09/2026, as duas com **`exit 0`** — o
+configure leva ~5 s e o build relinka `appVulkanMedia.exe`. O configure emite um *author
+warning* do próprio Qt (`__qt_internal_setup_policy`, em `Qt6QmlMacros.cmake`) disparado por
+`qt_add_qml_module` em `QT/VulkanMedia/CMakeLists.txt:30`; é aviso para quem desenvolve o
+projeto, não erro, e não impede nada.
 
 O `CMakeUserPresets.json` (gerado pelo Qt Creator) traz os presets `Qt-Debug`/`Qt-Release`,
 que usam **Ninja**, não o VS — são outro caminho de build, não o desta seção.
@@ -193,7 +242,11 @@ Debug --target appVulkanMedia` compila e linka
 `build/vs2026/QT/VulkanMedia/Debug/appVulkanMedia.exe` (verificado em 03/09/2026), pela
 compatibilidade binária do MSVC dentro da faixa 14.x.
 
-Duas condições que **não** podem ser violadas:
+Se quiser casar exatamente o toolset com o do Qt, o `v143` está disponível nas duas
+instalações (§1.1) e resolve para 14.44 — mas então fixe também o `VCToolsVersion`, pelo
+motivo da §2.1, e reconfigure com `--fresh`.
+
+Duas condições que **não** podem ser violadas em nenhuma das duas escolhas:
 
 1. **Biblioteca de runtime igual em tudo.** O Qt `msvc2022_64` é `/MD`; o `.vcxproj` gerado
    também. Misturar `/MT` aqui dá `LNK2038` — ou corrupção de heap silenciosa.
@@ -240,31 +293,49 @@ O `10.0.10240.0` que existia em medições anteriores **não está mais aqui**. 
 
 ## 8. Reconferir tudo
 
+Rode isto **antes** de acreditar em qualquer tabela acima — o inventário muda a cada
+componente instalado no VS Installer:
+
 ```powershell
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
-# as instalações e o que cada uma oferece
+# as instalações, os toolsets selecionáveis e as pastas de toolchain de cada uma
 & $vswhere -all -prerelease -products * -format value -property installationPath | ForEach-Object {
   "--- $_"
   Get-ChildItem "$_\MSBuild\Microsoft\VC" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     "   $($_.Name): " + ((Get-ChildItem "$($_.FullName)\Platforms\x64\PlatformToolsets" `
         -Directory -ErrorAction SilentlyContinue).Name -join ', ')
   }
+  "   VC\Tools\MSVC: " + ((Get-ChildItem "$_\VC\Tools\MSVC" -Directory).Name -join ', ')
+  Get-ChildItem "$_\VC\Auxiliary\Build\Microsoft.VCToolsVersion*.txt" |
+    ForEach-Object { "   $($_.Name) -> $((Get-Content $_ -Raw).Trim())" }
 }
 
-# qual instalação o CMake escolheu para este build tree
-Select-String -Path build\vs2026\CMakeCache.txt -Pattern 'GENERATOR_INSTANCE|CMAKE_LINKER:'
-
-# qual toolset o .vcxproj gerado pediu
+# qual instalação o CMake escolheu para este build tree, e qual toolset o .vcxproj pediu
+Select-String -Path build\vs2026\CMakeCache.txt -Pattern 'GENERATOR_INSTANCE|CMAKE_LINKER:|GENERATOR_TOOLSET'
 Select-String -Path build\vs2026\QT\VulkanMedia\appVulkanMedia.vcxproj `
   -Pattern 'PlatformToolset|LanguageStandard|RuntimeLibrary|WindowsTargetPlatformVersion' |
   Sort-Object Line -Unique
 
 # Windows SDKs e Vulkan
 Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" -Directory | Select-Object -ExpandProperty Name
-$env:VULKAN_SDK
+"VULKAN_SDK=[$env:VULKAN_SDK]"
 ```
 
-E, para provar qual compilador de fato rodou — o único teste que vale — compile um
-`printf("%d", _MSC_FULL_VER)` e **execute** o binário. Caminho em log não prova nada: o log
-traz includes e libs de várias versões ao mesmo tempo.
+E, para refazer a tabela da §1.1 — o único teste que vale — compile **e execute**:
+
+```cpp
+// probe.cpp
+#include <cstdio>
+int main() { std::printf("%d %ld\n", _MSC_FULL_VER, (long)_MSVC_LANG); }
+```
+
+```powershell
+# probe.vcxproj: Application mínimo, só os três Import do Microsoft.Cpp e um <ClCompile>
+& $msbuild probe.vcxproj -p:Configuration=Debug -p:Platform=x64 -p:PlatformToolset=v143 `
+    -p:OutDir=$pwd\out\v143\ -p:IntDir=$pwd\out\v143\
+.\out\v143\probe.exe        # <- este número é o que vale
+```
+
+Caminho em log não prova nada: o log traz includes e libs de várias versões ao mesmo tempo.
+Só o binário executado diz qual compilador rodou.
