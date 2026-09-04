@@ -35,7 +35,7 @@ cmake --build build/vs2026 --config Debug --target appVulkanMedia
 | Branch | What it is |
 |---|---|
 | `main` | Integration branch. Linux (clang + Ninja) is the primary build target here. |
-| [`qt-windows-msvc`](https://github.com/JoaoRoch4/my_imgui_sdl3_vulkan/tree/qt-windows-msvc) | **The Windows branch** — MSVC / Visual Studio 2026 port of the Qt app. Identical to `main` as of `18e05ff`; it diverges as Windows work lands. |
+| [`qt-windows-msvc`](https://github.com/JoaoRoch4/my_imgui_sdl3_vulkan/tree/qt-windows-msvc) | **The Windows branch** — MSVC / Visual Studio 2026 port of the Qt app. Kept in sync with `main`; it diverges as Windows work lands. |
 | [`qtwinmsv-broken-backup`](https://github.com/JoaoRoch4/my_imgui_sdl3_vulkan/tree/qtwinmsv-broken-backup) | Frozen tip of `qt-windows-msvc` from before it was reset onto `main`. Kept only for the superseded `.slnx`/MSBuild hand-port guide: `git show qtwinmsv-broken-backup:docs/vs2026-slnx-port.md` |
 
 ## The documents
