@@ -130,10 +130,21 @@ transcrição.
 
 **A pegadinha de reprodutibilidade está viva no Community.** Lá,
 `Microsoft.VCToolsVersion.v143.default.txt` declara `14.42.34433`, mas o build com `v143`
-saiu com o compilador **14.44** (`_MSC_FULL_VER=194435228`) — o arquivo `.default.txt`
-mente. No Enterprise o mesmo arquivo declara `14.44.35207` e coincide. Se a versão exata
-importar (ABI com binários de terceiros, Qt inclusive), **fixe `VCToolsVersion`
-explicitamente** em vez de confiar no `.default.txt`:
+saiu com o compilador **14.44** (`_MSC_FULL_VER=194435228`). O arquivo não está errado — ele
+simplesmente **não é o seletor**: o MSBuild pega a 14.4x mais nova presente na instalação.
+No Enterprise a distinção não aparece, porque lá o `.default.txt` diz `14.44.35207` e essa é
+justamente a mais nova.
+
+Medido, para separar as duas explicações — as duas linhas compilam e rodam no Community:
+
+| `-p:PlatformToolset=v143` mais… | `_MSC_FULL_VER` | MSVC |
+|---|---|---|
+| (nada) | `194435228` | 14.44 — a mais nova, não a do `.default.txt` |
+| `-p:VCToolsVersion=14.42.34433` | `194234444` | 14.42 — **alcançável**, só não é o padrão |
+
+Ou seja: a versão que o `.default.txt` anuncia continua utilizável, mas você tem que pedir por
+ela. Se a versão exata importar (ABI com binários de terceiros, Qt inclusive), **fixe
+`VCToolsVersion` explicitamente** em vez de confiar em qualquer um dos dois:
 
 ```xml
 <PropertyGroup>
