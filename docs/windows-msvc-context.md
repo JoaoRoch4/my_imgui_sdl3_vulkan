@@ -73,8 +73,9 @@ VC\v170\  -> v143          <- só no Community
 VC\v180\  -> v145, ClangCL <- nas duas
 ```
 
-Escrever `<PlatformToolset>v180</PlatformToolset>` dá `MSB8020`. **O alias da geração v180 é
-`v145`** — e é ele que este repositório usa.
+Escrever `<PlatformToolset>v180</PlatformToolset>` dá **`MSB8020`** — medido, nas duas
+instalações, com o mesmo `.vcxproj` mínimo da §1.1. **O alias da geração v180 é `v145`** — e
+é ele que este repositório usa.
 
 ### 2.1 Os quatro números da mesma coisa
 
@@ -130,9 +131,15 @@ Para tornar isso explícito (e imune à instalação que for selecionada), acres
 "toolset": "v145"
 ```
 
-⚠ Isso exige **reconfigurar do zero** (`cmake --preset vs2026 --fresh`): o CMake recusa mudar
-o toolset de um cache existente com *"generator toolset does not match the toolset used
-previously"*.
+⚠ Isso exige **reconfigurar do zero** (`cmake --preset vs2026 --fresh`). O CMake recusa mudar
+o toolset de um cache existente, com esta mensagem exata (medida):
+
+```
+CMake Error: Error: generator toolset: v145
+Does not match the toolset used previously:
+```
+
+(o campo depois de `previously:` sai vazio justamente porque o cache atual não fixou toolset.)
 
 ### 3.1 Comandos
 
@@ -200,15 +207,20 @@ que o preset `vs2026` liga `BUILD_VULKAN_MEDIA_ONLY=ON`. Os bloqueios reais:
 - **Defaults de Linux no CMakeLists raiz** — `VCPKG_TARGET_TRIPLET` cai em `x64-linux` e
   `VCPKG_ROOT` em `$HOME/vcpkg`. No Windows seria
   `-DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_ROOT=C:/vcpkg`.
-- **`pkg_check_modules(freetype2 / egl / gl / fontconfig)`** — não há pkg-config nem EGL de
-  sistema no Windows.
+- **pkg-config obrigatório** — `CMakeLists.txt:98` faz `find_package(PkgConfig REQUIRED)` e as
+  linhas 99–108 pedem `freetype2`, `egl`, `gl` e `fontconfig` via `pkg_check_modules(...
+  REQUIRED)`. Não há pkg-config nem EGL de sistema no Windows, e o `REQUIRED` derruba o
+  configure ali mesmo.
 - **Preset `all`** — fixa `clang`/`clang++` + `CMAKE_LINKER_TYPE=LLD`, não MSVC.
 - **Vulkan SDK ausente** — `$env:VULKAN_SDK` vazio e `C:\VulkanSDK` não existe. Sem ele não
   há `glslangValidator` para os shaders, nem headers/loader do Vulkan. Instale o LunarG SDK
   antes de tentar.
-- **mpv / libplacebo (meson) e FFmpeg (configure via MSYS2)** — as três dependências de mídia
-  não têm build MSVC direto; ou binários pré-construídos, ou o caminho de vídeo fica de fora
-  do primeiro corte.
+- **As três dependências de mídia não são CMake.** `thirdparty/libplacebo/CMakeLists.txt:22` e
+  `thirdparty/mpv/CMakeLists.txt:29` invocam `meson setup` por `ExternalProject`;
+  `thirdparty/ffmpeg/CMakeLists.txt:37` chama o `configure` autotools de `external/FFmpeg`.
+  No Windows isso quer dizer meson + um shell POSIX (MSYS2) e, no caso do FFmpeg,
+  `--toolchain=msvc`. Ou binários pré-construídos, ou o caminho de vídeo fica de fora do
+  primeiro corte.
 
 `vcpkg` está em `C:\vcpkg` e integrado globalmente ao MSBuild. As dependências do
 `vcpkg.json` (curl, libwebp, reflectcpp, taglib — mais `cppwinrt` no Windows) instalam no
