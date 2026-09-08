@@ -2,6 +2,10 @@
   "name": "my-imgui-app",
   "version": "1.0",
   "dependencies": [
+    {
+      "name": "cppwinrt",
+      "platform": "windows"
+    },
     "curl",
     "libwebp",
     {
@@ -11,9 +15,6 @@
       ]
     },
     "taglib",
-    {
-      "name": "cppwinrt",
-      "platform": "windows"
-    }
+    "sdl3"
   ]
 }
