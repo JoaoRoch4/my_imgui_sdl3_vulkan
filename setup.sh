@@ -153,6 +153,11 @@ readonly PKGS=(
   wayland-devel wayland-protocols-devel libxkbcommon-devel libdecor-devel
   libX11-devel libXext-devel libXcursor-devel libXi-devel libXrandr-devel
   libXfixes-devel libXScrnSaver-devel libxcb-devel
+  # Medido em 08/09/2026: sem libXtst-devel o configure do SDL3 morre em
+  # external/SDL/cmake/macros.cmake:449 ("Couldn't find dependency package for
+  # XTEST"). A alternativa seria -DSDL_X11_XTEST=OFF; instalar o -devel é mais
+  # barato do que abrir mão do XTest.
+  libXtst-devel
   libdrm-devel mesa-libgbm-devel
   pipewire-devel pulseaudio-libs-devel alsa-lib-devel
   dbus-devel liburing-devel
