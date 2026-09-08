@@ -126,7 +126,8 @@ python3 bootstrap.py build debug      # or: python3 bootstrap.py run debug
 
 [`bootstrap.py`](bootstrap.py) runs on Linux and Windows, needs nothing but the
 Python standard library, and is idempotent — re-run it any time to pick up only
-what is missing. It also writes the **VS Code**, **CLion** and **Visual Studio**
+what is missing. System packages are covered for **dnf**, **apt** and **pacman**;
+on Windows it verifies the toolchain and offers winget. It also writes the **VS Code**, **CLion** and **Visual Studio**
 configuration for whichever machine it runs on. `python3 bootstrap.py doctor`
 reports what the machine has without changing anything;
 `python3 bootstrap.py --help` lists every phase and flag.

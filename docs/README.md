@@ -19,6 +19,15 @@ Windows — and reads the pinned `external/` refs and the Fedora package list ou
 [`setup.sh`](../setup.sh) instead of copying them, so a version bump lands in one
 place. `setup.sh` + `build.sh` stay the bash path on Fedora/Nobara.
 
+System packages are handled for **dnf** (the `setup.sh` list), **apt** and
+**pacman** — the latter two translated from it and checked name by name against
+Debian trixie, Ubuntu noble and the Arch repos. Before installing, the script
+still resolves every name against the local package manager, so a name that
+drifted on your release is reported (with a hint when it is a `non-free` /
+`multiverse` package) instead of taking the whole batch down with it. On Windows
+it checks for cmake/ninja/git/python and offers winget; Visual Studio and Qt are
+deliberately left to you.
+
 Where the binaries land (from `CMakeLists.txt:292-299` — note that `build.sh` looks
 for RelWithDebInfo under `build/release-log/`, which is not where CMake puts it):
 

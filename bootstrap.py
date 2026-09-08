@@ -515,9 +515,13 @@ def parse_setup_sh() -> Sources:
 # ══════════════════════════════════════════════════════════════════════════════
 # Fase 1 — pacotes de sistema
 # ══════════════════════════════════════════════════════════════════════════════
-# Fedora vem do setup.sh (verificado com dnf5 repoquery). Debian/Arch são o
-# equivalente mais próximo, escrito à mão e NÃO medido nesta máquina: se um nome
-# tiver drifted, o instalador pula o que falta e diz qual foi.
+# Fedora vem do setup.sh (verificado com dnf5 repoquery). As listas de Debian e
+# Arch são a tradução dessa, e cada nome foi conferido em 08/09/2026 contra
+# packages.debian.org/trixie, packages.ubuntu.com/noble e a API do archlinux.org:
+# 69/69 existem no Debian trixie, 64/64 no Arch. Ainda assim o instalador
+# resolve os nomes no gerenciador local antes de instalar (_apt_unknown /
+# _pacman_unknown) — release diferente renomeia pacote, e é melhor pular um nome
+# e dizer qual do que derrubar o lote inteiro.
 APT_PACKAGES = [
     # toolchain
     "clang", "lld", "cmake", "ninja-build", "meson", "make", "git", "pkg-config",
@@ -533,7 +537,9 @@ APT_PACKAGES = [
     "libopus-dev", "libvorbis-dev", "libtheora-dev", "libmp3lame-dev",
     "libfdk-aac-dev", "libwebp-dev", "libgnutls28-dev", "libunistring-dev", "libnuma-dev",
     # hwaccel
-    "nv-codec-headers", "libva-dev", "libvdpau-dev", "libvulkan-dev", "vulkan-validationlayers",
+    # nv-codec-headers é o nome do FONTE; o binário no Debian/Ubuntu é este:
+    "libffmpeg-nvenc-dev", "libva-dev", "libvdpau-dev", "libvulkan-dev",
+    "vulkan-validationlayers",
     # SDL3 / WSI / áudio
     "libwayland-dev", "wayland-protocols", "libxkbcommon-dev", "libdecor-0-dev",
     "libx11-dev", "libxext-dev", "libxcursor-dev", "libxi-dev", "libxrandr-dev",
@@ -548,7 +554,7 @@ PACMAN_PACKAGES = [
     "luajit", "libass", "zlib", "glslang", "shaderc", "lcms2",
     "dav1d", "aom", "x264", "x265", "libvpx", "opus", "libvorbis", "libtheora",
     "lame", "libwebp", "gnutls", "libunistring", "numactl",
-    "nv-codec-headers", "libva", "libvdpau", "vulkan-headers", "vulkan-icd-loader",
+    "ffnvcodec-headers", "libva", "libvdpau", "vulkan-headers", "vulkan-icd-loader",
     "wayland", "wayland-protocols", "libxkbcommon", "libdecor", "libx11", "libxext",
     "libxcursor", "libxi", "libxrandr", "libxfixes", "libxss", "libxtst", "libxcb", "libdrm",
     "mesa", "pipewire", "libpulse", "alsa-lib", "dbus", "liburing",
@@ -581,6 +587,23 @@ def _missing_dpkg(pkgs: List[str]) -> List[str]:
         if rc != 0 or "install ok installed" not in out:
             missing.append(p)
     return missing
+
+
+def _apt_unknown(pkgs: List[str]) -> List[str]:
+    """Quais destes nomes o apt local não conhece (release diferente, componente
+    non-free/multiverse desabilitado, …)."""
+    rc, out = capture(["apt-cache", "policy", *pkgs])
+    if rc not in (0, 100):        # a própria ferramenta falhou: não dá para julgar
+        return []
+    known = set(re.findall(r"^([^\s:]+):$", out, re.M))
+    return [p for p in pkgs if p not in known]
+
+
+def _pacman_unknown(pkgs: List[str]) -> List[str]:
+    rc, out = capture(["pacman", "-Si", *pkgs])
+    if rc == 127:
+        return []
+    return sorted(set(re.findall(r"package '([^']+)' was not found", out)))
 
 
 def _missing_pacman(pkgs: List[str]) -> List[str]:
@@ -631,12 +654,22 @@ def phase_packages(host: Host, src: Sources, use_sudo: bool = True) -> None:
 
     if host.pkg in ("apt", "pacman"):
         pkgs = APT_PACKAGES if host.pkg == "apt" else PACMAN_PACKAGES
-        warn(f"lista de {host.pkg} é o equivalente traduzido da lista Fedora do setup.sh, "
-             f"não medida nesta máquina — confira o que falhar")
         missing = _missing_dpkg(pkgs) if host.pkg == "apt" else _missing_pacman(pkgs)
         if not missing:
             ok(f"todos os {len(pkgs)} pacotes já instalados")
             return
+
+        unknown = _apt_unknown(missing) if host.pkg == "apt" else _pacman_unknown(missing)
+        if unknown:
+            warn(f"{len(unknown)} nome(s) que o seu {host.pkg} não conhece — "
+                 f"pulados, resolva-os à parte:")
+            for u in unknown:
+                print(f"{DIM}     {u}{OFF}{_package_hint(host.pkg, u)}")
+            missing = [p for p in missing if p not in unknown]
+        if not missing:
+            skip("nada resolvível para instalar")
+            return
+
         log(f"faltando {len(missing)} pacote(s): " + " ".join(missing))
         if not confirm("instalar agora?"):
             skip("instalação recusada")
@@ -653,6 +686,21 @@ def phase_packages(host: Host, src: Sources, use_sudo: bool = True) -> None:
 
     warn(f"gerenciador de pacotes não reconhecido em {host.distro or host.system} — "
          f"instale as deps à mão (a lista Fedora está no setup.sh)")
+
+
+# Nomes que existem no repositório oficial mas num componente que muita gente
+# não habilita — sem a dica, "não conhece esse pacote" não diz o que fazer.
+_PACKAGE_HINTS = {
+    "apt": {
+        "libfdk-aac-dev": "  <- non-free (Debian) / multiverse (Ubuntu)",
+        "libffmpeg-nvenc-dev": "  <- non-free (Debian) / multiverse (Ubuntu)",
+    },
+    "pacman": {},
+}
+
+
+def _package_hint(manager: str, package: str) -> str:
+    return _PACKAGE_HINTS.get(manager, {}).get(package, "")
 
 
 def _report_windows_manual(host: Host) -> None:
