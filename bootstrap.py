@@ -726,9 +726,12 @@ def _report_windows_manual(host: Host) -> None:
 # Fase 2 — vcpkg
 # ══════════════════════════════════════════════════════════════════════════════
 def _vcpkg_ports(host: Host) -> List[str]:
-    """No Linux só curl + reflectcpp: taglib e libwebp são compilados do fonte
-    (setup.sh, fase 2). No Windows vale o vcpkg.json inteiro — lá o alvo é o app
-    Qt e nada é compilado do external/."""
+    """O vcpkg.json declara TODA a dependência que tem port (mpv, libplacebo e
+    ffmpegthumbnailer não têm — ficam do fonte). Instalar tudo isso, porém, só
+    faz sentido no Windows, onde o stack de mídia não compila do external/
+    (docs/windows-msvc-context.md §6). No Linux o CMakeLists consome do vcpkg
+    apenas curl e reflectcpp; o resto vem do external/ e do sistema, e mandar o
+    vcpkg recompilar o FFmpeg ao lado seria trabalho jogado fora."""
     if not host.is_windows:
         return ["curl", "reflectcpp[toml]"]
     manifest = REPO / "vcpkg.json"
@@ -768,10 +771,22 @@ def phase_vcpkg(host: Host) -> None:
              f"VCPKG_ROOT={root} para o configure concordar")
 
     ports = _vcpkg_ports(host)
+    if len(ports) > 6:
+        warn(f"{len(ports)} ports — com ffmpeg no meio isto compila por horas na "
+             f"primeira vez (o vcpkg constrói do fonte)")
+        if not confirm("seguir com a instalação do vcpkg?"):
+            skip("fase 2 (vcpkg) recusada")
+            return
     log("vcpkg install " + " ".join(ports) + "  (no-op para o que já está construído)")
     # Modo clássico: rodar de dentro do $VCPKG_ROOT, que não tem vcpkg.json — de
     # dentro do repo o vcpkg entra em modo manifest e recusa argumentos de porta.
-    run([str(exe), "install", *ports, "--triplet", host.triplet], cwd=root)
+    # --recurse: sem ele, acrescentar uma FEATURE a um port já instalado (o
+    # reflectcpp[toml] sobre um reflectcpp[core] antigo) faz o vcpkg parar com
+    # "If you are sure you want to rebuild the above packages, run the command
+    # with the --recurse option" e sair != 0. E o resultado de não rebuildar é
+    # pior do que o erro: os headers instalados declaram rfl::toml::Writer, a
+    # libreflectcpp.a não define, e quem paga é o LINK do app, lá na frente.
+    run([str(exe), "install", *ports, "--triplet", host.triplet, "--recurse"], cwd=root)
     ok(f"deps prontas em {root / 'installed' / host.triplet}")
 
 

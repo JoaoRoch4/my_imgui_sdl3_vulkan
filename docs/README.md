@@ -19,6 +19,20 @@ Windows — and reads the pinned `external/` refs and the Fedora package list ou
 [`setup.sh`](../setup.sh) instead of copying them, so a version bump lands in one
 place. `setup.sh` + `build.sh` stay the bash path on Fedora/Nobara.
 
+### What comes from where
+
+`vcpkg.json` declares **every dependency that has a vcpkg port** — 24 of them,
+each name and feature checked against the ports tree. Three have no port and are
+therefore always built from source: **mpv**, **libplacebo** and
+**ffmpegthumbnailer**.
+
+The manifest is a *declaration*, not the build path: `CMakeLists.txt` sets
+`VCPKG_MANIFEST_MODE OFF`, so nothing here is installed during configure. On
+Linux the build consumes only `curl` and `reflectcpp[toml]` from vcpkg — the rest
+comes from the from-source `external/` tree and the system — and that is what
+`bootstrap.py` installs there. On Windows, where the media stack does not build
+from source, the whole manifest is the install list.
+
 System packages are handled for **dnf** (the `setup.sh` list), **apt** and
 **pacman** — the latter two translated from it and checked name by name against
 Debian trixie, Ubuntu noble and the Arch repos. Before installing, the script

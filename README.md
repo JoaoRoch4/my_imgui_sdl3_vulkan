@@ -70,7 +70,9 @@ Flags are **session-only** overrides — they never rewrite your saved
 Almost the whole media/UI stack is **compiled from source**: `setup.sh` clones it
 into the git-ignored `external/` tree at pinned refs, and the authored CMake glue
 under `thirdparty/<lib>/` builds it. Only curl and reflect-cpp come from vcpkg on
-Linux; freetype, fontconfig, EGL and GL come from the system.
+Linux; freetype, fontconfig, EGL and GL come from the system. `vcpkg.json` still
+declares the full dependency set for the platforms that need it — see
+[`docs/README.md`](docs/README.md#what-comes-from-where).
 
 ## Project layout
 
@@ -100,8 +102,10 @@ Linux; freetype, fontconfig, EGL and GL come from the system.
 ├── bootstrap.py        Cross-platform setup + IDE configuration (Linux & Windows)
 ├── setup.sh            One-shot dependency bootstrap (Fedora/Nobara)
 ├── build.sh            Build/run/test/profile wrapper around the CMake presets
-└── vcpkg.json          vcpkg-managed deps (curl, libwebp, reflectcpp, taglib,
-                        sdl3; cppwinrt on Windows)
+└── vcpkg.json          Every dependency that has a vcpkg port (24). mpv,
+                        libplacebo and ffmpegthumbnailer have none — always
+                        from source. Declarative: manifest mode is OFF, and on
+                        Linux the build only takes curl + reflectcpp from vcpkg
 ```
 
 ---

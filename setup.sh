@@ -221,7 +221,11 @@ install_vcpkg_deps() {
     # else vcpkg switches to manifest mode and rejects package args. Single-quote the
     # bracketed feature so bash doesn't glob it.
     log "vcpkg install (idempotent — already-built ports are skipped)"
-    ( cd "$VCPKG_ROOT" && ./vcpkg install curl 'reflectcpp[toml]' --triplet "$VCPKG_TRIPLET" )
+    # --recurse: acrescentar a feature [toml] a um reflectcpp[core] já instalado
+    # é um REBUILD, e sem essa flag o vcpkg recusa e sai != 0. Pior: se você
+    # ignorar, os headers instalados declaram rfl::toml::Writer e a
+    # libreflectcpp.a não define — o erro reaparece no LINK do app.
+    ( cd "$VCPKG_ROOT" && ./vcpkg install curl 'reflectcpp[toml]' --triplet "$VCPKG_TRIPLET" --recurse )
     ok "vcpkg deps ready in $VCPKG_ROOT/installed/$VCPKG_TRIPLET"
 }
 

@@ -2,19 +2,73 @@
   "name": "my-imgui-app",
   "version": "1.0",
   "dependencies": [
+    "boost-math",
+    "boost-multiprecision",
     {
       "name": "cppwinrt",
       "platform": "windows"
     },
     "curl",
+    "doctest",
+    {
+      "name": "ffmpeg",
+      "features": [
+        "avcodec",
+        "avdevice",
+        "avfilter",
+        "avformat",
+        "swresample",
+        "swscale",
+        "aom",
+        "ass",
+        "dav1d",
+        "fontconfig",
+        "freetype",
+        "gpl",
+        "mp3lame",
+        "nvcodec",
+        "opus",
+        "theora",
+        "vaapi",
+        "vorbis",
+        "vpx",
+        "vulkan",
+        "webp",
+        "x264",
+        "x265",
+        "zlib"
+      ]
+    },
+    "fontconfig",
+    "freetype",
+    "glslang",
+    {
+      "name": "imgui",
+      "features": [
+        "docking-experimental",
+        "freetype",
+        "sdl3-binding",
+        "vulkan-binding"
+      ]
+    },
+    "implot",
+    "lcms",
+    "libass",
     "libwebp",
+    "luajit",
+    "plutosvg",
+    "plutovg",
     {
       "name": "reflectcpp",
       "features": [
         "toml"
       ]
     },
+    "sdl3",
+    "shaderc",
+    "stb",
     "taglib",
-    "sdl3"
+    "vulkan-headers",
+    "vulkan-loader"
   ]
 }
