@@ -58,3 +58,8 @@ thirdparty/*/*
 !thirdparty/*/*.cmake
 !thirdparty/*/*.ini
 !thirdparty/*/*.patch
+
+# Python bytecode (build.py importa o bootstrap.py)
+__pycache__/
+*.pyc
+/QtExamples/
