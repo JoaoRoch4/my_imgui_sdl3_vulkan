@@ -1,0 +1,12 @@
+# LeakSanitizer suppressions for the Debug (ENABLE_SANITIZERS=ON) app.
+#
+# Only third-party leaks belong here — never our own. The app's objects are the
+# only instrumented ones, so a leak reported from our code is real and must be
+# fixed, not listed below.
+#
+# libdbus: SDL3 talks to D-Bus (screensaver inhibit, portals) through a
+# connection it never tears down, so the session bus registration and its
+# message loader stay allocated at exit. ~21 KB in ~9 blocks, constant per run.
+# Used by build_and_run.py via LSAN_OPTIONS=suppressions=scripts/lsan.supp.
+leak:libdbus-1
+leak:dbus_

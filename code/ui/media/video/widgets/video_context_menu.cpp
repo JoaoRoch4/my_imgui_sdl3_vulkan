@@ -77,6 +77,53 @@ void VideoContextMenu::set_playback_mode(const std::string &source, int mode) co
 }
 
 // ---------------------------------------------------------------------------
+// Save action (shared by the menu item and the player's Save button)
+// ---------------------------------------------------------------------------
+
+std::filesystem::path VideoContextMenu::resolve_save_source(
+    const WindowStateToml::ImageHistoryEntry &entry)
+{
+    std::error_code ec;
+    if (!entry.cached_path.empty()) {
+        const std::filesystem::path cached(entry.cached_path);
+        if (std::filesystem::exists(cached, ec))
+            return cached;
+    }
+    const std::filesystem::path local(entry.source);
+    if (std::filesystem::exists(local, ec) && VideoPlayer::is_video_path(local))
+        return local;
+    return {};
+}
+
+void VideoContextMenu::request_save(const WindowStateToml::ImageHistoryEntry &entry)
+{
+    const std::filesystem::path save_src = resolve_save_source(entry);
+    if (save_src.empty())
+        return;
+
+    // Suggest the page/video title for URLs (the cached file is named after a
+    // hash of the URL, which makes for a useless suggestion).
+    std::string suggested = ImageDownloader::title_from_url(entry.source);
+    if (suggested.empty())
+        suggested = save_src.filename().string();
+
+    const std::filesystem::path suggested_path(suggested);
+    if (!save_src.extension().empty() && suggested_path.extension().empty())
+        suggested += save_src.extension().string();
+
+    static const SDL_DialogFileFilter filters[] = {
+        {"Video files", "mp4;mkv;avi;mov;webm;flv;wmv;m4v"},
+        {"All files",   "*"},
+    };
+
+    m_copy_source         = save_src;
+    m_copy_history_source = entry.source;
+    m_copy_dest.clear();
+    SDL_ShowSaveFileDialog(VideoContextMenu::save_dialog_callback,
+                           this, m_window, filters, 2, suggested.c_str());
+}
+
+// ---------------------------------------------------------------------------
 // Save-file dialog callback (called on the main thread by SDL3)
 // ---------------------------------------------------------------------------
 
@@ -99,10 +146,6 @@ void VideoContextMenu::save_dialog_callback(void *userdata,
 
 static VideoContextMenu::Result draw_menu_body(
     VideoContextMenu *self,
-    SDL_Window *window,
-    std::filesystem::path &copy_source,
-    std::string &copy_history_source,
-    std::filesystem::path &copy_dest,
     const WindowStateToml::ImageHistoryEntry &entry)
 {
     VideoContextMenu::Result result;
@@ -121,42 +164,14 @@ static VideoContextMenu::Result draw_menu_body(
     }
 
     // ----- Save Video As… ------------------------------------------------
-    std::filesystem::path save_src;
-    std::error_code ec;
-    if (!entry.cached_path.empty()) {
-        const std::filesystem::path cp(entry.cached_path);
-        if (std::filesystem::exists(cp, ec))
-            save_src = cp;
-    }
-    if (save_src.empty()) {
-        const std::filesystem::path sp(entry.source);
-        if (std::filesystem::exists(sp, ec) && VideoPlayer::is_video_path(sp))
-            save_src = sp;
-    }
-
-    const bool can_save = !save_src.empty();
+    // Disabled until a local file exists: for a URL that means waiting for the
+    // background download to finish (the title bar shows its percentage).
+    const bool can_save = !VideoContextMenu::resolve_save_source(entry).empty();
     if (!can_save)
         ImGui::BeginDisabled();
 
-    if (ImGui::MenuItem("Save Video As\xe2\x80\xa6")) {
-        std::string suggested = ImageDownloader::title_from_url(entry.source);
-        if (suggested.empty())
-            suggested = save_src.filename().string();
-
-        const std::filesystem::path suggested_path(suggested);
-        if (!save_src.extension().empty() && suggested_path.extension().empty())
-            suggested += save_src.extension().string();
-
-        static const SDL_DialogFileFilter filters[] = {
-            {"Video files", "mp4;mkv;avi;mov;webm;flv;wmv;m4v"},
-            {"All files",   "*"},
-        };
-        copy_source = save_src;
-        copy_history_source = entry.source;
-        copy_dest.clear();
-        SDL_ShowSaveFileDialog(VideoContextMenu::save_dialog_callback,
-                               self, window, filters, 2, suggested.c_str());
-    }
+    if (ImGui::MenuItem("Save Video As\xe2\x80\xa6"))
+        self->request_save(entry);
 
     if (!can_save)
         ImGui::EndDisabled();
@@ -201,7 +216,7 @@ static VideoContextMenu::Result draw_menu_body(
 VideoContextMenu::Result VideoContextMenu::draw_menu_items(
     const WindowStateToml::ImageHistoryEntry &entry)
 {
-    return draw_menu_body(this, m_window, m_copy_source, m_copy_history_source, m_copy_dest, entry);
+    return draw_menu_body(this, entry);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +229,7 @@ VideoContextMenu::Result VideoContextMenu::draw_for_item(
     Result result;
     if (!ImGui::BeginPopupContextItem())
         return result;
-    result = draw_menu_body(this, m_window, m_copy_source, m_copy_history_source, m_copy_dest, entry);
+    result = draw_menu_body(this, entry);
     ImGui::EndPopup();
     return result;
 }
@@ -230,7 +245,7 @@ VideoContextMenu::Result VideoContextMenu::draw_for_window(
     Result result;
     if (!ImGui::BeginPopupContextWindow(popup_id))
         return result;
-    result = draw_menu_body(this, m_window, m_copy_source, m_copy_history_source, m_copy_dest, entry);
+    result = draw_menu_body(this, entry);
     ImGui::EndPopup();
     return result;
 }

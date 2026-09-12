@@ -36,7 +36,10 @@ public:
         bool              load_failed;
         int               video_w;
         int               video_h;
-        uint64_t          downloaded_bytes;
+        uint64_t          downloaded_bytes; ///< Bytes fetched so far (0 = no download).
+        double            download_percent;  ///< 0..100; -1 while the size is unknown.
+        uint64_t          download_total;    ///< Total bytes; 0 while unknown.
+        bool              download_active;   ///< A background download is queued/running.
         VkDescriptorSet   descriptor_set;
         VideoOsdOverlay  &osd;
         VideoSeekPreview &seek_preview;

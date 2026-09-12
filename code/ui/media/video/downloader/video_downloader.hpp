@@ -31,6 +31,15 @@ public:
         bool                  ok;
     };
 
+    /// Live state of a queued or in-flight download, as reported by the running
+    /// child process (yt-dlp / curl progress output).
+    struct Progress {
+        bool     active  = false; ///< URL is queued or currently downloading.
+        double   percent = -1.0;  ///< 0..100; -1 while the total size is unknown.
+        uint64_t bytes   = 0;     ///< Bytes on disk so far.
+        uint64_t total   = 0;     ///< Total bytes; 0 while unknown.
+    };
+
     VideoDownloader();
     ~VideoDownloader();
 
@@ -50,6 +59,10 @@ public:
 
     /// Bytes written so far for a currently in-flight URL; 0 if not queued.
     [[nodiscard]] uint64_t bytes_inflight(const std::string &url) const;
+
+    /// Percentage/size of a queued or in-flight download.
+    /// Returns an inactive Progress for URLs that are not in the queue.
+    [[nodiscard]] Progress progress(const std::string &url) const;
 
     /// Cancel active/queued downloads and remove cached files from disk.
     void clear_cache();
@@ -93,6 +106,19 @@ private:
                                 ManagedThread &self,
                                 std::string &tail);
 
+    /// Feed one line of child output to the progress parsers, updating
+    /// m_progress_percent / m_progress_total for the job being downloaded.
+    /// Understands yt-dlp's `[download] 45.3% of 123.45MiB` lines (hence
+    /// --newline on the command line) and curl's column progress meter.
+    void parse_progress_line(std::string_view line);
+
+    /// Parse a yt-dlp/curl size token ("74.9M", "~123.45MiB") into bytes.
+    /// Returns 0 when the token is not a size (e.g. "Unknown", "--:--").
+    [[nodiscard]] static uint64_t parse_size_token(std::string_view token);
+
+    /// Reset the progress counters and point them at `url` (empty = idle).
+    void reset_progress(const std::string &url);
+
     /// yt-dlp -f format string (quality/codec policy — see .cpp).
     [[nodiscard]] static std::string ytdl_format();
 
@@ -108,6 +134,9 @@ private:
     std::vector<Job>                m_queue;
     std::vector<Result>             m_completed;
     std::vector<std::string>        m_inflight; ///< URLs queued or currently downloading.
+    std::string                     m_progress_url;     ///< URL the two counters below describe.
+    double                          m_progress_percent; ///< 0..100, -1 while unknown.
+    uint64_t                        m_progress_total;   ///< Total bytes, 0 while unknown.
     std::atomic<int>                m_current_pid; ///< PID of the running yt-dlp, -1 if none.
     std::unique_ptr<ManagedThread>  m_worker;
 };

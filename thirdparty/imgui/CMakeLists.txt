@@ -40,7 +40,17 @@ target_compile_definitions(imgui
     # Expose ImVec2/ImVec4 operator+ - * etc. to EVERY consumer (app code writes
     # `window->Pos + delta`). imgui's own .cpp files #ifndef-guard this macro, so
     # PUBLIC here causes no redefinition; it just reaches the app + test TUs.
-    PUBLIC  IMGUI_DEFINE_MATH_OPERATORS)
+    PUBLIC  IMGUI_DEFINE_MATH_OPERATORS
+    # Pick FreeType as the atlas font loader (imgui_draw.cpp:4306 falls back to
+    # stb_truetype when this is missing). stb_truetype reads only glyf and CFF1,
+    # so the stb path aborts on this system's fonts — NotoSansCJK-VF.ttc is an
+    # OTTO/CFF2 collection and the emoji face is COLRv1 — with
+    # "stbtt_InitFont(): failed to parse FontData". It is also what makes the
+    # ImGuiFreeTypeLoaderFlags_* in imgui_context.cpp (LoadColor/Bitmap) mean
+    # anything, and what IMGUI_ENABLE_FREETYPE_PLUTOSVG above requires
+    # (imconfig.h:92). PUBLIC, not PRIVATE: imgui_internal.h:128 switches
+    # declarations on this macro, so every TU must see the same value.
+            IMGUI_ENABLE_FREETYPE)
 target_compile_options(imgui PRIVATE
     ${FREETYPE_CFLAGS_OTHER}
     -w

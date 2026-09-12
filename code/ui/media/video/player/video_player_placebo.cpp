@@ -3,6 +3,7 @@
 #include "video_player_placebo.hpp"
 
 #include "core/log/debug_log.hpp"
+#include "video_downloader.hpp"
 #include "video_player.hpp"
 #include "vulkan_context.hpp"
 
@@ -516,6 +517,30 @@ void VideoPlayerPlacebo::draw() {
 
     if (e.load_failed)
       ImGui::TextColored({1.0f, 0.3f, 0.3f, 1.0f}, "Load failed");
+
+    // Background download progress for online sources (same figures the mpv
+    // player shows in its title bar).
+    if (m_downloader) {
+      const VideoDownloader::Progress dl = m_downloader->progress(e.source);
+      if (dl.active) {
+        constexpr double k_mb = 1024.0 * 1024.0;
+        char label[80];
+        if (dl.percent >= 0.0 && dl.total > 0)
+          std::snprintf(label, sizeof(label), "%.0f%%  (%.1f / %.1f MB)",
+                        dl.percent, static_cast<double>(dl.bytes) / k_mb,
+                        static_cast<double>(dl.total) / k_mb);
+        else if (dl.percent >= 0.0)
+          std::snprintf(label, sizeof(label), "%.0f%%", dl.percent);
+        else
+          std::snprintf(label, sizeof(label), "%.1f MB",
+                        static_cast<double>(dl.bytes) / k_mb);
+        const float fraction = dl.percent >= 0.0
+                                   ? static_cast<float>(dl.percent / 100.0)
+                                   : -1.0f * static_cast<float>(ImGui::GetTime());
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, ImGui::GetTextLineHeight()),
+                           label);
+      }
+    }
 
     ImGui::End();
 

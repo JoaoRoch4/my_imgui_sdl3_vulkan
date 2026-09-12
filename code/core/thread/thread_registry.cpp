@@ -3,8 +3,17 @@
 
 ThreadRegistry &ThreadRegistry::instance()
 {
-    static ThreadRegistry g_instance;
-    return g_instance;
+    // Immortal on purpose. A registry with automatic storage is destroyed in
+    // reverse order of construction, and this one is constructed EARLY (the
+    // first ManagedThread) while the objects owning those threads live in
+    // MemoryManagement, destroyed LATE — so any thread still running at static
+    // exit would call set_state()/unregister_thread() on a freed hash table.
+    // Owners are expected to tear their threads down in App::destroy(); this
+    // just makes the failure mode a harmless no-op instead of memory
+    // corruption. Never deleted, but the static pointer keeps it reachable, so
+    // LeakSanitizer does not report it.
+    static ThreadRegistry *const g_instance = new ThreadRegistry();
+    return *g_instance;
 }
 
 uint64_t ThreadRegistry::register_thread(std::string name, ThreadOverwatch::RecoveryPolicy policy)

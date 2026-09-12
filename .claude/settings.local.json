@@ -19,7 +19,17 @@
       "mcp__vscode-debugger__debug_list_sessions",
       "mcp__vscode-debugger__debug_get_stack_trace",
       "mcp__vscode-debugger__debug_get_output",
-      "mcp__vscode-debugger__debug_get_threads"
+      "mcp__vscode-debugger__debug_get_threads",
+      "Bash(python3 run.py --help)",
+      "Bash(python3 build.py --help)",
+      "Bash(python3 scripts/doctor.py --help)",
+      "Bash(python3 scripts/vk_doctor.py --help)",
+      "Bash(timeout 180 python3 scripts/doctor.py --quiet)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(timeout 60 python3 scripts/build_doctor.py)",
+      "Bash(echo \"build_doctor exit=$?\")",
+      "Bash(timeout 120 python3 scripts/vk_doctor.py)",
+      "Bash(echo \"vk_doctor exit=$?\")"
     ]
   },
   "enabledPlugins": {

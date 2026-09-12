@@ -74,6 +74,18 @@ public:
     /// Use this when combining these items with additional items in one popup.
     Result draw_menu_items(const WindowStateToml::ImageHistoryEntry &entry);
 
+    /// Best local file to save for `entry`, in order:
+    ///   1. cached_path (a completed background download)
+    ///   2. entry.source, when it is an existing local video file
+    /// Empty when nothing is on disk yet (e.g. the download is still running).
+    [[nodiscard]] static std::filesystem::path
+    resolve_save_source(const WindowStateToml::ImageHistoryEntry &entry);
+
+    /// Open the native save-file dialog for `entry` — the action behind
+    /// "Save Video As…", also reachable from the player's Save button.
+    /// No-op when resolve_save_source() finds no local file.
+    void request_save(const WindowStateToml::ImageHistoryEntry &entry);
+
     /// Execute any copy queued by the save-file dialog result.
     /// Call once per ImGui frame from the main loop.
     void process_pending_save();

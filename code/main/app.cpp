@@ -456,6 +456,16 @@ int App::destroy() {
 	// Stop image workers before the rest of teardown so no job is mid-flight.
 	img::ImageJobSystem::instance().shutdown();
 
+#ifdef _DEBUG
+	// The demo thread is the one ManagedThread with no owner in the registry
+	// teardown below, so without this it ran until ~App at static exit — i.e.
+	// AFTER ThreadRegistry's own static destructor, and its final
+	// set_state(Stopped) read a freed hash table (ASan heap-use-after-free in
+	// ThreadRegistry::set_state). Destroying it here stops and joins it while
+	// the registry is still alive, like every other thread in this function.
+	m_DebugDemoThread.reset();
+#endif
+
 	vkDeviceWaitIdle(m_Vk->device);
 	m_MenuBar->Shutdown();
 	m_State->show_demo_window    = m_Rt->showDemoWindow;

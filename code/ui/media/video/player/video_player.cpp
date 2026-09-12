@@ -1901,16 +1901,26 @@ void VideoPlayer::enforce_single_active_playback() {
 }
 
 bool VideoPlayer::draw_window(VideoEntry &e, int idx) {
-	std::string display_title    = e.title;
-	uint64_t    downloaded_bytes = 0;
-	if (m_downloader) {
-		downloaded_bytes = m_downloader->bytes_inflight(e.source);
-		if (downloaded_bytes > 0) {
-			constexpr double k_mb = 1024.0 * 1024.0;
-			char             buf[32];
-			std::snprintf(buf, sizeof(buf), " (%.1f MB↓)", static_cast<double>(downloaded_bytes) / k_mb);
-			display_title += buf;
-		}
+	std::string               display_title = e.title;
+	VideoDownloader::Progress dl {};
+	if (m_downloader)
+		dl = m_downloader->progress(e.source);
+
+	// Title suffix while the source is still downloading: percentage when the
+	// total size is known, otherwise just the bytes fetched so far.
+	if (dl.active) {
+		constexpr double k_mb = 1024.0 * 1024.0;
+		char             buf[64];
+		if (dl.percent >= 0.0 && dl.total > 0)
+			std::snprintf(buf, sizeof(buf), " (%.0f%% · %.1f/%.1f MB↓)", dl.percent,
+				static_cast<double>(dl.bytes) / k_mb, static_cast<double>(dl.total) / k_mb);
+		else if (dl.percent >= 0.0)
+			std::snprintf(buf, sizeof(buf), " (%.0f%%↓)", dl.percent);
+		else if (dl.bytes > 0)
+			std::snprintf(buf, sizeof(buf), " (%.1f MB↓)", static_cast<double>(dl.bytes) / k_mb);
+		else
+			std::snprintf(buf, sizeof(buf), " (starting↓)");
+		display_title += buf;
 	}
 	VideoUiWindow::State state {
 		e.mpv,
@@ -1927,7 +1937,10 @@ bool VideoPlayer::draw_window(VideoEntry &e, int idx) {
 		e.load_failed,
 		e.video_w,
 		e.video_h,
-		downloaded_bytes,
+		dl.bytes,
+		dl.percent,
+		dl.total,
+		dl.active,
 		e.descriptor_set,
 		e.osd,
 		e.seek_preview,

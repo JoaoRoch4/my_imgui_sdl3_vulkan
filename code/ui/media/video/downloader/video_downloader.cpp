@@ -54,6 +54,9 @@ VideoDownloader::VideoDownloader()
     , m_queue{}
     , m_completed{}
     , m_inflight{}
+    , m_progress_url{}
+    , m_progress_percent{-1.0}
+    , m_progress_total{0}
     , m_current_pid{-1}
     , m_worker{} {}
 
@@ -157,6 +160,39 @@ uint64_t VideoDownloader::bytes_inflight(const std::string &url) const {
     return ec ? 0 : sz;
 }
 
+VideoDownloader::Progress VideoDownloader::progress(const std::string &url) const {
+    Progress p;
+
+    std::lock_guard lock{m_mutex};
+    p.active = std::any_of(m_inflight.begin(), m_inflight.end(),
+                           [&url](const std::string &u) { return u == url; });
+    if (!p.active)
+        return p;
+
+    if (m_progress_url == url) {
+        p.percent = m_progress_percent;
+        p.total   = m_progress_total;
+    }
+
+    std::error_code ec;
+    const auto sz = std::filesystem::file_size(cache_path_for(url), ec);
+    p.bytes = ec ? 0 : sz;
+
+    // yt-dlp reports one percentage per stream (video, then audio), so a stale
+    // total can end up below the bytes already on disk — keep the bar sane.
+    if (p.total > 0 && p.bytes > p.total)
+        p.total = p.bytes;
+
+    return p;
+}
+
+void VideoDownloader::reset_progress(const std::string &url) {
+    std::lock_guard lock{m_mutex};
+    m_progress_url     = url;
+    m_progress_percent = -1.0;
+    m_progress_total   = 0;
+}
+
 void VideoDownloader::clear_cache() {
     if (m_cache_dir.empty())
         return;
@@ -170,6 +206,9 @@ void VideoDownloader::clear_cache() {
         m_queue.clear();
         m_inflight.clear();
         m_completed.clear();
+        m_progress_url.clear();
+        m_progress_percent = -1.0;
+        m_progress_total   = 0;
     }
 
     std::error_code ec;
@@ -211,6 +250,92 @@ bool VideoDownloader::download_succeeded(int exit_code,
     return !ec && size > 0;
 }
 
+// ---------------------------------------------------------------------------
+// Progress parsing (runs on worker thread, from run_child's output pump)
+// ---------------------------------------------------------------------------
+
+uint64_t VideoDownloader::parse_size_token(std::string_view token) {
+    while (!token.empty() && (token.front() == '~' || token.front() == ' '))
+        token.remove_prefix(1);
+    if (token.empty() || (std::isdigit(static_cast<unsigned char>(token.front())) == 0))
+        return 0; // "Unknown", "--:--:--", "N/A", …
+
+    std::size_t used  = 0;
+    double      value = 0.0;
+    try {
+        value = std::stod(std::string(token), &used);
+    } catch (const std::exception &) {
+        return 0;
+    }
+
+    // Both yt-dlp (KiB/MiB/GiB) and curl (k/M/G) use binary multiples.
+    double multiplier = 1.0;
+    if (used < token.size()) {
+        switch (std::toupper(static_cast<unsigned char>(token[used]))) {
+        case 'K': multiplier = 1024.0; break;
+        case 'M': multiplier = 1024.0 * 1024.0; break;
+        case 'G': multiplier = 1024.0 * 1024.0 * 1024.0; break;
+        case 'T': multiplier = 1024.0 * 1024.0 * 1024.0 * 1024.0; break;
+        default:  break; // plain bytes
+        }
+    }
+    return static_cast<uint64_t>(value * multiplier);
+}
+
+void VideoDownloader::parse_progress_line(std::string_view line) {
+    // Split into whitespace-separated tokens (the meter rows are short).
+    std::array<std::string_view, 16> tok{};
+    std::size_t                      count = 0;
+    for (std::size_t i = 0; i < line.size() && count < tok.size();) {
+        while (i < line.size() && (std::isspace(static_cast<unsigned char>(line[i])) != 0))
+            ++i;
+        const std::size_t start = i;
+        while (i < line.size() && (std::isspace(static_cast<unsigned char>(line[i])) == 0))
+            ++i;
+        if (i > start)
+            tok[count++] = line.substr(start, i - start);
+    }
+    if (count == 0)
+        return;
+
+    double   percent = -1.0;
+    uint64_t total   = 0;
+
+    const auto all_digits = [](std::string_view sv) {
+        return !sv.empty() && std::all_of(sv.begin(), sv.end(), [](char c) {
+            return std::isdigit(static_cast<unsigned char>(c)) != 0;
+        });
+    };
+
+    if (tok[0] == "[download]" && count >= 2 && tok[1].back() == '%' &&
+        std::isdigit(static_cast<unsigned char>(tok[1].front())) != 0) {
+        // yt-dlp --newline: "[download]  45.3% of  123.45MiB at 2.10MiB/s ETA 00:37"
+        // A live stream reports an estimate as "of ~ 123.45MiB" (tilde split off).
+        percent = std::strtod(std::string(tok[1]).c_str(), nullptr);
+        if (count >= 4 && tok[2] == "of")
+            total = tok[3] == "~" && count >= 5 ? parse_size_token(tok[4])
+                                                : parse_size_token(tok[3]);
+    } else if (count >= 8 && all_digits(tok[0]) && all_digits(tok[2]) &&
+               parse_size_token(tok[1]) > 0) {
+        // curl's meter row: "% Total  % Received % Xferd  Dload Upload  Time…"
+        // — column 0 is the percentage of the whole transfer, column 1 its size.
+        // The trailing time columns go blank near the end, so don't demand 12.
+        percent = std::strtod(std::string(tok[0]).c_str(), nullptr);
+        total   = parse_size_token(tok[1]);
+    } else {
+        return; // not a progress line
+    }
+
+    if (percent < 0.0 && total == 0)
+        return;
+
+    std::lock_guard lock{m_mutex};
+    if (percent >= 0.0)
+        m_progress_percent = std::clamp(percent, 0.0, 100.0);
+    if (total > 0)
+        m_progress_total = total;
+}
+
 int VideoDownloader::run_child(const char *const *argv,
                                const std::stop_token &st,
                                ManagedThread &self,
@@ -246,7 +371,8 @@ int VideoDownloader::run_child(const char *const *argv,
     ::close(pipefd[1]);
     m_current_pid.store(pid, std::memory_order_release);
 
-    bool termed = false;
+    std::string lines; // partial-line buffer for the progress parser
+    bool        termed = false;
     for (;;) {
         if (st.stop_requested() && !termed) {
             ::kill(pid, SIGTERM);
@@ -264,6 +390,17 @@ int VideoDownloader::run_child(const char *const *argv,
                 tail.append(buf.data(), static_cast<std::size_t>(n));
                 if (tail.size() > 8192)
                     tail.erase(0, tail.size() - 8192);
+
+                // Feed complete lines to the progress parser. Both terminators
+                // matter: yt-dlp --newline emits '\n', curl's meter redraws the
+                // same row with '\r'.
+                lines.append(buf.data(), static_cast<std::size_t>(n));
+                for (std::size_t end; (end = lines.find_first_of("\r\n")) != std::string::npos;) {
+                    parse_progress_line(std::string_view{lines}.substr(0, end));
+                    lines.erase(0, end + 1);
+                }
+                if (lines.size() > 1024)
+                    lines.clear(); // no line break in sight — not progress output
             }
         }
 
@@ -284,6 +421,7 @@ bool VideoDownloader::download(const std::string &url,
                                ManagedThread &self) {
     std::error_code ec;
     std::filesystem::remove(target, ec); // clear any stale 0-byte remnant
+    reset_progress(url);
 
     const std::string fmt = ytdl_format();
     const std::string out = target.string();
@@ -303,6 +441,9 @@ bool VideoDownloader::download(const std::string &url,
     APP_DEBUG_LOG("[VideoDownloader] download start (yt-dlp): {} -> {}", url, out);
     {
         const char *argv[] = {"yt-dlp", "--no-warnings", "--no-playlist",
+                              // --newline + --progress: one progress line per
+                              // update on a pipe, which parse_progress_line reads.
+                              "--newline", "--progress",
                               "--compat-options", "allow-unsafe-ext",
                               "--merge-output-format", "mp4",
                               "--remux-video", "mp4",
@@ -329,6 +470,7 @@ bool VideoDownloader::download(const std::string &url,
     // writes the canonical <hash>.mp4. Skipped if the script can't be located.
     if (const auto script = python_fallback_script(); !script.empty()) {
         APP_DEBUG_LOG("[VideoDownloader] yt-dlp failed; python fallback: {} -> {}", url, out);
+        reset_progress(url);
         const std::string py = script.string();
         const char *argv[] = {"python3", py.c_str(),
                               url.c_str(), out.c_str(), fmt.c_str(), nullptr};
@@ -355,8 +497,11 @@ bool VideoDownloader::download(const std::string &url,
     // self-contained files, so that's fine. --fail rejects HTTP error pages; a
     // browser User-Agent satisfies CDNs that gate non-browser clients.
     APP_DEBUG_LOG("[VideoDownloader] curl fallback: {} -> {}", url, out);
+    reset_progress(url);
     {
-        const char *argv[] = {"curl", "-L", "--fail", "--silent", "--show-error",
+        // No --silent here: curl's column meter on stderr is the progress
+        // source parse_progress_line reads (--show-error still reports failures).
+        const char *argv[] = {"curl", "-L", "--fail", "--show-error",
                               "--connect-timeout", "30",
                               "-A", kFallbackUserAgent,
                               "-o", out.c_str(),
@@ -398,6 +543,8 @@ void VideoDownloader::worker_iteration(const std::stop_token &st, ManagedThread 
 
     APP_DEBUG_LOG("[VideoDownloader] worker: picked up job: {}", job.url);
     const bool ok = download(job.url, job.target, st, self);
+
+    reset_progress({}); // no job in flight — progress() falls back to file size
 
     std::lock_guard lock{m_mutex};
     m_inflight.erase(std::remove(m_inflight.begin(), m_inflight.end(), job.url), m_inflight.end());

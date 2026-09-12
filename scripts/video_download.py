@@ -52,6 +52,24 @@ def _disable_unsafe_extension_guard():
         pass
 
 
+def _progress_hook(d):
+    """Print progress in the same shape as the yt-dlp CLI.
+
+    The C++ side (VideoDownloader::parse_progress_line) parses
+    ``[download] <pct>% of <size>`` lines from this process's output, so this
+    fallback reports progress exactly like attempt 1 does.
+    """
+    if d.get("status") != "downloading":
+        return
+    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+    done = d.get("downloaded_bytes") or 0
+    if not total:
+        return
+    pct = 100.0 * done / total
+    print(f"[download] {pct:.1f}% of {total / (1024 * 1024):.2f}MiB",
+          file=sys.stderr, flush=True)
+
+
 def main(argv):
     if len(argv) < 3:
         print("usage: video_download.py <url> <output> <format>", file=sys.stderr)
@@ -92,6 +110,7 @@ def main(argv):
         "noplaylist": True,
         "no_warnings": True,
         "quiet": True,
+        "progress_hooks": [_progress_hook],
         # Remux whatever container we got (e.g. the 'php'-typed fmp4) to mp4.
         "postprocessors": [
             {"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"},

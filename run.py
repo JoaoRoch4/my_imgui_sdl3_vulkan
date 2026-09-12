@@ -25,6 +25,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 EXE_SUFFIX = ".exe" if os.name == "nt" else ""
@@ -70,7 +71,7 @@ def log(msg: str) -> None:
     print(f"{BLUE}==>{OFF} {msg}")
 
 
-def die(msg: str):
+def die(msg: str) -> NoReturn:
     print(f"{RED}err{OFF} {msg}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -200,6 +201,7 @@ def build(cfg: Config, rebuild: bool) -> None:
     # build.py first: it is the cross-platform port and needs no bash. build.sh
     # stays as the fallback for a checkout that only has the shell script.
     script = ROOT / "build.py"
+    cmd: list[str]
     if script.exists():
         cmd = [sys.executable, str(script), cfg.key]
     elif (ROOT / "build.sh").exists() and os.name != "nt":
@@ -234,6 +236,7 @@ def main(argv: "list[str]") -> int:
         argv, app_args = argv[:cut], argv[cut + 1:]
 
     if argv and argv[0] in ("-h", "--help"):
+        assert __doc__ is not None
         print(__doc__.strip())
         return 0
 

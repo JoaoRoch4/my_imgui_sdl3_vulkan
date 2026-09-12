@@ -521,17 +521,22 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         return;
     }
 
-    if (callbacks.context_menu) {
-        WindowStateToml::ImageHistoryEntry history_entry;
-        if (callbacks.lookup_history) {
-            if (const auto *found = callbacks.lookup_history(state.source))
-                history_entry = *found;
-        }
-        if (history_entry.source.empty()) {
-            history_entry.source = state.source;
-            history_entry.kind = state.kind;
-        }
+    // History entry backing the context menu and the Save button.
+    WindowStateToml::ImageHistoryEntry history_entry;
+    if (callbacks.lookup_history) {
+        if (const auto *found = callbacks.lookup_history(state.source))
+            history_entry = *found;
+    }
+    if (history_entry.source.empty()) {
+        history_entry.source = state.source;
+        history_entry.kind = state.kind;
+    }
+    // A finished download swaps playback_source to the cached file before the
+    // history entry is refreshed — accept it so Save works right away.
+    if (history_entry.cached_path.empty() && state.playback_source != state.source)
+        history_entry.cached_path = state.playback_source;
 
+    if (callbacks.context_menu) {
         const std::string popup_id = "##vctx_" + std::to_string(state.id);
         if (ImGui::BeginPopupContextWindow(popup_id.c_str())) {
             const auto context_result = callbacks.context_menu->draw_menu_items(history_entry);
@@ -699,13 +704,22 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
             hold.suppress_tap = false;
         }
 
-        if (is_fullscreen_active() && state.downloaded_bytes > 0 && !state.osd.visible()) {
+        if (is_fullscreen_active() && state.download_active && !state.osd.visible()) {
             constexpr double k_mb = 1024.0 * 1024.0;
-            char progress_buf[64];
-            std::snprintf(progress_buf,
-                          sizeof(progress_buf),
-                          "Downloading %.1f MB",
-                          static_cast<double>(state.downloaded_bytes) / k_mb);
+            char progress_buf[80];
+            if (state.download_percent >= 0.0 && state.download_total > 0)
+                std::snprintf(progress_buf, sizeof(progress_buf),
+                              "Downloading %.0f%%  (%.1f / %.1f MB)",
+                              state.download_percent,
+                              static_cast<double>(state.downloaded_bytes) / k_mb,
+                              static_cast<double>(state.download_total) / k_mb);
+            else if (state.download_percent >= 0.0)
+                std::snprintf(progress_buf, sizeof(progress_buf),
+                              "Downloading %.0f%%", state.download_percent);
+            else
+                std::snprintf(progress_buf, sizeof(progress_buf),
+                              "Downloading %.1f MB",
+                              static_cast<double>(state.downloaded_bytes) / k_mb);
             state.osd.show(progress_buf, std::chrono::milliseconds(700));
         }
 
@@ -724,6 +738,33 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
     }
 
     ImGui::Separator();
+
+    // ----- background download progress -----------------------------------
+    if (state.download_active) {
+        constexpr double k_mb = 1024.0 * 1024.0;
+        char label[80];
+        if (state.download_percent >= 0.0 && state.download_total > 0)
+            std::snprintf(label, sizeof(label), "%.0f%%  (%.1f / %.1f MB)",
+                          state.download_percent,
+                          static_cast<double>(state.downloaded_bytes) / k_mb,
+                          static_cast<double>(state.download_total) / k_mb);
+        else if (state.download_percent >= 0.0)
+            std::snprintf(label, sizeof(label), "%.0f%%", state.download_percent);
+        else
+            std::snprintf(label, sizeof(label), "%.1f MB",
+                          static_cast<double>(state.downloaded_bytes) / k_mb);
+
+        ImGui::TextUnformatted("↓");
+        ImGui::SameLine(0.0f, 6.0f);
+        // A negative fraction animates ImGui's indeterminate bar, which is what
+        // we want until the first percentage arrives from yt-dlp/curl.
+        const float fraction = state.download_percent >= 0.0
+            ? static_cast<float>(state.download_percent / 100.0)
+            : -1.0f * static_cast<float>(ImGui::GetTime());
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, ImGui::GetTextLineHeight()), label);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Downloading %s", state.source.c_str());
+    }
 
     double time_pos = 0.0;
     double duration = 0.0;
@@ -780,6 +821,24 @@ void VideoUiWindow::draw(State state, const Callbacks &callbacks) const
         state.reload_requested = true;
         state.osd.show("Reloading...");
     }
+
+    // ----- Save: copy the local (downloaded) file somewhere permanent ------
+    // The cache lives under build/cache and is wiped on startup, so this is the
+    // only way to keep an online video. Disabled until the file is on disk.
+    ImGui::SameLine(0.0f, 4.0f);
+    const bool can_save = callbacks.context_menu != nullptr &&
+                          !VideoContextMenu::resolve_save_source(history_entry).empty();
+    if (!can_save)
+        ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Save")) {
+        callbacks.context_menu->request_save(history_entry);
+        state.osd.show("Save Video As…");
+    }
+    if (!can_save)
+        ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip(can_save ? "Save a copy of this video…"
+                                   : "Waiting for the download to finish…");
 
     ImGui::PopStyleVar();
 
